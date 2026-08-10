@@ -1,0 +1,10 @@
+name: countersign-iap-request-authz
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: REQUEST_AUTHZ
+action: CUSTOM
+customProvider:
+  authzExtension:
+    resources:
+      - "projects/countersign-505107/locations/us-central1/authzExtensions/countersign-iap-request-authz"

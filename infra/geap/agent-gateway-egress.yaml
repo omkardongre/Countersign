@@ -1,0 +1,7 @@
+name: countersign-egress
+protocols:
+  - MCP
+googleManaged:
+  governedAccessPath: AGENT_TO_ANYWHERE
+registries:
+  - "//agentregistry.googleapis.com/projects/countersign-505107/locations/us-central1"
