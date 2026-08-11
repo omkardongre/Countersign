@@ -1,0 +1,11 @@
+name: countersign-model-armor
+service: modelarmor.us-central1.rep.googleapis.com
+metadata:
+  model_armor_settings: '[
+    {
+    "response_template_id": "projects/countersign-505107/locations/us-central1/templates/countersign-content-guard",
+    "request_template_id": "projects/countersign-505107/locations/us-central1/templates/countersign-content-guard"
+    }
+  ]'
+failOpen: true
+timeout: 1s

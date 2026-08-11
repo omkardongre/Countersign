@@ -1,0 +1,16 @@
+name: countersign-model-armor
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: CONTENT_AUTHZ
+action: CUSTOM
+customProvider:
+  authzExtension:
+    resources:
+      - "projects/countersign-505107/locations/us-central1/authzExtensions/countersign-model-armor"
+httpRules:
+  - to:
+      operations: [ { "paths": [ { "prefix": "/" } ] } ]
+    when: >
+      request.headers['content-type'] == 'application/json' ||
+      request.headers['content-type'].startsWith('text/')
