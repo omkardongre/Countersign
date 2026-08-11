@@ -250,7 +250,9 @@ def main() -> int:
                 # Codelab mortgage-agent bootstrap for gateway egress.
                 "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES": "false",
                 "MODEL_NAME": args.model,
-                "GOOGLE_CLOUD_LOCATION": args.region,
+                # Gemini 3.5+ is served from the global Vertex endpoint.
+                # Runtime region (us-central1) stays separate from model location.
+                "GOOGLE_CLOUD_LOCATION": "global",
             },
             "display_name": args.display_name,
             "description": "Countersign hello Runtime agent for Agent Gateway governance proof.",

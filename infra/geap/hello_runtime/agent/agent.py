@@ -12,6 +12,9 @@ from google.adk.agents import Agent
 from google.adk.models import Gemini
 from google.genai import types
 
+# Gemini 3.5+ is served from the global Vertex endpoint (Runtime region separate).
+os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "global")
+os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "true")
 
 MODEL = os.environ.get("MODEL_NAME", "gemini-3.5-flash")
 
