@@ -16,7 +16,7 @@ from google.genai import types
 os.environ.setdefault("GOOGLE_CLOUD_LOCATION", "global")
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "true")
 
-MODEL = os.environ.get("MODEL_NAME", "gemini-3.5-flash")
+MODEL = os.environ.get("MODEL_NAME", "gemini-3.6-flash")
 
 
 def get_weather(query: str) -> str:

@@ -204,7 +204,9 @@ The control plane is verified by a gate that cannot pass falsely.
 ./infra/geap/verify_governance.sh
 ```
 
-Current result:
+Current result, captured from the `hello_runtime` probe agent (its default model has since been
+updated to `gemini-3.6-flash` to match the rest of the fleet; this transcript is left verbatim as
+the actual run record rather than edited to match):
 
 ```
 effectiveIdentity: agents.global.org-334195573957.system.id.goog/resources/aiplatform/
@@ -328,7 +330,7 @@ granted `roles/iap.egressor`.
 ./infra/geap/register_platform_endpoints.sh
 ```
 
-Note `gemini-3.5-flash` resolves via the **global** Vertex hostnames. `GOOGLE_CLOUD_LOCATION`
+Note `gemini-3.6-flash` resolves via the **global** Vertex hostnames. `GOOGLE_CLOUD_LOCATION`
 is `global` on the Runtime instance while the Runtime region stays `us-central1`.
 
 ### 6. Verify, then enforce

@@ -172,7 +172,7 @@ def main() -> int:
         default="projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress",
     )
     parser.add_argument("--staging-bucket", default=None)
-    parser.add_argument("--model", default="gemini-3.5-flash")
+    parser.add_argument("--model", default="gemini-3.6-flash")
     parser.add_argument(
         "--recreate",
         action="store_true",
