@@ -88,10 +88,33 @@ So Countersign is built on one non-negotiable rule:
 | Agent Identity on Runtime + gateway binding | Done |
 | **Enforced deny proof, 9/9 checks** | **Done** — see below |
 | **Model Armor as CONTENT_AUTHZ extension** | **Done** |
-| Domain Workflow graph and MCP tool servers | Not started |
+| Deterministic intake + severity classification | Done — `app/domain/`, see below |
+| Multimodal Evidence Extraction (LLM) | Not started |
+| Deterministic GMP compliance engine | Not started |
+| Investigation + Challenger agents (LLM) | Not started |
+| MCP tool servers (MES, LIMS, historian, supplier, QMS) | Not started |
 | TQA `ext_proc` extension | Not started — needs a VPC/DNS-peering spike |
 | 14-day sterility wait, kill/resume | Not started |
 | UI, demo | Not started |
+
+### Domain workflow — deterministic intake and classification
+
+The first node of the GMP deviation-investigation graph (`final_reseach/05_architecture.md`
+§5/§11 step 1) is implemented in `app/domain/`:
+
+- `models.py` — `CaseIntake` (structured detection payload) and `ClassifiedCase`
+  (`tenant_id`, `lifecycle_state`, `decision_authority: "none"` on every record), following
+  Veeva's Agent Card vocabulary (`final_reseach/02_veeva_vault_qms.md` §2)
+- `classification.py` — pure-function minor/major/critical severity rules over structured
+  signals (`patient_safety_impact`, `sterility_assurance_impact`, etc.), no model call, per the
+  Annex 22 draft posture that the LLM is never in the critical decision path
+- `intake.py` — wraps classification as an ADK `Workflow` `FunctionNode`, with input/output
+  schemas inferred from type hints and enforced by the runtime
+
+Verified against installed `google-adk` 2.6.3 source directly (`workflow/_function_node.py`),
+not assumed from documentation. 14 unit tests in `tests/unit/test_classification.py` and
+`tests/unit/test_intake.py`, run through a real `Workflow` + `InMemoryRunner`, not just the
+bare function.
 
 ---
 
