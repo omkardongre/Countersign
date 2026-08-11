@@ -207,3 +207,12 @@ tools/a2a-inspector/
 *.pem
 *-key.json
 credentials*.json
+application_default_credentials.json
+**/application_default_credentials.json
+service-account*.json
+*service_account*.json
+
+# Local Runtime packaging / verification dumps
+countersign_hello_deploy_*/
+/tmp/cs-*.txt
+/tmp/sdk-*.txt
