@@ -1,4 +1,11 @@
 {
-  "remote_agent_runtime_id": "None",
-  "deployment_timestamp": "None"
+  "remote_agent_runtime_id": "projects/777448403573/locations/us-central1/reasoningEngines/9119834875157807104",
+  "deployment_target": "agent_runtime",
+  "deploy_mode": "sdk_adkapp_source",
+  "is_a2a": false,
+  "agent_directory": "infra/geap/hello_runtime/agent",
+  "deployment_timestamp": "2026-08-11T06:19:55.668945+00:00",
+  "effective_identity": "agents.global.org-334195573957.system.id.goog/resources/aiplatform/projects/777448403573/locations/us-central1/reasoningEngines/9119834875157807104",
+  "agent_gateway": "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress",
+  "project_number": "777448403573"
 }
