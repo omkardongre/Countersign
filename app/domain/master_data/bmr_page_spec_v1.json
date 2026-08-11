@@ -1,0 +1,120 @@
+{
+  "spec_id": "bmr_blending_step_page",
+  "spec_version": "1.0.0",
+  "effective_date": "2026-08-01",
+  "approved_by": "QA-Head (synthetic)",
+  "change_control_ref": "CC-2026-0142 (synthetic)",
+  "description": "Field specification for a single Batch Manufacturing Record blending-step page. Governs what may be extracted, the expected unit, the acceptance range, and the confidence a transcription must reach before it can be accepted without human verification.",
+  "critical_field_min_confidence": 0.95,
+  "standard_field_min_confidence": 0.85,
+  "fields": [
+    {
+      "field_name": "batch_number",
+      "label": "Batch / Lot Number",
+      "kind": "string",
+      "required": true,
+      "critical": true,
+      "pattern": "^[A-Z]{2}-[0-9]{4}$"
+    },
+    {
+      "field_name": "product_code",
+      "label": "Product Code",
+      "kind": "string",
+      "required": true,
+      "critical": true,
+      "pattern": "^[A-Z0-9]{4,12}$"
+    },
+    {
+      "field_name": "page_number",
+      "label": "BMR Page Number",
+      "kind": "integer",
+      "required": true,
+      "critical": false,
+      "minimum": 1,
+      "maximum": 999
+    },
+    {
+      "field_name": "manufacturing_step",
+      "label": "Manufacturing Step",
+      "kind": "string",
+      "required": true,
+      "critical": false,
+      "allowed_values": ["dispensing", "granulation", "blending", "compression", "coating"]
+    },
+    {
+      "field_name": "equipment_id",
+      "label": "Equipment ID",
+      "kind": "string",
+      "required": true,
+      "critical": true,
+      "pattern": "^EQ-[0-9]{3}$"
+    },
+    {
+      "field_name": "step_start_time",
+      "label": "Step Start Time",
+      "kind": "datetime",
+      "required": true,
+      "critical": false
+    },
+    {
+      "field_name": "step_end_time",
+      "label": "Step End Time",
+      "kind": "datetime",
+      "required": true,
+      "critical": false
+    },
+    {
+      "field_name": "blend_speed_rpm",
+      "label": "Blender Speed",
+      "kind": "number",
+      "required": true,
+      "critical": true,
+      "unit": "rpm",
+      "minimum": 8.0,
+      "maximum": 14.0
+    },
+    {
+      "field_name": "blend_time_min",
+      "label": "Blend Time",
+      "kind": "number",
+      "required": true,
+      "critical": true,
+      "unit": "min",
+      "minimum": 12.0,
+      "maximum": 18.0
+    },
+    {
+      "field_name": "product_temperature_c",
+      "label": "Product Temperature",
+      "kind": "number",
+      "required": true,
+      "critical": false,
+      "unit": "degC",
+      "minimum": 18.0,
+      "maximum": 26.0
+    },
+    {
+      "field_name": "operator_initials",
+      "label": "Performed By (initials)",
+      "kind": "string",
+      "required": true,
+      "critical": true,
+      "pattern": "^[A-Z]{2,3}$"
+    },
+    {
+      "field_name": "verifier_initials",
+      "label": "Verified By (initials)",
+      "kind": "string",
+      "required": true,
+      "critical": true,
+      "pattern": "^[A-Z]{2,3}$"
+    },
+    {
+      "field_name": "deviation_noted",
+      "label": "Deviation Noted On Page",
+      "kind": "boolean",
+      "required": true,
+      "critical": false
+    }
+  ]
+}
