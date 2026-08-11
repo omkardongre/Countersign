@@ -71,7 +71,7 @@ So Countersign is built on one non-negotiable rule:
 | Gateway | Agent Gateway, Agent-to-Anywhere (egress) mode |
 | Content guardrail | Model Armor as a `CONTENT_AUTHZ` authorization extension |
 | **Domain policy** | **Countersign TQA `ext_proc` extension — ours** |
-| Runtime | Agent Runtime, `gemini-3.5-flash` via Vertex AI |
+| Runtime | Agent Runtime, `gemini-3.6-flash` via Vertex AI |
 | Durable state | Cloud SQL Postgres via ADK `DatabaseSessionService` |
 | Case memory | Firestore + embeddings (provenance and tenant filtering that Memory Bank cannot round-trip) |
 | Observability | Agent Observability, Cloud Trace, Cloud Logging |
@@ -89,7 +89,8 @@ So Countersign is built on one non-negotiable rule:
 | **Enforced deny proof, 9/9 checks** | **Done** — see below |
 | **Model Armor as CONTENT_AUTHZ extension** | **Done** |
 | Deterministic intake + severity classification | Done — `app/domain/`, see below |
-| Multimodal Evidence Extraction (LLM) | Not started |
+| Multimodal evidence extraction, one BMR page | Done — `app/domain/`, see below |
+| Parallel evidence branches (LIMS, EM, supplier CoA) | Not started |
 | Deterministic GMP compliance engine | Not started |
 | Investigation + Challenger agents (LLM) | Not started |
 | MCP tool servers (MES, LIMS, historian, supplier, QMS) | Not started |
@@ -115,6 +116,72 @@ Verified against installed `google-adk` 2.6.3 source directly (`workflow/_functi
 not assumed from documentation. 14 unit tests in `tests/unit/test_classification.py` and
 `tests/unit/test_intake.py`, run through a real `Workflow` + `InMemoryRunner`, not just the
 bare function.
+
+### Domain workflow — multimodal evidence extraction
+
+The second stage (`final_reseach/05_architecture.md` §5, §11 step 4) is implemented as a static
+ADK 2.x `Workflow` graph with exactly one model call inside it:
+
+```
+START → ingest_evidence_artifact   deterministic: MIME allow-list, SHA-256, tenant-scoped persist
+      → extract_page_evidence      one narrow single-turn transcriber, provenance stamped in code
+      → validate_page_evidence     deterministic: parse, spec checks, confidence routing, audit
+```
+
+- `master_data/bmr_page_spec_v1.json` + `master_data.py` — the approved field specification:
+  what may be extracted, expected unit, acceptance range, and the confidence a transcription
+  must reach. Versioned and change-controlled, with `approved_by` and `change_control_ref`, and
+  every result records the spec version **and the SHA-256 of the exact spec bytes** so an
+  auditor can prove which approved specification governed a given reading.
+- `ingest.py` — narrow MIME allow-list checked before decode, size ceiling, content-addressed
+  artifact filename (so an at-least-once resume cannot duplicate a source record), SHA-256 at
+  the boundary, tenant written into artifact metadata for later re-verification. Integrity
+  failures **raise**; they are not returned as values a downstream node could route around.
+- `extraction.py` — one `Agent(mode="single_turn", include_contents="none")` with
+  `output_schema=PageExtraction` and **no tools**. It transcribes characters and reports
+  per-field legibility confidence; it does not classify, decide, or reach any system. Clean
+  context per page is deliberate containment: externally-sourced documents such as supplier CoAs
+  must not be able to steer the reading of the next page. Acceptance ranges are withheld from
+  the model, because telling a transcriber that blender speed should be 8–14 rpm invites it to
+  read 18 as 13 — and that out-of-range value is usually the deviation being investigated.
+- `evidence_validation.py` — pure functions: syntactic parse, structural checks (pattern,
+  allowed values, unit, usable source anchor), GMP semantic checks (acceptance range,
+  chronology, recorded-duration agreement, independent second-person verification), then
+  confidence routing with a higher bar for critical fields. Emits the review queue and an
+  immutable audit event.
+
+Design points that are load-bearing rather than stylistic:
+
+- **The model transcribes; code interprets.** Readings arrive as verbatim strings. Every parse
+  into a number, boolean or timestamp happens in deterministic code, so no rounding or unit
+  conversion can happen inside a model call.
+- **Provenance is stamped, never claimed.** The extractor cannot populate artifact identity.
+  Code loads the artifact, re-verifies its SHA-256, MIME type and recorded tenant against the
+  reference it was handed, and only then attaches identity to each reading. A hash or tenant
+  mismatch terminates the node.
+- **Units are never silently converted**, ambiguous numbers (`1,5`) and free-form dates are
+  parse failures rather than guesses, and an out-of-range value is flagged **with its value
+  preserved** — discarding it would delete the evidence.
+- **Nothing here decides anything.** `EvidenceStatus` is `accepted` or
+  `human_review_required` — whether a human must look, not whether the batch is acceptable.
+  `decision_authority` stays `"none"` on every record.
+- **Two disagreeing transcriptions of one field is a distinct finding from an unreadable one.**
+  `conflicting_transcription` names both values a reviewer must resolve, rather than being
+  folded into the same "extractor could not read this" diagnosis as a genuinely blank field.
+- The loaded spec's version, hash and change-control reference are logged on load, so an
+  operator can observe which approved specification a running instance is actually serving.
+
+49 unit tests across `tests/unit/test_evidence_ingest.py`, `test_evidence_validation.py` and
+`test_evidence_graph.py`. The graph tests run the full pipeline through a real `Workflow` +
+`InMemoryRunner` with the transcriber replaced by a stubbed node returning known ground truth
+(`tests/unit/evidence_fixtures.py`), so artifact persistence, hash and tenant re-verification,
+provenance stamping, validation and routing are all verified without an API key or network.
+Whether Gemini reads a particular smudged digit correctly is a separate model-level evaluation
+question, not settled by these tests.
+
+Not yet wired: this graph is standalone. Joining it to `intake.py`, adding the parallel
+LIMS/EM/supplier branches behind a `JoinNode`, and replacing the scaffold agent in
+`app/agent.py` all come after this slice is trusted.
 
 ---
 
@@ -286,6 +353,17 @@ gcloud service-extensions authz-extensions import countersign-iap-request-authz 
 
 ```
 app/                              agents-cli scaffold (FastAPI, A2A, Runtime adapter)
+  domain/                             GMP deviation-investigation workflow
+    models.py                           case intake + classified case
+    classification.py                   deterministic severity rules
+    intake.py                           intake FunctionNode
+    evidence_models.py                  provenance, extraction and validation schemas
+    master_data.py                      approved spec loader (versioned + hashed)
+    master_data/bmr_page_spec_v1.json   the approved BMR page field specification
+    ingest.py                           deterministic artifact ingest
+    extraction.py                       the one narrow multimodal transcriber
+    evidence_validation.py              deterministic validation + confidence routing
+    evidence_graph.py                   the evidence-extraction Workflow graph
 infra/geap/
   constants.env                       shared resource names
   agent-gateway-egress.yaml           Agent-to-Anywhere gateway spec
@@ -323,6 +401,13 @@ tests/                                unit, integration, eval
   left as an unexplained inconsistency.
 - Scaffolded with [`google/agents-cli`](https://github.com/google/agents-cli); reference
   samples under `research/reference-repos` informed the gateway and workflow patterns.
+- The ADK `high-volume-document-analyzer` sample informed the ingest allow-list and bounded
+  concurrency approach, but its fetch path disables TLS certificate verification. That is
+  **rejected**, not adapted: a GxP system that trusts unverified transport has no provenance
+  claim to make. The `invoice-processing` sample's versioned master-data loader is adopted; its
+  autonomous decide-and-rewrite flow is not.
+- `app/agent.py` still holds the `agents-cli` scaffold agent (weather/time). The domain graph is
+  not yet mounted on the Runtime entrypoint.
 
 ---
 
