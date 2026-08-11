@@ -55,9 +55,9 @@ So Countersign is built on one non-negotiable rule:
                                         │  every egress, Agent Identity (SPIFFE)
                      ┌──────────────────▼──────────────────────────┐
                      │            Agent Gateway                     │
-                     │  REQUEST_AUTHZ  → IAP / IAM   (identity)     │
-                     │  CONTENT_AUTHZ  → Model Armor (content)      │
-                     │  CONTENT_AUTHZ  → Countersign TQA extension  │
+                     │  REQUEST_AUTHZ  → IAP / IAM   (identity)     │ proven
+                     │  CONTENT_AUTHZ  → Model Armor (content)      │ proven
+                     │  CONTENT_AUTHZ  → Countersign TQA extension  │ next
                      │                   (tenant, lifecycle state)  │
                      └──────────────────┬──────────────────────────┘
                                         │  deny by default
@@ -86,8 +86,8 @@ So Countersign is built on one non-negotiable rule:
 | Agent Registry + platform endpoints | Done |
 | Agent Gateway (Agent-to-Anywhere) | Done |
 | Agent Identity on Runtime + gateway binding | Done |
-| **Enforced deny proof, 7/7 checks** | **Done** — see below |
-| Model Armor as CONTENT_AUTHZ extension | Next |
+| **Enforced deny proof, 9/9 checks** | **Done** — see below |
+| **Model Armor as CONTENT_AUTHZ extension** | **Done** |
 | Domain Workflow graph and MCP tool servers | Not started |
 | TQA `ext_proc` extension | Not started — needs a VPC/DNS-peering spike |
 | 14-day sterility wait, kill/resume | Not started |
@@ -98,15 +98,17 @@ So Countersign is built on one non-negotiable rule:
 ## Governance proof
 
 The control plane is verified by a gate that cannot pass falsely.
-`infra/geap/verify_governance.sh` asserts seven conditions and exits non-zero on any of them:
+`infra/geap/verify_governance.sh` asserts nine conditions and exits non-zero on any of them:
 
 1. `effectiveIdentity` is an org-scoped Agent Identity, **not** a service-account fallback
 2. the Runtime instance is bound to the Agent Gateway
-3. the authorization extension is enforcing — fails on `iamEnforcementMode: DRY_RUN` or `failOpen: true`
+3. both authorization extensions are out of `DRY_RUN`, and IAP specifically has `failOpen: false`
 4. a registered destination is reachable
 5. an unregistered destination is blocked with 403 at the tool boundary
-6. Gateway request logs contain both an `ALLOWED` row and a `DENIED` row for the probe target
-7. IAP recorded `granted=false` on `iap.webServiceVersions.egressViaIAP`
+6. a benign prompt passes the Model Armor content extension
+7. a prompt-injection style message is blocked by Model Armor with 403, before the model runs
+8. Gateway request logs contain both an `ALLOWED` row and a `DENIED` row for the probe target
+9. IAP recorded `granted=false` on `iap.webServiceVersions.egressViaIAP`
 
 ```bash
 ./infra/geap/verify_governance.sh
@@ -118,12 +120,21 @@ Current result:
 effectiveIdentity: agents.global.org-334195573957.system.id.goog/resources/aiplatform/
                    projects/777448403573/locations/us-central1/reasoningEngines/9119834875157807104
 countersign-iap-request-authz: iamEnforcementMode=ENFORCED failOpen=False
+countersign-model-armor:       iamEnforcementMode=ENFORCED failOpen=True
 200 ALLOWED  https://aiplatform.mtls.googleapis.com/.../gemini-3.5-flash:generateContent
 403 DENIED   https://httpbin.org/get
 tool result: http_error status=403 reason=Forbidden
+benign prompt: completes normally, finish_reason=STOP
+injection prompt: 403 Security Policy Violation — blocked before the model was called
 IAP: granted=false on iap.webServiceVersions.egressViaIAP
-=== ALL 7 CHECKS PASSED ===
+=== ALL 9 CHECKS PASSED ===
 ```
+
+Note the deliberate asymmetry: IAP is `failOpen: false` because an outage on the identity/egress
+border must not silently admit traffic. Model Armor is `failOpen: true`, matching Google's own
+reference configuration — an availability incident in content screening degrades to unscreened
+traffic rather than blocking the whole fleet. That is a content-safety tradeoff, not an
+identity/egress hole, and the gate encodes the distinction rather than treating both the same.
 
 Machine-readable evidence is written to `infra/geap/evidence/`.
 
@@ -179,6 +190,31 @@ gcloud beta network-security authz-policies import countersign-iap-request-authz
   --source=infra/geap/iap-request-authz-policy.yaml --location=us-central1
 ```
 
+### 3b. Model Armor content extension
+
+Create a template, grant IAM to both the gateway and Reasoning Engine service agents (required
+even when gateway and template share a project), then attach the extension:
+
+```bash
+# Template: see infra/geap/model-armor-authz-extension.yaml for the template ID referenced.
+# Create via REST — the `gcloud model-armor templates create` subcommand has a permission
+# check bug independent of actual IAM; the REST API with the same credentials works.
+
+for SA in "service-${PROJECT_NUMBER}@gcp-sa-dep.iam.gserviceaccount.com" \
+          "service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"; do
+  for ROLE in roles/modelarmor.calloutUser roles/serviceusage.serviceUsageConsumer roles/modelarmor.user; do
+    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+      --member="serviceAccount:${SA}" --role="$ROLE" --condition=None --quiet
+  done
+done
+
+gcloud service-extensions authz-extensions import countersign-model-armor \
+  --source=infra/geap/model-armor-authz-extension.yaml --location=us-central1
+
+gcloud beta network-security authz-policies import countersign-model-armor \
+  --source=infra/geap/model-armor-authz-policy.yaml --location=us-central1
+```
+
 ### 4. Deploy the Runtime agent
 
 Both `identity_type=AGENT_IDENTITY` and `agent_gateway_config` are required. Omitting the
@@ -218,7 +254,7 @@ extension metadata (there is no `ENFORCE` value to set) and re-importing:
 gcloud service-extensions authz-extensions import countersign-iap-request-authz \
   --source=infra/geap/iap-request-authz-extension-enforced.yaml --location=us-central1
 
-./infra/geap/verify_governance.sh   # expect 7/7
+./infra/geap/verify_governance.sh   # expect 9/9
 ```
 
 ---
@@ -228,15 +264,17 @@ gcloud service-extensions authz-extensions import countersign-iap-request-authz 
 ```
 app/                              agents-cli scaffold (FastAPI, A2A, Runtime adapter)
 infra/geap/
-  constants.env                   shared resource names
-  agent-gateway-egress.yaml       Agent-to-Anywhere gateway spec
+  constants.env                       shared resource names
+  agent-gateway-egress.yaml           Agent-to-Anywhere gateway spec
   iap-request-authz-extension*.yaml   dry-run and enforced variants
-  iap-request-authz-policy.yaml   binds the extension to the gateway
-  register_platform_endpoints.sh  registers endpoints + grants roles/iap.egressor
-  verify_governance.sh            7-check governance gate
-  evidence/                       captured proof from the last verification run
-  hello_runtime/                  minimal agent used for the governance proof
-tests/                            unit, integration, eval
+  iap-request-authz-policy.yaml       binds the IAP extension to the gateway
+  model-armor-authz-extension.yaml    Model Armor CONTENT_AUTHZ extension
+  model-armor-authz-policy.yaml       binds the Model Armor extension to the gateway
+  register_platform_endpoints.sh      registers endpoints + grants roles/iap.egressor
+  verify_governance.sh                9-check governance gate
+  evidence/                           captured proof from the last verification run
+  hello_runtime/                      minimal agent used for the governance proof
+tests/                                unit, integration, eval
 ```
 
 ---
@@ -255,6 +293,11 @@ tests/                            unit, integration, eval
   with a separate write path for status changes.
 - Custom authorization extensions do **not** validate the callout server's TLS certificate;
   reachability is constrained to a VPC-internal FQDN instead.
+- Gateway custom authorization policy budget is 4 per Agent-to-Anywhere gateway. IAP and Model
+  Armor use 2; the TQA extension will use a 3rd, leaving 1 in reserve.
+- IAP and Model Armor are configured with different `failOpen` values on purpose (`false` vs
+  `true`) — see [Governance proof](#governance-proof). This is stated explicitly rather than
+  left as an unexplained inconsistency.
 - Scaffolded with [`google/agents-cli`](https://github.com/google/agents-cli); reference
   samples under `research/reference-repos` informed the gateway and workflow patterns.
 

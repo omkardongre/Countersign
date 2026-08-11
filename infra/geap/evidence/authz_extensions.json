@@ -9,6 +9,17 @@
       "metadata": {
         "iapPolicyVersion": "V1"
       }
+    },
+    {
+      "name": "projects/countersign-505107/locations/us-central1/authzExtensions/countersign-model-armor",
+      "createTime": "2026-08-11T19:56:25.317426379Z",
+      "updateTime": "2026-08-11T19:56:25.988034994Z",
+      "service": "modelarmor.us-central1.rep.googleapis.com",
+      "timeout": "1s",
+      "failOpen": true,
+      "metadata": {
+        "model_armor_settings": "[ { \"response_template_id\": \"projects/countersign-505107/locations/us-central1/templates/countersign-content-guard\", \"request_template_id\": \"projects/countersign-505107/locations/us-central1/templates/countersign-content-guard\" } ]"
+      }
     }
   ]
 }
