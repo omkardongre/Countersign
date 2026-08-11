@@ -1,0 +1,351 @@
+{
+  "name": "projects/777448403573/locations/us-central1/reasoningEngines/9119834875157807104",
+  "displayName": "countersign-hello",
+  "spec": {
+    "packageSpec": {
+      "pickleObjectGcsUri": "gs://countersign-505107-agent-staging/agent_engine/agent_engine.pkl",
+      "dependencyFilesGcsUri": "gs://countersign-505107-agent-staging/agent_engine/dependencies.tar.gz",
+      "requirementsGcsUri": "gs://countersign-505107-agent-staging/agent_engine/requirements.txt"
+    },
+    "classMethods": [
+      {
+        "parameters": {
+          "required": [
+            "user_id",
+            "session_id"
+          ],
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string"
+            },
+            "user_id": {
+              "type": "string"
+            }
+          }
+        },
+        "name": "get_session",
+        "api_mode": "",
+        "description": "Deprecated. Use async_get_session instead.\n\n        Get a session for the given user.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "user_id"
+          ],
+          "type": "object",
+          "properties": {
+            "user_id": {
+              "type": "string"
+            }
+          }
+        },
+        "name": "list_sessions",
+        "api_mode": "",
+        "description": "Deprecated. Use async_list_sessions instead.\n\n        List sessions for the given user.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "user_id"
+          ],
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "nullable": true
+            },
+            "user_id": {
+              "type": "string"
+            },
+            "state": {
+              "type": "object",
+              "nullable": true
+            }
+          }
+        },
+        "name": "create_session",
+        "api_mode": "",
+        "description": "Deprecated. Use async_create_session instead.\n\n        Creates a new session.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "user_id",
+            "session_id"
+          ],
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string"
+            },
+            "user_id": {
+              "type": "string"
+            }
+          }
+        },
+        "name": "delete_session",
+        "api_mode": "",
+        "description": "Deprecated. Use async_delete_session instead.\n\n        Deletes a session for the given user.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "user_id",
+            "session_id"
+          ],
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string"
+            },
+            "user_id": {
+              "type": "string"
+            }
+          }
+        },
+        "name": "async_get_session",
+        "api_mode": "async",
+        "description": "Get a session for the given user.\n\n        Args:\n            user_id (str):\n                Required. The ID of the user.\n            session_id (str):\n                Required. The ID of the session.\n            **kwargs (dict[str, Any]):\n                Optional. Additional keyword arguments to pass to the\n                session service.\n\n        Returns:\n            Session: The session instance (if any). It returns None if the\n            session is not found.\n\n        Raises:\n            RuntimeError: If the session is not found.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "user_id"
+          ],
+          "type": "object",
+          "properties": {
+            "user_id": {
+              "type": "string"
+            }
+          }
+        },
+        "name": "async_list_sessions",
+        "api_mode": "async",
+        "description": "List sessions for the given user.\n\n        Args:\n            user_id (str):\n                Required. The ID of the user.\n            **kwargs (dict[str, Any]):\n                Optional. Additional keyword arguments to pass to the\n                session service.\n\n        Returns:\n            ListSessionsResponse: The list of sessions.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "user_id"
+          ],
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "nullable": true
+            },
+            "user_id": {
+              "type": "string"
+            },
+            "state": {
+              "type": "object",
+              "nullable": true
+            }
+          }
+        },
+        "name": "async_create_session",
+        "api_mode": "async",
+        "description": "Creates a new session.\n\n        Args:\n            user_id (str):\n                Required. The ID of the user.\n            session_id (str):\n                Optional. The ID of the session. If not provided, an ID\n                will be be generated for the session.\n            state (dict[str, Any]):\n                Optional. The initial state of the session.\n            ttl (str):\n                Optional. The time-to-live for the session.\n            expire_time (str):\n                Optional. The expiration time for the session.\n            **kwargs (dict[str, Any]):\n                Optional. Additional keyword arguments to pass to the\n                session service.\n\n        Returns:\n            Session: The newly created session instance.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "user_id",
+            "session_id"
+          ],
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string"
+            },
+            "user_id": {
+              "type": "string"
+            }
+          }
+        },
+        "name": "async_delete_session",
+        "api_mode": "async",
+        "description": "Deletes a session for the given user.\n\n        Args:\n            user_id (str):\n                Required. The ID of the user.\n            session_id (str):\n                Required. The ID of the session.\n            **kwargs (dict[str, Any]):\n                Optional. Additional keyword arguments to pass to the\n                session service.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "session"
+          ],
+          "type": "object",
+          "properties": {
+            "session": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        },
+        "name": "async_add_session_to_memory",
+        "api_mode": "async",
+        "description": "Generates memories.\n\n        Args:\n            session (Dict[str, Any]):\n                Required. The session to use for generating memories. It should\n                be a dictionary representing an ADK Session object, e.g.\n                session.model_dump(mode=\"json\").\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "user_id",
+            "query"
+          ],
+          "type": "object",
+          "properties": {
+            "user_id": {
+              "type": "string"
+            },
+            "query": {
+              "type": "string"
+            }
+          }
+        },
+        "name": "async_search_memory",
+        "api_mode": "async",
+        "description": "Searches memories for the given user.\n\n        Args:\n            user_id: The id of the user.\n            query: The query to match the memories on.\n\n        Returns:\n            A SearchMemoryResponse containing the matching memories.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "message",
+            "user_id"
+          ],
+          "type": "object",
+          "properties": {
+            "message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              ]
+            },
+            "user_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string",
+              "nullable": true
+            },
+            "run_config": {
+              "type": "object",
+              "nullable": true
+            }
+          }
+        },
+        "name": "stream_query",
+        "api_mode": "stream",
+        "description": "Deprecated. Use async_stream_query instead.\n\n        Streams responses from the ADK application in response to a message.\n\n        Args:\n            message (Union[str, Dict[str, Any]]):\n                Required. The message to stream responses for.\n            user_id (str):\n                Required. The ID of the user.\n            session_id (str):\n                Optional. The ID of the session. If not provided, a new\n                session will be created for the user.\n            run_config (Optional[Dict[str, Any]]):\n                Optional. The run config to use for the query. If you want to\n                pass in a `run_config` pydantic object, you can pass in a dict\n                representing it as `run_config.model_dump(mode=\"json\")`.\n            **kwargs (dict[str, Any]):\n                Optional. Additional keyword arguments to pass to the\n                runner.\n\n        Yields:\n            The output of querying the ADK application.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "message",
+            "user_id"
+          ],
+          "type": "object",
+          "properties": {
+            "message": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              ]
+            },
+            "user_id": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string",
+              "nullable": true
+            },
+            "run_config": {
+              "type": "object",
+              "nullable": true
+            },
+            "session_events": {
+              "type": "array",
+              "nullable": true
+            }
+          }
+        },
+        "name": "async_stream_query",
+        "api_mode": "async_stream",
+        "description": "Streams responses asynchronously from the ADK application.\n\n        Args:\n            message (str):\n                Required. The message to stream responses for.\n            user_id (str):\n                Required. The ID of the user.\n            session_id (str):\n                Optional. The ID of the session. If not provided, a new\n                session will be created for the user. If this is specified, then\n                `session_events` will be ignored.\n            session_events (Optional[List[Dict[str, Any]]]):\n                Optional. The session events to use for the query. This will be\n                used to initialize the session if `session_id` is not provided.\n            run_config (Optional[Dict[str, Any]]):\n                Optional. The run config to use for the query. If you want to\n                pass in a `run_config` pydantic object, you can pass in a dict\n                representing it as `run_config.model_dump(mode=\"json\")`.\n            **kwargs (dict[str, Any]):\n                Optional. Additional keyword arguments to pass to the\n                runner.\n\n        Yields:\n            Event dictionaries asynchronously.\n\n        Raises:\n            TypeError: If message is not a string or a dictionary representing\n            a Content object.\n            ValueError: If both session_id and session_events are specified.\n        "
+      },
+      {
+        "parameters": {
+          "required": [
+            "request_json"
+          ],
+          "type": "object",
+          "properties": {
+            "request_json": {
+              "type": "string"
+            }
+          }
+        },
+        "name": "streaming_agent_run_with_events",
+        "api_mode": "async_stream",
+        "description": "Streams responses asynchronously from the ADK application.\n\n        In general, you should use `async_stream_query` instead, as it has a\n        more structured API and works with the respective ADK services that\n        you have defined for the AdkApp. This method is primarily meant for\n        invocation from AgentSpace.\n\n        Args:\n            request_json (str):\n                Required. The request to stream responses for.\n        "
+      }
+    ],
+    "deploymentSpec": {
+      "env": [
+        {
+          "name": "GOOGLE_GENAI_USE_VERTEXAI",
+          "value": "true"
+        },
+        {
+          "name": "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY",
+          "value": "true"
+        },
+        {
+          "name": "GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES",
+          "value": "false"
+        },
+        {
+          "name": "MODEL_NAME",
+          "value": "gemini-3.5-flash"
+        },
+        {
+          "name": "GOOGLE_CLOUD_LOCATION",
+          "value": "global"
+        }
+      ],
+      "minInstances": 1,
+      "maxInstances": 2,
+      "resourceLimits": {
+        "cpu": "1",
+        "memory": "4Gi"
+      },
+      "agentGatewayConfig": {
+        "agentToAnywhereConfig": {
+          "agentGateway": "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+        }
+      }
+    },
+    "agentFramework": "google-adk",
+    "identityType": "AGENT_IDENTITY",
+    "effectiveIdentity": "agents.global.org-334195573957.system.id.goog/resources/aiplatform/projects/777448403573/locations/us-central1/reasoningEngines/9119834875157807104"
+  },
+  "createTime": "2026-08-11T06:12:26.959628Z",
+  "updateTime": "2026-08-11T19:01:57.924317Z",
+  "description": "Countersign hello Runtime agent for Agent Gateway governance proof.",
+  "contextSpec": {
+    "memoryBankConfig": {
+      "generationConfig": {}
+    }
+  },
+  "trafficConfig": {
+    "trafficSplitAlwaysLatest": {}
+  }
+}
