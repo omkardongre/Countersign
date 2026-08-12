@@ -90,6 +90,7 @@ So Countersign is built on one non-negotiable rule:
 | **Model Armor as CONTENT_AUTHZ extension** | **Done** |
 | Deterministic intake + severity classification | Done — `app/domain/`, see below |
 | Multimodal evidence extraction, one BMR page | Done — `app/domain/`, see below |
+| Deterministic compliance engine (completeness, OOS, OOT) | Done — `app/domain/`, see below |
 | Parallel evidence branches (LIMS, EM, supplier CoA) | Not started |
 | Deterministic GMP compliance engine | Not started |
 | Investigation + Challenger agents (LLM) | Not started |
@@ -179,9 +180,61 @@ provenance stamping, validation and routing are all verified without an API key 
 Whether Gemini reads a particular smudged digit correctly is a separate model-level evaluation
 question, not settled by these tests.
 
+### Domain workflow — deterministic GMP compliance engine
+
+The third stage (`final_reseach/05_architecture.md` §5, "Deterministic compliance engine")
+runs after validation, still with zero model calls, and asks three separately regulated
+questions rather than one blended verdict:
+
+```
+validate_page_evidence → evaluate_evidence_compliance
+                              ├─ completeness   (ICH Q7 batch record review)
+                              ├─ OOS            (FDA 1993/2022 out-of-specification guidance)
+                              └─ OOT            (USP <1010> out-of-trend, separate from OOS)
+```
+
+- **Completeness** — every required field must be present *and settled*. A field still
+  `review_required` (unverified low-confidence transcription) counts as incomplete: an
+  unverified reading is not yet part of the record.
+- **OOS (out-of-specification)** — every settled field validation already found `invalid`
+  becomes a formal OOS finding with a **Phase I/Phase II gate**, per FDA's guidance and the
+  Barr Laboratories precedent that retesting must not occur before a formal investigation is
+  opened. Phase assignment is an allow-list: a field lands at Phase I ("no assignable cause
+  yet") only when *every* finding on it is a pure range violation; any other finding
+  (parse/pattern/unit/allowed-value/anchor problems) means an assignable cause is already on
+  record and the field starts at Phase II. The observed out-of-range value is always preserved
+  and cited — it is usually the deviation being investigated, never auto-resolved or hidden.
+- **OOT (out-of-trend)** — a *separate* check against an approved historical baseline
+  (`master_data/trend_baseline_axr450_v1.json`, its own change-control cadence, distinct from
+  the field specification), evaluated only on fields validation settled as `accepted`. Per USP
+  <1010>, a value can be simultaneously in-specification and out-of-trend — this is the whole
+  point of OOT, and the engine evaluates it as a genuinely separate question, not a
+  looser/tighter version of the OOS check. When no approved baseline exists for a product, OOT
+  is explicitly **not evaluated** (`trend_baseline_id: null`) rather than silently reported as
+  passing.
+- **Root-cause tagging** — every finding carries a `root_cause_category` (material / machine /
+  method / measurement / personnel / environment), set as master data on the field spec itself,
+  matching Katalyze's published Deviation Investigator framing
+  (`final_reseach/01_katalyze_ai.md` §3). This is a tag, not a determination: it gives the
+  future Investigation agent a starting hypothesis dimension, never a root cause.
+
+`ComplianceStatus` is `sufficient_for_investigation` or `insufficient_evidence` — still not a
+disposition. `decision_authority` stays `"none"`. Every `ComplianceFinding` carries its
+`SourceAnchor` where one exists, and the full `ValidatedEvidence` it was computed from travels
+forward on the result, so a QP can audit a compliance finding without a separate lookup.
+
+12 additional unit tests added since the initial review pass, specifically targeting the OOS
+phase-assignment heuristic (every non-range finding shape — unit, blank transcription,
+degenerate/unlocatable anchor, and a range finding mixed with a locatability finding — must land
+at Phase II, not fall through to Phase I by default) and a guard against scoring a batch against
+another product's trend baseline. Reviewed via `semantic_reviewer` sub-agent before commit; both
+issues it found were fixed, not just noted.
+
 Not yet wired: this graph is standalone. Joining it to `intake.py`, adding the parallel
-LIMS/EM/supplier branches behind a `JoinNode`, and replacing the scaffold agent in
-`app/agent.py` all come after this slice is trusted.
+LIMS/EM/supplier branches behind a `JoinNode` (the compliance engine already accepts one
+`ValidatedEvidence` per artifact and would need a small reconciliation step, not a redesign, to
+accept a joined dict of them), and replacing the scaffold agent in `app/agent.py` all come after
+this slice is trusted.
 
 ---
 
@@ -360,12 +413,15 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     classification.py                   deterministic severity rules
     intake.py                           intake FunctionNode
     evidence_models.py                  provenance, extraction and validation schemas
-    master_data.py                      approved spec loader (versioned + hashed)
+    master_data.py                      approved spec + trend baseline loaders (versioned + hashed)
     master_data/bmr_page_spec_v1.json   the approved BMR page field specification
+    master_data/trend_baseline_axr450_v1.json  approved historical-trend baseline
     ingest.py                           deterministic artifact ingest
     extraction.py                       the one narrow multimodal transcriber
     evidence_validation.py              deterministic validation + confidence routing
-    evidence_graph.py                   the evidence-extraction Workflow graph
+    compliance_models.py                completeness / OOS / OOT finding schemas
+    compliance.py                       the deterministic compliance engine
+    evidence_graph.py                   the evidence-extraction + compliance Workflow graph
 infra/geap/
   constants.env                       shared resource names
   agent-gateway-egress.yaml           Agent-to-Anywhere gateway spec
