@@ -1,0 +1,34 @@
+{
+  "baseline_id": "axr450_blending_trend_baseline",
+  "baseline_version": "1.0.0",
+  "product_code": "AXR450",
+  "effective_date": "2026-08-01",
+  "approved_by": "QA-Head (synthetic)",
+  "change_control_ref": "CC-2026-0143 (synthetic)",
+  "description": "Historical process-trend baseline for AXR450 blending step, computed from the prior 30 conforming batches. Recalculated periodically on its own change-control cadence, independent of the field specification it is measured against.",
+  "method": "mean_stdev",
+  "sigma_threshold": 3.0,
+  "sample_batch_count": 30,
+  "baseline_period_start": "2025-11-01",
+  "baseline_period_end": "2026-07-31",
+  "fields": [
+    {
+      "field_name": "blend_speed_rpm",
+      "unit": "rpm",
+      "trend_mean": 11.2,
+      "trend_std_dev": 0.6
+    },
+    {
+      "field_name": "blend_time_min",
+      "unit": "min",
+      "trend_mean": 15.1,
+      "trend_std_dev": 0.8
+    },
+    {
+      "field_name": "product_temperature_c",
+      "unit": "degC",
+      "trend_mean": 22.0,
+      "trend_std_dev": 1.1
+    }
+  ]
+}

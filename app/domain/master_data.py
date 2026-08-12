@@ -48,6 +48,36 @@ _MASTER_DATA_DIR = pathlib.Path(__file__).parent / "master_data"
 BMR_PAGE_SPEC_FILENAME = "bmr_page_spec_v1.json"
 
 
+class RootCauseCategory(StrEnum):
+    """Ishikawa/fishbone root-cause dimension a field's deviation would sit in.
+
+    Katalyze's published Deviation Investigator agent frames investigation
+    around **material, machine, method and measure**
+    (``final_reseach/01_katalyze_ai.md`` section 3). That four-category set is
+    a subset of the standard 6M Ishikawa fishbone (man/machine/material/
+    method/measurement/environment) used across quality engineering generally,
+    not something specific to any vendor, so ``PERSONNEL`` and ``ENVIRONMENT``
+    are kept alongside Katalyze's four rather than dropped to match it exactly.
+
+    This tag is master data, not something the compliance engine infers: which
+    dimension a field's failure implicates is a quality-engineering judgement
+    made once, at spec-approval time, the same way the field's unit and range
+    are. It exists so a compliance finding can hand the (future) Investigation
+    agent a starting hypothesis category instead of a bare field name.
+    """
+
+    MATERIAL = "material"
+    MACHINE = "machine"
+    METHOD = "method"
+    MEASUREMENT = "measurement"
+    PERSONNEL = "personnel"
+    ENVIRONMENT = "environment"
+    UNCLASSIFIED = "unclassified"
+    """Identifiers and metadata (batch number, page number) that are not
+    themselves a process parameter and so do not implicate a root-cause
+    dimension when they fail a check."""
+
+
 class FieldKind(StrEnum):
     """Value domain a specified field must parse into.
 
@@ -93,6 +123,24 @@ class FieldSpec(BaseModel):
     maximum: float | None = None
     allowed_values: tuple[str, ...] | None = None
     pattern: str | None = None
+    root_cause_category: RootCauseCategory = Field(
+        default=RootCauseCategory.UNCLASSIFIED,
+        description=(
+            "Fishbone dimension this field's deviation would implicate. "
+            "Defaults to unclassified for specs written before this field "
+            "existed, so older approved specs keep loading rather than "
+            "failing validation."
+        ),
+    )
+    trend_tracked: bool = Field(
+        default=False,
+        description=(
+            "Whether historical-trend (OOT) comparison applies to this "
+            "field. Only numeric process parameters with an approved trend "
+            "baseline should set this — an identifier or a timestamp has no "
+            "trend to be out of."
+        ),
+    )
 
 
 class DocumentFieldSpec(BaseModel):
@@ -135,6 +183,115 @@ class DocumentFieldSpec(BaseModel):
             if spec.critical
             else self.standard_field_min_confidence
         )
+
+
+class TrendFieldBaseline(BaseModel):
+    """Historical mean/standard-deviation baseline for one trended field."""
+
+    model_config = ConfigDict(frozen=True)
+
+    field_name: str
+    unit: str | None = None
+    trend_mean: float
+    trend_std_dev: float = Field(
+        gt=0.0,
+        description=(
+            "Must be strictly positive: a zero-variance baseline would make "
+            "every deviation from the mean, however small, register as an "
+            "infinite-sigma OOT trigger."
+        ),
+    )
+
+
+class TrendBaseline(BaseModel):
+    """An approved historical-trend baseline for one product's process step.
+
+    Separate master data from ``DocumentFieldSpec``, on its own change-control
+    cadence: a field's acceptance *range* is a specification decision, while
+    its trend *baseline* is a recalculated statistical fact about how the
+    process has actually been running. Recomputing the baseline from a new
+    batch window must not require re-approving the specification, and vice
+    versa — USP <1010> and the OOT literature both treat trend analysis as
+    distinct from specification conformance (a result can be in-spec and
+    still out-of-trend).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    baseline_id: str
+    baseline_version: str
+    baseline_sha256: str
+    product_code: str
+    effective_date: str
+    approved_by: str
+    change_control_ref: str
+    description: str
+    method: str = Field(
+        description=(
+            "How the baseline was computed. Only 'mean_stdev' is currently "
+            "consumed by the compliance engine; other values load but are "
+            "not evaluated, so a future method cannot be silently misread as "
+            "sigma statistics."
+        )
+    )
+    sigma_threshold: float = Field(
+        gt=0.0,
+        description="Sigma distance from trend_mean that triggers an OOT finding.",
+    )
+    sample_batch_count: int = Field(ge=1)
+    baseline_period_start: str
+    baseline_period_end: str
+    fields: tuple[TrendFieldBaseline, ...]
+
+    def field(self, field_name: str) -> TrendFieldBaseline | None:
+        for baseline in self.fields:
+            if baseline.field_name == field_name:
+                return baseline
+        return None
+
+
+@functools.cache
+def load_trend_baseline(filename: str) -> TrendBaseline:
+    """Loads and pins an approved historical-trend baseline.
+
+    Unlike the document field spec, there is no single default filename: a
+    trend baseline is specific to one product, so callers pass the filename
+    for the product/step they are validating. Cached for the same reason as
+    ``load_document_field_spec`` — a case in flight must not observe its
+    baseline changing mid-investigation.
+
+    Raises:
+        FileNotFoundError: If the named baseline is not present.
+        ValueError: If the baseline is malformed, uses an unrecognised
+            ``method``, or declares duplicate field names.
+    """
+    path = _MASTER_DATA_DIR / filename
+    if not path.is_file():
+        raise FileNotFoundError(f"Trend baseline not found: {filename}")
+
+    raw = path.read_bytes()
+    payload = json.loads(raw)
+    payload["baseline_sha256"] = hashlib.sha256(raw).hexdigest()
+
+    baseline = TrendBaseline.model_validate(payload)
+
+    names = [field.field_name for field in baseline.fields]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ValueError(
+            f"Baseline {filename} declares duplicate field names: {duplicates}"
+        )
+
+    _logger.info(
+        "Loaded trend baseline %s: version=%s sha256=%s product=%s "
+        "change_control_ref=%s",
+        baseline.baseline_id,
+        baseline.baseline_version,
+        baseline.baseline_sha256,
+        baseline.product_code,
+        baseline.change_control_ref,
+    )
+    return baseline
 
 
 @functools.cache

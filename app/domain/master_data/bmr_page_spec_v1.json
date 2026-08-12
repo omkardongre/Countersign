@@ -22,7 +22,8 @@
       "kind": "string",
       "required": true,
       "critical": true,
-      "pattern": "^[A-Z0-9]{4,12}$"
+      "pattern": "^[A-Z0-9]{4,12}$",
+      "root_cause_category": "material"
     },
     {
       "field_name": "page_number",
@@ -47,7 +48,8 @@
       "kind": "string",
       "required": true,
       "critical": true,
-      "pattern": "^EQ-[0-9]{3}$"
+      "pattern": "^EQ-[0-9]{3}$",
+      "root_cause_category": "machine"
     },
     {
       "field_name": "step_start_time",
@@ -71,7 +73,9 @@
       "critical": true,
       "unit": "rpm",
       "minimum": 8.0,
-      "maximum": 14.0
+      "maximum": 14.0,
+      "root_cause_category": "machine",
+      "trend_tracked": true
     },
     {
       "field_name": "blend_time_min",
@@ -81,7 +85,9 @@
       "critical": true,
       "unit": "min",
       "minimum": 12.0,
-      "maximum": 18.0
+      "maximum": 18.0,
+      "root_cause_category": "method",
+      "trend_tracked": true
     },
     {
       "field_name": "product_temperature_c",
@@ -91,7 +97,9 @@
       "critical": false,
       "unit": "degC",
       "minimum": 18.0,
-      "maximum": 26.0
+      "maximum": 26.0,
+      "root_cause_category": "environment",
+      "trend_tracked": true
     },
     {
       "field_name": "operator_initials",
@@ -99,7 +107,8 @@
       "kind": "string",
       "required": true,
       "critical": true,
-      "pattern": "^[A-Z]{2,3}$"
+      "pattern": "^[A-Z]{2,3}$",
+      "root_cause_category": "personnel"
     },
     {
       "field_name": "verifier_initials",
@@ -107,7 +116,8 @@
       "kind": "string",
       "required": true,
       "critical": true,
-      "pattern": "^[A-Z]{2,3}$"
+      "pattern": "^[A-Z]{2,3}$",
+      "root_cause_category": "personnel"
     },
     {
       "field_name": "deviation_noted",

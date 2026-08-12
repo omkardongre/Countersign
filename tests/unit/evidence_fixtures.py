@@ -220,3 +220,17 @@ def replace_field(
         for existing in evidence.fields
     ]
     return evidence.model_copy(update={"fields": fields})
+
+
+def make_validated_evidence(**extracted_overrides):
+    """Builds a clean, fully-accepted ``ValidatedEvidence`` for the ground
+    truth page, for tests one layer downstream of extraction (compliance).
+
+    Runs the real ``validate_extracted_evidence`` rather than constructing a
+    ``ValidatedEvidence`` by hand, so compliance tests exercise the actual
+    validation output shape instead of a hand-maintained approximation of it.
+    """
+    from app.domain.evidence_validation import validate_extracted_evidence
+
+    evidence = make_extracted_evidence(**extracted_overrides)
+    return validate_extracted_evidence(evidence, page_count=evidence.page_count)

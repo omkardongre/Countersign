@@ -34,13 +34,13 @@ from google.adk.workflow import node
 from google.genai import types
 
 from app.domain import extraction
+from app.domain.compliance_models import ComplianceResult, ComplianceStatus
 from app.domain.evidence_graph import build_evidence_extraction_workflow
 from app.domain.evidence_models import (
     EvidenceStatus,
     FieldStatus,
     ModelFieldReading,
     PageExtraction,
-    ValidatedEvidence,
 )
 from app.domain.extraction import (
     EXTRACTOR_AGENT_NAME,
@@ -123,10 +123,10 @@ async def _run(runner: InMemoryRunner, payload: dict) -> list:
     ]
 
 
-def _final_evidence(events: list) -> ValidatedEvidence:
+def _final_result(events: list) -> ComplianceResult:
     outputs = [event.output for event in events if event.output is not None]
     assert outputs, "workflow produced no node output"
-    return ValidatedEvidence.model_validate(outputs[-1])
+    return ComplianceResult.model_validate(outputs[-1])
 
 
 @pytest.mark.asyncio
@@ -136,14 +136,22 @@ async def test_clean_page_flows_end_to_end_and_is_accepted(
     stub_ground_truth(make_page_extraction())
     runner = _runner()
 
-    result = _final_evidence(await _run(runner, _request_payload()))
+    result = _final_result(await _run(runner, _request_payload()))
+    evidence = result.source_evidence
 
-    assert result.status is EvidenceStatus.ACCEPTED
-    assert result.tenant_id == "aurex"
-    assert result.batch_id == "AX-2291"
-    assert result.review_queue == []
-    assert result.extractor_agent == EXTRACTOR_AGENT_NAME
-    assert result.extractor_model == EXTRACTOR_MODEL
+    assert evidence.status is EvidenceStatus.ACCEPTED
+    assert evidence.tenant_id == "aurex"
+    assert evidence.batch_id == "AX-2291"
+    assert evidence.review_queue == []
+    assert evidence.extractor_agent == EXTRACTOR_AGENT_NAME
+    assert evidence.extractor_model == EXTRACTOR_MODEL
+    assert evidence.decision_authority == "none"
+    # The ground-truth page is AXR450, which has an approved trend baseline,
+    # and every value in it sits inside that baseline -- so the case reaches
+    # the end of the graph with nothing outstanding at all.
+    assert result.status is ComplianceStatus.SUFFICIENT_FOR_INVESTIGATION
+    assert result.findings == []
+    assert result.trend_baseline_id == "axr450_blending_trend_baseline"
     assert result.decision_authority == "none"
 
 
@@ -154,7 +162,7 @@ async def test_artifact_is_persisted_hashed_and_tenant_scoped(
     stub_ground_truth(make_page_extraction())
     runner = _runner()
 
-    result = _final_evidence(await _run(runner, _request_payload()))
+    result = _final_result(await _run(runner, _request_payload())).source_evidence
 
     expected_digest = hashlib.sha256(SYNTHETIC_PAGE_BYTES).hexdigest()
     assert result.artifact_sha256 == expected_digest
@@ -183,7 +191,7 @@ async def test_every_fact_is_anchored_to_the_persisted_artifact(
     stub_ground_truth(make_page_extraction())
     runner = _runner()
 
-    result = _final_evidence(await _run(runner, _request_payload()))
+    result = _final_result(await _run(runner, _request_payload())).source_evidence
 
     for field in result.fields:
         assert field.anchor is not None
@@ -209,7 +217,7 @@ async def test_illegible_critical_field_routes_to_human_review(
     )
     runner = _runner()
 
-    result = _final_evidence(await _run(runner, _request_payload()))
+    result = _final_result(await _run(runner, _request_payload())).source_evidence
     field = next(f for f in result.fields if f.field_name == "operator_initials")
 
     assert result.status is EvidenceStatus.HUMAN_REVIEW_REQUIRED
@@ -233,7 +241,7 @@ async def test_invented_field_is_discarded_at_the_boundary(
     stub_ground_truth(make_page_extraction(add=[invented]))
     runner = _runner()
 
-    result = _final_evidence(await _run(runner, _request_payload()))
+    result = _final_result(await _run(runner, _request_payload())).source_evidence
 
     assert "operator_mood" not in {f.field_name for f in result.fields}
     assert any(
@@ -258,7 +266,7 @@ async def test_conflicting_transcriptions_are_escalated_not_resolved(
     stub_ground_truth(make_page_extraction(add=[duplicate]))
     runner = _runner()
 
-    result = _final_evidence(await _run(runner, _request_payload()))
+    result = _final_result(await _run(runner, _request_payload())).source_evidence
     field = next(f for f in result.fields if f.field_name == "blend_speed_rpm")
 
     assert field.status is FieldStatus.MISSING
@@ -290,7 +298,7 @@ async def test_conflicting_and_unspecified_fields_are_both_handled(
     )
     runner = _runner()
 
-    result = _final_evidence(await _run(runner, _request_payload()))
+    result = _final_result(await _run(runner, _request_payload())).source_evidence
 
     # Discarded as unspecified before conflict tracking ever sees it -- an
     # invented field must not surface as a reviewable conflict either.
@@ -321,6 +329,37 @@ async def test_pinning_a_wrong_spec_version_terminates_the_graph(
 
     with pytest.raises(Exception, match="approved spec in force"):
         await _run(runner, _request_payload(spec_version_expected="0.0.1"))
+
+
+@pytest.mark.asyncio
+async def test_out_of_range_reading_reaches_the_compliance_result(
+    stub_ground_truth,
+) -> None:
+    """An OOS finding must survive the full ingest-extract-validate-comply
+    chain, not just the validation node in isolation."""
+    out_of_range = ModelFieldReading(
+        field_name="blend_speed_rpm",
+        value_text="18.0",
+        unit_text="rpm",
+        confidence=0.98,
+        page_number=1,
+        transcribed_context="Speed: 18.0 rpm",
+    )
+    stub_ground_truth(
+        make_page_extraction(replace={"blend_speed_rpm": out_of_range})
+    )
+    runner = _runner()
+
+    result = _final_result(await _run(runner, _request_payload()))
+
+    assert result.status is ComplianceStatus.INSUFFICIENT_EVIDENCE
+    oos_findings = [
+        f for f in result.findings if f.field_name == "blend_speed_rpm"
+    ]
+    assert len(oos_findings) == 1
+    assert oos_findings[0].finding_type.value == "out_of_specification"
+    assert oos_findings[0].anchor is not None
+    assert oos_findings[0].anchor.artifact_sha256 == result.artifact_sha256
 
 
 def test_extractor_is_configured_as_a_bounded_single_turn_transcriber() -> None:
