@@ -29,13 +29,26 @@ def _exact_tools(text: str) -> set[str]:
     return set(_EXACT.findall(text))
 
 
-def test_case_workflow_policy_allows_all_three_named_tools() -> None:
+def test_case_workflow_policy_allows_all_named_tools() -> None:
+    """Department reads plus the sterility-clock tools the workflow calls.
+
+    Sterility tools are here because an Agent Identity principal cannot be a
+    Cloud SQL IAM database user (confirmed against the live instance), so
+    the clock is reached through MCP like LIMS/EM/CoA, not opened directly.
+    """
     text = _read("mcp-case-workflow-tools-allow.yaml")
     assert "MATCH_BASE_PROTOCOL_METHODS" in text
     assert 'name: "tools/list"' in text
     assert "bind_to: case_workflow" in text
     assert "do_not_bind_to: qc_probe" in text
-    assert _exact_tools(text) == {"lims_query", "em_query", "coa_fetch"}
+    assert _exact_tools(text) == {
+        "lims_query",
+        "em_query",
+        "coa_fetch",
+        "sterility_get",
+        "sterility_start",
+        "sterility_bind_resume_handle",
+    }
 
 
 def test_qc_probe_allows_lims_only_for_wrong_department_deny() -> None:

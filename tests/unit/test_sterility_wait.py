@@ -223,6 +223,69 @@ async def test_graph_pauses_until_incubation_store_is_complete(
     assert qp_args["payload"]["release_gate_status"] == "not_ready"
 
 
+@pytest.mark.asyncio
+async def test_scheduler_tick_wakes_a_case_parked_on_the_hold(
+    stub_ground_truth,
+    stub_investigation_agents,
+    monkeypatch,
+) -> None:
+    """End to end: park on the hold, tick, and the same invocation continues."""
+    import asyncio
+    import types as pytypes
+
+    from fastapi import Request
+
+    from app.domain.sterility_wait import STERILITY_INTERRUPT_PREFIX
+    from app.scheduler.routes import sterility_tick
+    from tests.unit.evidence_fixtures import make_page_extraction
+
+    # Compressed hold, labelled as such on the record.
+    monkeypatch.setenv("COUNTERSIGN_STERILITY_HOLD_SECONDS", "1")
+    stub_ground_truth(make_page_extraction())
+    runner = _runner()
+    session_id, events = await _start(runner, _case_payload())
+    invocation_id, interrupt_id, _ = _request_input(
+        events, interrupt_prefix=STERILITY_INTERRUPT_PREFIX
+    )
+
+    store = get_sterility_store()
+    parked = store.get("aurex", "AX-2291")
+    assert parked is not None
+    assert parked.compressed_for_demo is True
+    # The handle is what lets a tick find this invocation weeks later.
+    assert parked.resume_handle is not None
+    assert parked.resume_handle.invocation_id == invocation_id
+    assert parked.resume_handle.session_id == session_id
+    assert parked.resume_handle.interrupt_id == interrupt_id
+
+    await asyncio.sleep(1.1)
+
+    app = pytypes.SimpleNamespace(state=pytypes.SimpleNamespace(runner=runner))
+    request = Request(
+        {"type": "http", "headers": [], "method": "POST", "app": app}
+    )
+    result = await sterility_tick(request)
+
+    assert result["completed"] == 1
+    assert result["resumed"] == 1
+    assert result["records"][0]["invocation_id"] == invocation_id
+
+    session = await runner.session_service.get_session(
+        app_name=runner.app_name,
+        user_id=parked.resume_handle.user_id,
+        session_id=session_id,
+    )
+    assert session is not None
+    paused_at = [
+        part.function_call.id
+        for event in session.events
+        for part in (event.content.parts if event.content else [])
+        if part.function_call and part.function_call.name == "adk_request_input"
+    ]
+    # The tick advanced the case past the hold to the QP signature.
+    assert any(item.startswith("qp_confirmation:") for item in paused_at)
+
+
 def test_compressed_hold_rejects_invalid_seconds(monkeypatch) -> None:
     from app.domain.sterility_store import incubation_hold
 

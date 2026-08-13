@@ -24,6 +24,7 @@ from app.domain.department_tools import (
     COA_FETCH,
     EM_QUERY,
     LIMS_QUERY,
+    STERILITY_TOOLS,
 )
 from app.mcp.client import (
     DepartmentToolCallError,
@@ -39,12 +40,13 @@ from app.mcp.department_server import (
 
 
 @pytest.mark.asyncio
-async def test_department_mcp_exposes_exactly_three_named_tools() -> None:
+async def test_department_mcp_exposes_exactly_the_named_tools() -> None:
+    """Department reads plus sterility clock access. No other surface."""
     mcp = build_department_mcp()
     async with create_connected_server_and_client_session(mcp) as session:
         listed = await session.list_tools()
     names = {tool.name for tool in listed.tools}
-    assert names == ALLOWED_DEPARTMENT_TOOLS
+    assert names == ALLOWED_DEPARTMENT_TOOLS | STERILITY_TOOLS
     assert "postgres-execute-sql" not in names
 
 

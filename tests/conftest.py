@@ -34,6 +34,7 @@ def _fresh_sterility_store(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DB_IAM_USER", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", raising=False)
     monkeypatch.delenv("COUNTERSIGN_ALLOW_VERTEX_SESSIONS", raising=False)
+    monkeypatch.delenv("COUNTERSIGN_CASE_ENGINE", raising=False)
     reset_sterility_store_cache()
     get_sterility_store().reset()
     yield
