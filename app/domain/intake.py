@@ -35,6 +35,25 @@ from app.domain.classification import classify_severity
 from app.domain.models import CaseIntake, ClassifiedCase, LifecycleState
 
 
+def classify_intake(intake: CaseIntake) -> ClassifiedCase:
+    """Assigns GMP deviation severity and opens a classified case record.
+
+    Pure construction over ``classify_severity``. Kept as a function so the
+    intake node and the joined case graph share one classification path.
+    """
+    severity, rationale = classify_severity(intake)
+    return ClassifiedCase(
+        tenant_id=intake.tenant_id,
+        batch_id=intake.batch_id,
+        product_name=intake.product_name,
+        doc_type=intake.doc_type,
+        severity=severity,
+        lifecycle_state=LifecycleState.CLASSIFIED,
+        evidence_refs=intake.evidence_refs,
+        rationale=rationale,
+    )
+
+
 @node(name="intake_and_classify")
 def intake_and_classify(node_input: CaseIntake) -> ClassifiedCase:
     """Creates a case record and assigns its GMP deviation severity.
@@ -47,14 +66,4 @@ def intake_and_classify(node_input: CaseIntake) -> ClassifiedCase:
         ``decision_authority="none"`` — ready for the Gateway's five-tuple
         authorization on subsequent steps.
     """
-    severity, rationale = classify_severity(node_input)
-    return ClassifiedCase(
-        tenant_id=node_input.tenant_id,
-        batch_id=node_input.batch_id,
-        product_name=node_input.product_name,
-        doc_type=node_input.doc_type,
-        severity=severity,
-        lifecycle_state=LifecycleState.CLASSIFIED,
-        evidence_refs=node_input.evidence_refs,
-        rationale=rationale,
-    )
+    return classify_intake(node_input)
