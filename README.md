@@ -95,7 +95,7 @@ So Countersign is built on one non-negotiable rule:
 | Parallel department collectors (BMR, LIMS, EM, CoA) | Done — synthetic catalog, `JoinNode` |
 | Investigation + Challenger + citation gate | Done — LLM drafts; code gates citations |
 | Deterministic Annex 16 §1.7 confirmation checklist | Done — code; never certifies |
-| QP `RequestInput` + case `ResumabilityConfig` | Not started |
+| QP `RequestInput` + case `ResumabilityConfig` | Done — confirm refused while `not_ready` |
 | MCP tool servers (MES, LIMS, historian, supplier, QMS) | Not started |
 | TQA `ext_proc` extension | Not started — needs a VPC/DNS-peering spike |
 | 14-day sterility wait, kill/resume | Not started |
@@ -236,10 +236,12 @@ issues it found were fixed, not just noted.
 The manufacturing BMR path still runs this engine. Parallel QC/supply checks and the joined
 case graph are described below.
 
-### Domain workflow — joined case graph (intake → departments → Annex 16)
+### Domain workflow — joined case graph (intake → departments → QP)
 
-`app/agent.py` serves `build_deviation_case_workflow()` as `root_agent`. The GEAP hello agent
-used for Gateway deny proof stays under `infra/geap/hello_runtime` and is not this graph.
+`app/agent.py` serves `build_deviation_case_workflow()` as `root_agent` with
+`ResumabilityConfig(is_resumable=True)` so a paused QP prompt can continue by
+`invocation_id`. The GEAP hello agent used for Gateway deny proof stays under
+`infra/geap/hello_runtime` and is not this graph.
 
 ```
 START → intake_and_bind_evidence
@@ -250,6 +252,7 @@ START → intake_and_bind_evidence
       → challenge_investigation
       → gate_investigation
       → evaluate_annex16_release_gate
+      → confirm_qp
 ```
 
 - Intake classifies the deviation, persists `classified_case` in workflow state, and stamps
@@ -279,6 +282,12 @@ START → intake_and_bind_evidence
   `not_evaluated` until the TQA extension exists. Required unevaluated or failed items
   make the pack `not_ready`. Outcomes are `ready_for_qp_review` / `not_ready` — never
   certified or released. This is a CDMO confirmation pack, not MAH certification.
+- QP sign-off is a graph `RequestInput` pause on `confirm_qp` with
+  `rerun_on_resume=True` (ADK `request_input_rerun` pattern). The pack is recovered
+  as `node_input` from the event log, not from session state. Allowed replies are
+  `confirm`, `decline`, and `cannot_confirm`. `confirm` while the pack is `not_ready` is
+  recorded as `rejected` and does not flip the gate. Machine `decision_authority` stays
+  `"none"`. There is no UI yet; resume is by `FunctionResponse` on the same invocation.
 
 Standalone `evidence_graph.py` (ingest → extract → validate → comply) remains for the
 single-artifact path. The platform entrypoint is the joined case graph.
@@ -482,6 +491,8 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     challenger.py                       clean-context verifier (no tools)
     release_models.py                   Annex 16 checklist result types
     release_gate.py                     deterministic confirmation checklist
+    qp_models.py                        QP confirmation request / record types
+    qp_confirmation.py                  RequestInput pause; reruns on resume
     master_data/annex16_checklist_v1.json  hashed Annex 16 §1.7 item bindings
     master_data/department_catalog_v1.json  synthetic LIMS / EM / CoA rows
 infra/geap/
