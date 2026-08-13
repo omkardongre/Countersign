@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deviation case graph: intake → departments → investigation → Annex 16 → QP.
+"""Deviation case graph: intake → departments → investigation → sterility hold → Annex 16 → QP.
 
 ADK fan-out/fan-in (``workflows/fan_out_fan_in``): after classify, three
 department collectors run in parallel and a ``JoinNode`` waits for all of
@@ -26,14 +26,18 @@ stall the join (ADK JoinNode caution).
           -> draft_investigation
           -> challenge_investigation
           -> gate_investigation
+          -> await_sterility_incubation
           -> evaluate_annex16_release_gate
           -> confirm_qp
 
 Manufacturing still runs the BMR transcriber. QC and supply are deterministic
 lookups over connector-shaped LIMS / EM / CoA records. Investigation and
 challenger are single-turn LLMs with no tools; citation and Annex 16 gates
-are code. QP sign-off is a ``RequestInput`` pause on ``confirm_qp``
-(``rerun_on_resume=True``). Nothing in this graph certifies or releases a batch.
+are code. Sterility incubation is external store state plus a
+``RequestInput`` checkpoint (``rerun_on_resume=True``); a scheduler tick
+marks the store complete and ADK resume continues. QP sign-off is a
+``RequestInput`` pause on ``confirm_qp`` (``rerun_on_resume=True``).
+Nothing in this graph certifies or releases a batch.
 """
 
 from __future__ import annotations
@@ -66,8 +70,13 @@ from app.domain.models import ClassifiedCase
 from app.domain.qp_confirmation import confirm_qp
 from app.domain.qp_models import QpReviewedPackage
 from app.domain.release_gate import evaluate_annex16_release_gate_node
+from app.domain.sterility_wait import await_sterility_incubation
+from app.domain.workflow_meta import (
+    CASE_WORKFLOW_NAME,
+    CASE_WORKFLOW_VERSION,
+    WORKFLOW_VERSION_STATE_KEY,
+)
 
-CASE_WORKFLOW_NAME = "deviation_case"
 CLASSIFIED_CASE_STATE_KEY = "classified_case"
 
 _BRANCH_KEYS = (
@@ -100,7 +109,10 @@ def intake_and_bind_evidence(node_input: DeviationCaseRequest) -> Event:
     )
     return Event(
         output=bundle.model_dump(mode="json"),
-        state={CLASSIFIED_CASE_STATE_KEY: classified.model_dump(mode="json")},
+        state={
+            CLASSIFIED_CASE_STATE_KEY: classified.model_dump(mode="json"),
+            WORKFLOW_VERSION_STATE_KEY: CASE_WORKFLOW_VERSION,
+        },
     )
 
 
@@ -186,6 +198,7 @@ def build_deviation_case_workflow() -> Workflow:
                 draft_investigation,
                 challenge_investigation,
                 gate_investigation,
+                await_sterility_incubation,
                 evaluate_annex16_release_gate_node,
                 confirm_qp,
             ),

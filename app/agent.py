@@ -15,7 +15,8 @@
 """Platform entrypoint: the joined deviation-case Workflow.
 
 ``fast_api_app`` and the ADK runner load ``root_agent`` from this module.
-Resumability is on so a QP ``RequestInput`` can continue by invocation id.
+Resumability is on so sterility hold and QP ``RequestInput`` continue by
+invocation id. Sessions persist via ``SESSION_SERVICE_URI`` when set.
 The GEAP hello agent used for Gateway deny proof stays isolated under
 ``infra/geap/hello_runtime`` and is not this graph.
 """
