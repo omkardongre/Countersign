@@ -15,11 +15,12 @@
 """Platform entrypoint: the joined deviation-case Workflow.
 
 ``fast_api_app`` and the ADK runner load ``root_agent`` from this module.
+Resumability is on so a QP ``RequestInput`` can continue by invocation id.
 The GEAP hello agent used for Gateway deny proof stays isolated under
 ``infra/geap/hello_runtime`` and is not this graph.
 """
 
-from google.adk.apps import App
+from google.adk.apps import App, ResumabilityConfig
 
 from app.domain.case_graph import build_deviation_case_workflow
 
@@ -28,4 +29,5 @@ root_agent = build_deviation_case_workflow()
 app = App(
     root_agent=root_agent,
     name="app",
+    resumability_config=ResumabilityConfig(is_resumable=True),
 )

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deviation case graph: intake → departments → investigation → Annex 16 gate.
+"""Deviation case graph: intake → departments → investigation → Annex 16 → QP.
 
 ADK fan-out/fan-in (``workflows/fan_out_fan_in``): after classify, three
 department collectors run in parallel and a ``JoinNode`` waits for all of
@@ -27,11 +27,13 @@ stall the join (ADK JoinNode caution).
           -> challenge_investigation
           -> gate_investigation
           -> evaluate_annex16_release_gate
+          -> confirm_qp
 
 Manufacturing still runs the BMR transcriber. QC and supply are deterministic
 lookups over connector-shaped LIMS / EM / CoA records. Investigation and
 challenger are single-turn LLMs with no tools; citation and Annex 16 gates
-are code. The Annex 16 node never certifies or releases a batch.
+are code. QP sign-off is a ``RequestInput`` pause on ``confirm_qp``
+(``rerun_on_resume=True``). Nothing in this graph certifies or releases a batch.
 """
 
 from __future__ import annotations
@@ -61,8 +63,9 @@ from app.domain.intake import classify_intake
 from app.domain.investigation import draft_investigation
 from app.domain.investigation_gate import gate_investigation
 from app.domain.models import ClassifiedCase
+from app.domain.qp_confirmation import confirm_qp
+from app.domain.qp_models import QpReviewedPackage
 from app.domain.release_gate import evaluate_annex16_release_gate_node
-from app.domain.release_models import CaseReleasePackage
 
 CASE_WORKFLOW_NAME = "deviation_case"
 CLASSIFIED_CASE_STATE_KEY = "classified_case"
@@ -166,12 +169,12 @@ def reconcile_departments(
 
 
 def build_deviation_case_workflow() -> Workflow:
-    """Builds the full deviation-case Workflow through the Annex 16 gate."""
+    """Builds the full deviation-case Workflow through QP confirmation."""
     join_departments = JoinNode(name="join_departments")
     return Workflow(
         name=CASE_WORKFLOW_NAME,
         input_schema=DeviationCaseRequest,
-        output_schema=CaseReleasePackage,
+        output_schema=QpReviewedPackage,
         edges=[
             (START, intake_and_bind_evidence),
             (
@@ -183,6 +186,7 @@ def build_deviation_case_workflow() -> Workflow:
                 challenge_investigation,
                 gate_investigation,
                 evaluate_annex16_release_gate_node,
+                confirm_qp,
             ),
         ],
     )

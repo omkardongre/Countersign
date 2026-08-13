@@ -18,7 +18,7 @@ import base64
 import json
 
 import pytest
-from google.adk.apps import App
+from google.adk.apps import App, ResumabilityConfig
 from google.adk.runners import InMemoryRunner
 from google.adk.workflow import node
 from google.genai import types
@@ -44,6 +44,10 @@ from app.domain.investigation_models import (
 )
 from app.domain.master_data import RootCauseCategory
 from app.domain.models import DeviationSeverity, DocType, LifecycleState
+from app.domain.qp_models import (
+    QpConfirmationOutcome,
+    QpReviewedPackage,
+)
 from app.domain.release_models import (
     CaseReleasePackage,
     ChecklistItemStatus,
@@ -53,6 +57,7 @@ from tests.unit.evidence_fixtures import SYNTHETIC_PAGE_BYTES, make_page_extract
 
 _APP_NAME = "test_case_app"
 _USER_ID = "test-qa-user"
+_REQUEST_INPUT_NAME = "adk_request_input"
 
 
 def _stub_extractor(extraction_result: PageExtraction):
@@ -139,7 +144,11 @@ def stub_investigation_agents(monkeypatch):
 
 
 def _runner() -> InMemoryRunner:
-    app = App(name=_APP_NAME, root_agent=build_deviation_case_workflow())
+    app = App(
+        name=_APP_NAME,
+        root_agent=build_deviation_case_workflow(),
+        resumability_config=ResumabilityConfig(is_resumable=True),
+    )
     return InMemoryRunner(app=app, app_name=_APP_NAME)
 
 
@@ -166,25 +175,74 @@ def _case_payload(**intake_overrides) -> dict:
     }
 
 
-async def _run(runner: InMemoryRunner, payload: dict) -> list:
+async def _start(runner: InMemoryRunner, payload: dict) -> tuple[str, list]:
     session = await runner.session_service.create_session(
         app_name=runner.app_name, user_id=_USER_ID
     )
     message = types.Content(
         role="user", parts=[types.Part(text=json.dumps(payload))]
     )
-    return [
+    events = [
         event
         async for event in runner.run_async(
             user_id=_USER_ID, session_id=session.id, new_message=message
         )
     ]
+    return session.id, events
 
 
-def _final_result(events: list) -> CaseReleasePackage:
+def _gate_package(events: list) -> CaseReleasePackage:
     outputs = [event.output for event in events if event.output is not None]
     assert outputs, "workflow produced no node output"
     return CaseReleasePackage.model_validate(outputs[-1])
+
+
+def _request_input(events: list) -> tuple[str, str, dict]:
+    for event in events:
+        if not event.content or not event.content.parts:
+            continue
+        for part in event.content.parts:
+            call = part.function_call
+            if call is None or call.name != _REQUEST_INPUT_NAME:
+                continue
+            return event.invocation_id, call.id, dict(call.args or {})
+    raise AssertionError("workflow did not pause for QP confirmation")
+
+
+async def _resume(
+    runner: InMemoryRunner,
+    session_id: str,
+    invocation_id: str,
+    interrupt_id: str,
+    response: dict,
+) -> list:
+    message = types.Content(
+        role="user",
+        parts=[
+            types.Part(
+                function_response=types.FunctionResponse(
+                    id=interrupt_id,
+                    name=_REQUEST_INPUT_NAME,
+                    response=response,
+                )
+            )
+        ],
+    )
+    return [
+        event
+        async for event in runner.run_async(
+            user_id=_USER_ID,
+            session_id=session_id,
+            new_message=message,
+            invocation_id=invocation_id,
+        )
+    ]
+
+
+def _reviewed(events: list) -> QpReviewedPackage:
+    outputs = [event.output for event in events if event.output is not None]
+    assert outputs, "resume produced no node output"
+    return QpReviewedPackage.model_validate(outputs[-1])
 
 
 def _annex_item(package: CaseReleasePackage, annex_ref: str):
@@ -197,7 +255,7 @@ def test_case_workflow_is_named_and_schema_bound() -> None:
     workflow = build_deviation_case_workflow()
     assert workflow.name == CASE_WORKFLOW_NAME
     assert workflow.input_schema is not None
-    assert workflow.output_schema is CaseReleasePackage
+    assert workflow.output_schema is QpReviewedPackage
 
 
 def test_platform_entrypoint_serves_the_case_workflow() -> None:
@@ -212,7 +270,13 @@ async def test_classified_case_and_compliance_share_scope(
     stub_investigation_agents,
 ) -> None:
     stub_ground_truth(make_page_extraction())
-    result = _final_result(await _run(_runner(), _case_payload()))
+    runner = _runner()
+    _, events = await _start(runner, _case_payload())
+    result = _gate_package(events)
+    invocation_id, interrupt_id, args = _request_input(events)
+    assert invocation_id
+    assert interrupt_id.startswith("qp_confirmation:")
+    assert args["payload"]["release_gate_status"] == ReleaseGateStatus.NOT_READY
     investigation = result.investigation
     case = investigation.case
 
@@ -251,7 +315,7 @@ async def test_intake_schema_failure_stops_before_extraction(
 ) -> None:
     stub_ground_truth(make_page_extraction())
     with pytest.raises(ValueError):
-        await _run(_runner(), {"intake": {"tenant_id": "aurex"}, "evidence": {}})
+        await _start(_runner(), {"intake": {"tenant_id": "aurex"}, "evidence": {}})
 
 
 @pytest.mark.asyncio
@@ -262,7 +326,7 @@ async def test_disallowed_mime_type_fails_manufacturing_without_stalling_join(
     stub_ground_truth(make_page_extraction())
     payload = _case_payload()
     payload["evidence"]["mime_type"] = "application/zip"
-    result = _final_result(await _run(_runner(), payload))
+    result = _gate_package((await _start(_runner(), payload))[1])
     case = result.investigation.case
 
     manufacturing = next(
@@ -315,7 +379,7 @@ async def test_qc_oos_still_runs_investigation(
     monkeypatch.setattr(
         branches_mod, "lookup_department_snapshot", lambda **_kwargs: dirty
     )
-    result = _final_result(await _run(_runner(), _case_payload()))
+    result = _gate_package((await _start(_runner(), _case_payload()))[1])
     assert result.investigation.draft is not None
     assert result.investigation.gate.passed is True
     assert any(
@@ -324,6 +388,61 @@ async def test_qc_oos_still_runs_investigation(
     assert _annex_item(result, "1.7.13").status is ChecklistItemStatus.FAIL
     assert _annex_item(result, "1.7.11").status is ChecklistItemStatus.PASS
     assert result.release_gate.status is ReleaseGateStatus.NOT_READY
+
+
+@pytest.mark.asyncio
+async def test_qp_decline_resumes_and_records_confirmation(
+    stub_ground_truth,
+    stub_investigation_agents,
+) -> None:
+    stub_ground_truth(make_page_extraction())
+    runner = _runner()
+    session_id, events = await _start(runner, _case_payload())
+    invocation_id, interrupt_id, _args = _request_input(events)
+    reviewed = _reviewed(
+        await _resume(
+            runner,
+            session_id,
+            invocation_id,
+            interrupt_id,
+            {
+                "action": "decline",
+                "qp_name": "Jane QP",
+                "rationale": "Investigation is still open.",
+            },
+        )
+    )
+    assert reviewed.decision_authority == "none"
+    assert reviewed.qp_confirmation.outcome is QpConfirmationOutcome.DECLINED
+    assert reviewed.qp_confirmation.qp_name == "Jane QP"
+    assert reviewed.release_package.release_gate.status is ReleaseGateStatus.NOT_READY
+
+
+@pytest.mark.asyncio
+async def test_qp_confirm_on_not_ready_is_rejected(
+    stub_ground_truth,
+    stub_investigation_agents,
+) -> None:
+    stub_ground_truth(make_page_extraction())
+    runner = _runner()
+    session_id, events = await _start(runner, _case_payload())
+    invocation_id, interrupt_id, _args = _request_input(events)
+    reviewed = _reviewed(
+        await _resume(
+            runner,
+            session_id,
+            invocation_id,
+            interrupt_id,
+            {
+                "action": "confirm",
+                "qp_name": "Jane QP",
+                "rationale": "Pack looks complete.",
+            },
+        )
+    )
+    assert reviewed.qp_confirmation.outcome is QpConfirmationOutcome.REJECTED
+    assert reviewed.qp_confirmation.action.value == "confirm"
+    assert reviewed.release_package.release_gate.status is ReleaseGateStatus.NOT_READY
 
 
 def test_extractor_seam_is_unchanged() -> None:

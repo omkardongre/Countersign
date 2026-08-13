@@ -14,13 +14,16 @@
 
 """Entrypoint test: ``app.agent.root_agent`` is the joined case workflow."""
 
+from google.adk.workflow import Workflow
+
 from app.agent import app as adk_app
 from app.agent import root_agent
 from app.domain.case_graph import CASE_WORKFLOW_NAME
-from google.adk.workflow import Workflow
 
 
 def test_root_agent_is_the_deviation_case_workflow() -> None:
     assert isinstance(root_agent, Workflow)
     assert root_agent.name == CASE_WORKFLOW_NAME
     assert adk_app.root_agent is root_agent
+    assert adk_app.resumability_config is not None
+    assert adk_app.resumability_config.is_resumable is True
