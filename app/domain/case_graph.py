@@ -12,134 +12,173 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Joined deviation case graph: intake → evidence extraction → compliance.
+"""Deviation case graph: intake → departments → investigation → challenger → gate.
 
-First runnable slice of the fleet spine in ``final_reseach/05_architecture.md``
-section 5. ADK 2.x graph patterns used here (from ``adk-docs/docs/graphs`` and
-``agents-cli`` workflow cheatsheet):
-
-* Outer ``Workflow`` with ``input_schema`` / ``output_schema`` so START parses
-  a ``DeviationCaseRequest`` instead of raw ``Content``.
-* Evidence slice composed as a nested ``Workflow`` node, not copied edges
-  (``Workflow`` is a ``BaseNode``; ``(predecessor, inner_workflow)`` is the
-  documented composition).
-* Classification travels in ``Event.state``, not on the evidence payload.
-  Official data-handling guidance: ``output`` is the successor's typed input;
-  ``state`` is for values later nodes need that must not widen an existing
-  contract. Bytes stay in the artifact service.
+ADK fan-out/fan-in (``workflows/fan_out_fan_in``): after classify, three
+department collectors run in parallel and a ``JoinNode`` waits for all of
+them. Each collector always emits ``Event.output`` so a failed branch cannot
+stall the join (ADK JoinNode caution).
 
     START -> intake_and_bind_evidence
-          -> evidence_extraction (nested workflow)
-          -> attach_classified_case
+          -> (collect_manufacturing, collect_qc, collect_supply)
+          -> join_departments
+          -> reconcile_departments
+          -> draft_investigation
+          -> challenge_investigation
+          -> gate_investigation
 
-Investigation, Challenger, durable wait and QP ``RequestInput`` attach later.
-Parallel MES/LIMS/EM/CoA branches attach as sibling ingest paths into a
-``JoinNode`` before compliance.
+Manufacturing still runs the BMR transcriber. QC and supply are deterministic
+lookups over connector-shaped LIMS / EM / CoA records. Investigation and
+challenger are single-turn LLMs with no tools; the citation gate is code.
 """
 
 from __future__ import annotations
 
-from google.adk.events.event import Event
-from google.adk.workflow import START, Workflow, node
+from typing import Any
 
+from google.adk.events.event import Event
+from google.adk.workflow import START, JoinNode, Workflow, node
+
+from app.domain.branches import (
+    collect_manufacturing,
+    collect_qc,
+    collect_supply,
+)
 from app.domain.case_models import CaseComplianceResult, DeviationCaseRequest
-from app.domain.compliance_models import ComplianceResult
-from app.domain.evidence_graph import build_evidence_extraction_workflow
+from app.domain.challenger import challenge_investigation
+from app.domain.compliance_models import ComplianceStatus
+from app.domain.department_models import (
+    BranchOutcome,
+    BranchStatus,
+    CaseEvidenceBundle,
+    Department,
+)
 from app.domain.evidence_models import EvidenceIngestRequest
 from app.domain.ingest import EvidenceIntegrityError
 from app.domain.intake import classify_intake
+from app.domain.investigation import draft_investigation
+from app.domain.investigation_gate import gate_investigation
+from app.domain.investigation_models import InvestigationCaseResult
 from app.domain.models import ClassifiedCase
 
 CASE_WORKFLOW_NAME = "deviation_case"
 CLASSIFIED_CASE_STATE_KEY = "classified_case"
 
+_BRANCH_KEYS = (
+    "collect_manufacturing",
+    "collect_qc",
+    "collect_supply",
+)
+
 
 @node(name="intake_and_bind_evidence")
 def intake_and_bind_evidence(node_input: DeviationCaseRequest) -> Event:
-    """Classifies the deviation and binds evidence to that case's scope.
-
-    Args:
-        node_input: Reporter intake plus one retrieved evidence attachment.
-
-    Returns:
-        An ``Event`` whose ``output`` is the ingest request (tenant/case/batch
-        stamped from the classified case) and whose ``state`` holds the
-        classified case for the terminal join.
-    """
+    """Classifies the deviation and builds the shared fan-out bundle."""
     classified = classify_intake(node_input.intake)
     attachment = node_input.evidence
-    ingest = EvidenceIngestRequest(
+    bundle = CaseEvidenceBundle(
         tenant_id=classified.tenant_id,
         case_id=classified.case_id,
         batch_id=classified.batch_id,
-        source_uri=attachment.source_uri,
-        mime_type=attachment.mime_type,
-        content_base64=attachment.content_base64,
-        page_count=attachment.page_count,
-        spec_version_expected=attachment.spec_version_expected,
+        bmr=EvidenceIngestRequest(
+            tenant_id=classified.tenant_id,
+            case_id=classified.case_id,
+            batch_id=classified.batch_id,
+            source_uri=attachment.source_uri,
+            mime_type=attachment.mime_type,
+            content_base64=attachment.content_base64,
+            page_count=attachment.page_count,
+            spec_version_expected=attachment.spec_version_expected,
+        ),
     )
     return Event(
-        output=ingest.model_dump(mode="json"),
+        output=bundle.model_dump(mode="json"),
         state={CLASSIFIED_CASE_STATE_KEY: classified.model_dump(mode="json")},
     )
 
 
-@node(name="attach_classified_case")
-def attach_classified_case(
-    node_input: ComplianceResult,
+def _parse_branch(key: str, raw: Any) -> BranchOutcome:
+    if raw is None:
+        department = {
+            "collect_manufacturing": Department.MANUFACTURING,
+            "collect_qc": Department.QC,
+            "collect_supply": Department.SUPPLY,
+        }[key]
+        return BranchOutcome(
+            department=department,
+            status=BranchStatus.FAILED,
+            error=f"JoinNode missing {key}.",
+        )
+    return BranchOutcome.model_validate(raw)
+
+
+@node(name="reconcile_departments")
+def reconcile_departments(
+    node_input: dict[str, Any],
     classified_case: dict,
 ) -> CaseComplianceResult:
-    """Rejoins classification (from session state) with first-page compliance.
-
-    ``classified_case`` is bound from ``ctx.state`` by parameter name, per
-    ADK FunctionNode resolution (not from the evidence payload).
-
-    Args:
-        node_input: Compliance output of the nested evidence workflow.
-        classified_case: Classified case written at intake.
-
-    Returns:
-        A ``CaseComplianceResult`` whose case and evidence share tenant,
-        case id and batch id.
-
-    Raises:
-        EvidenceIntegrityError: If classification disagrees with evidence
-            scope. A mismatch is a graph bug, not a negotiable value.
-    """
+    """Joins department outputs with the classified case from session state."""
     classified = ClassifiedCase.model_validate(classified_case)
-    if (
-        classified.tenant_id != node_input.tenant_id
-        or classified.case_id != node_input.case_id
-        or classified.batch_id != node_input.batch_id
-    ):
-        raise EvidenceIntegrityError(
-            "Classified case scope does not match the compliance result "
-            f"(case {classified.case_id}/{classified.tenant_id}/"
-            f"{classified.batch_id} vs evidence {node_input.case_id}/"
-            f"{node_input.tenant_id}/{node_input.batch_id})."
-        )
+    branches = [_parse_branch(key, node_input.get(key)) for key in _BRANCH_KEYS]
+
+    manufacturing = next(
+        (branch for branch in branches if branch.department is Department.MANUFACTURING),
+        None,
+    )
+    if manufacturing is not None and manufacturing.status is BranchStatus.OK:
+        if manufacturing.manufacturing_compliance is not None:
+            mfg = manufacturing.manufacturing_compliance
+            if (
+                mfg.tenant_id != classified.tenant_id
+                or mfg.case_id != classified.case_id
+                or mfg.batch_id != classified.batch_id
+            ):
+                raise EvidenceIntegrityError(
+                    "Manufacturing compliance scope does not match the "
+                    "classified case."
+                )
+
+    findings = [finding for branch in branches for finding in branch.findings]
+    any_failed = any(branch.status is BranchStatus.FAILED for branch in branches)
+    mfg_result = (
+        manufacturing.manufacturing_compliance
+        if manufacturing is not None
+        else None
+    )
+    if any_failed or findings:
+        status = ComplianceStatus.INSUFFICIENT_EVIDENCE
+    elif mfg_result is not None:
+        status = mfg_result.status
+    else:
+        status = ComplianceStatus.INSUFFICIENT_EVIDENCE
+
     return CaseComplianceResult(
         classified=classified,
-        compliance=node_input,
+        compliance=mfg_result,
+        aggregated_status=status,
+        branches=branches,
+        findings=findings,
         decision_authority="none",
     )
 
 
 def build_deviation_case_workflow() -> Workflow:
-    """Builds the joined intake → nested evidence graph → compliance result.
-
-    Returns:
-        A ``Workflow`` taking ``DeviationCaseRequest`` at START and producing
-        ``CaseComplianceResult``.
-    """
-    evidence_workflow = build_evidence_extraction_workflow()
+    """Builds the full deviation-case Workflow through the citation gate."""
+    join_departments = JoinNode(name="join_departments")
     return Workflow(
         name=CASE_WORKFLOW_NAME,
         input_schema=DeviationCaseRequest,
-        output_schema=CaseComplianceResult,
+        output_schema=InvestigationCaseResult,
         edges=[
             (START, intake_and_bind_evidence),
-            (intake_and_bind_evidence, evidence_workflow),
-            (evidence_workflow, attach_classified_case),
+            (
+                intake_and_bind_evidence,
+                (collect_manufacturing, collect_qc, collect_supply),
+                join_departments,
+                reconcile_departments,
+                draft_investigation,
+                challenge_investigation,
+                gate_investigation,
+            ),
         ],
     )

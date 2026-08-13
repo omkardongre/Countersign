@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end tests for the joined intake → evidence → compliance graph."""
+"""End-to-end tests for the joined intake → departments → investigation graph."""
 
 import base64
 import json
@@ -23,12 +23,27 @@ from google.adk.runners import InMemoryRunner
 from google.adk.workflow import node
 from google.genai import types
 
+from app.domain import branches as branches_mod
+from app.domain import challenger as challenger_mod
 from app.domain import extraction
+from app.domain import investigation as investigation_mod
 from app.domain.case_graph import CASE_WORKFLOW_NAME, build_deviation_case_workflow
-from app.domain.case_models import CaseComplianceResult
+from app.domain.challenger import get_challenger_agent
 from app.domain.compliance_models import ComplianceStatus
+from app.domain.department_catalog import lookup_department_snapshot
+from app.domain.department_models import LimsResultRow, LimsSnapshot
 from app.domain.evidence_models import PageExtraction
 from app.domain.extraction import get_page_extractor
+from app.domain.investigation import get_investigation_agent
+from app.domain.investigation_models import (
+    ChallengerReport,
+    CitedClaim,
+    InvestigationCaseResult,
+    InvestigationDraft,
+    ProductImpactDraft,
+    RootCauseHypothesis,
+)
+from app.domain.master_data import RootCauseCategory
 from app.domain.models import DeviationSeverity, DocType, LifecycleState
 from tests.unit.evidence_fixtures import SYNTHETIC_PAGE_BYTES, make_page_extraction
 
@@ -49,6 +64,54 @@ def _stub_extractor(extraction_result: PageExtraction):
     return stub_page_extractor
 
 
+def _stub_investigator():
+    @node(name="stub_investigator")
+    def stub_investigator(node_input) -> InvestigationDraft:
+        assert isinstance(node_input, types.Content)
+        return InvestigationDraft(
+            tenant_id="ignored",
+            case_id="ignored",
+            batch_id="AX-2291",
+            hypotheses=[
+                RootCauseHypothesis(
+                    category=RootCauseCategory.METHOD,
+                    statement=(
+                        "Blend-speed excursion on the BMR is the leading "
+                        "process deviation to investigate."
+                    ),
+                    supporting_claims=[
+                        CitedClaim(
+                            claim="Manufacturing ingested the BMR page.",
+                            source_uris=["drive://synthetic/bmr/AX-2291/page-14"],
+                        )
+                    ],
+                    confidence=0.62,
+                )
+            ],
+            product_impact=ProductImpactDraft(
+                statement="Patient-safety impact is not determined by this draft.",
+                supporting_claims=[
+                    CitedClaim(
+                        claim="Sterility-assurance impact is on the classified case.",
+                        source_uris=["drive://synthetic/bmr/AX-2291/page-14"],
+                    )
+                ],
+            ),
+            decision_authority="none",
+        )
+
+    return stub_investigator
+
+
+def _stub_challenger():
+    @node(name="stub_challenger")
+    def stub_challenger(node_input) -> ChallengerReport:
+        assert isinstance(node_input, types.Content)
+        return ChallengerReport(attacks=[], decision_authority="none")
+
+    return stub_challenger
+
+
 @pytest.fixture
 def stub_ground_truth(monkeypatch):
     def _install(extraction_result: PageExtraction) -> None:
@@ -59,6 +122,16 @@ def stub_ground_truth(monkeypatch):
         )
 
     return _install
+
+
+@pytest.fixture
+def stub_investigation_agents(monkeypatch):
+    monkeypatch.setattr(
+        investigation_mod, "get_investigation_agent", lambda: _stub_investigator()
+    )
+    monkeypatch.setattr(
+        challenger_mod, "get_challenger_agent", lambda: _stub_challenger()
+    )
 
 
 def _runner() -> InMemoryRunner:
@@ -104,10 +177,10 @@ async def _run(runner: InMemoryRunner, payload: dict) -> list:
     ]
 
 
-def _final_result(events: list) -> CaseComplianceResult:
+def _final_result(events: list) -> InvestigationCaseResult:
     outputs = [event.output for event in events if event.output is not None]
     assert outputs, "workflow produced no node output"
-    return CaseComplianceResult.model_validate(outputs[-1])
+    return InvestigationCaseResult.model_validate(outputs[-1])
 
 
 def test_case_workflow_is_named_and_schema_bound() -> None:
@@ -126,18 +199,30 @@ def test_platform_entrypoint_serves_the_case_workflow() -> None:
 @pytest.mark.asyncio
 async def test_classified_case_and_compliance_share_scope(
     stub_ground_truth,
+    stub_investigation_agents,
 ) -> None:
     stub_ground_truth(make_page_extraction())
     result = _final_result(await _run(_runner(), _case_payload()))
+    case = result.case
 
     assert result.decision_authority == "none"
-    assert result.classified.severity is DeviationSeverity.CRITICAL
-    assert result.classified.lifecycle_state is LifecycleState.CLASSIFIED
-    assert result.classified.tenant_id == result.compliance.tenant_id
-    assert result.classified.case_id == result.compliance.case_id
-    assert result.classified.batch_id == result.compliance.batch_id == "AX-2291"
-    assert result.compliance.status is ComplianceStatus.SUFFICIENT_FOR_INVESTIGATION
-    assert result.compliance.decision_authority == "none"
+    assert result.gate.passed is True
+    assert result.draft is not None
+    assert result.challenger is not None
+    assert result.draft.decision_authority == "none"
+    assert case.classified.severity is DeviationSeverity.CRITICAL
+    assert case.classified.lifecycle_state is LifecycleState.CLASSIFIED
+    assert case.compliance is not None
+    assert case.classified.tenant_id == case.compliance.tenant_id
+    assert case.classified.case_id == case.compliance.case_id
+    assert case.classified.batch_id == case.compliance.batch_id == "AX-2291"
+    assert case.aggregated_status is ComplianceStatus.SUFFICIENT_FOR_INVESTIGATION
+    assert case.compliance.status is ComplianceStatus.SUFFICIENT_FOR_INVESTIGATION
+    assert case.compliance.decision_authority == "none"
+    departments = {branch.department.value for branch in case.branches}
+    assert departments == {"manufacturing", "qc", "supply"}
+    assert all(branch.status.value == "ok" for branch in case.branches)
+    assert case.findings == []
 
 
 @pytest.mark.asyncio
@@ -150,17 +235,82 @@ async def test_intake_schema_failure_stops_before_extraction(
 
 
 @pytest.mark.asyncio
-async def test_disallowed_mime_type_terminates_the_joined_graph(
+async def test_disallowed_mime_type_fails_manufacturing_without_stalling_join(
     stub_ground_truth,
+    stub_investigation_agents,
 ) -> None:
     stub_ground_truth(make_page_extraction())
     payload = _case_payload()
     payload["evidence"]["mime_type"] = "application/zip"
-    with pytest.raises(Exception, match="not an accepted evidence type"):
-        await _run(_runner(), payload)
+    result = _final_result(await _run(_runner(), payload))
+    case = result.case
+
+    manufacturing = next(
+        branch
+        for branch in case.branches
+        if branch.department.value == "manufacturing"
+    )
+    assert manufacturing.status.value == "failed"
+    assert "not an accepted evidence type" in (manufacturing.error or "")
+    assert case.aggregated_status is ComplianceStatus.INSUFFICIENT_EVIDENCE
+    assert case.compliance is None
+    qc = next(b for b in case.branches if b.department.value == "qc")
+    supply = next(b for b in case.branches if b.department.value == "supply")
+    assert qc.status.value == "ok"
+    assert supply.status.value == "ok"
+    assert result.gate.passed is False
+    assert result.draft is None
+
+
+@pytest.mark.asyncio
+async def test_qc_oos_still_runs_investigation(
+    stub_ground_truth,
+    stub_investigation_agents,
+    monkeypatch,
+) -> None:
+    stub_ground_truth(make_page_extraction())
+    snapshot = lookup_department_snapshot(tenant_id="aurex", batch_id="AX-2291")
+    assert snapshot is not None
+    dirty = snapshot.model_copy(
+        update={
+            "lims": LimsSnapshot(
+                source_uri=snapshot.lims.source_uri,
+                rows=[
+                    LimsResultRow(
+                        test_code="ASSAY",
+                        label="Assay",
+                        result_value=80.0,
+                        unit="%LC",
+                        spec_min=95.0,
+                        spec_max=105.0,
+                        sample_id="QC-AX-2291-01",
+                    )
+                ],
+            )
+        }
+    )
+    monkeypatch.setattr(
+        branches_mod, "lookup_department_snapshot", lambda **_kwargs: dirty
+    )
+    result = _final_result(await _run(_runner(), _case_payload()))
+    assert result.draft is not None
+    assert result.gate.passed is True
+    assert any(
+        finding.field_name == "ASSAY" for finding in result.case.findings
+    )
 
 
 def test_extractor_seam_is_unchanged() -> None:
     agent = get_page_extractor()
     assert agent.mode == "single_turn"
     assert agent.include_contents == "none"
+    investigator = get_investigation_agent()
+    assert investigator.name == "deviation_investigator"
+    assert investigator.mode == "single_turn"
+    assert investigator.include_contents == "none"
+    assert investigator.tools == []
+    challenger = get_challenger_agent()
+    assert challenger.name == "investigation_challenger"
+    assert challenger.mode == "single_turn"
+    assert challenger.include_contents == "none"
+    assert challenger.tools == []
