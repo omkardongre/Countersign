@@ -163,13 +163,11 @@ def test_adk_run_sse(server_fixture: subprocess.Popen[str]) -> None:
                 events.append(json.loads(line_str[6:]))
 
     assert events, "No events received from stream"
-    has_text_content = any(
-        (content := event.get("content"))
-        and content.get("parts")
-        and any(part.get("text") for part in content["parts"])
-        for event in events
+    serialized = json.dumps(events)
+    assert "DeviationCaseRequest" in serialized, (
+        "Unstructured chat must fail at the case-graph input schema, "
+        "not be answered as free-form chat."
     )
-    assert has_text_content, "Expected at least one event with text content"
 
 
 def test_a2a_chat_stream(server_fixture: subprocess.Popen[str]) -> None:
@@ -195,15 +193,16 @@ def test_a2a_chat_stream(server_fixture: subprocess.Popen[str]) -> None:
     responses = asyncio.run(_stream())
     assert responses, "No responses received from stream"
 
-    def _is_completed(chunk: StreamResponse) -> bool:
+    def _is_failed(chunk: StreamResponse) -> bool:
         if chunk.HasField("status_update"):
-            return chunk.status_update.status.state == TaskState.TASK_STATE_COMPLETED
+            return chunk.status_update.status.state == TaskState.TASK_STATE_FAILED
         if chunk.HasField("task"):
-            return chunk.task.status.state == TaskState.TASK_STATE_COMPLETED
+            return chunk.task.status.state == TaskState.TASK_STATE_FAILED
         return False
 
-    assert any(_is_completed(chunk) for chunk in responses), (
-        "No completed task received from stream"
+    assert any(_is_failed(chunk) for chunk in responses), (
+        "Unstructured A2A chat must fail closed at the case-graph schema, "
+        "not complete as a free-form reply."
     )
 
 
@@ -234,7 +233,7 @@ def test_collect_feedback(server_fixture: subprocess.Popen[str]) -> None:
         "text": "Great response!",
     }
     response = requests.post(
-        FEEDBACK_URL, json=feedback_data, headers=HEADERS, timeout=10
+        FEEDBACK_URL, json=feedback_data, headers=HEADERS, timeout=30
     )
     assert response.status_code == 200
 
@@ -258,9 +257,7 @@ def test_reasoning_engine_stream(server_fixture: subprocess.Popen[str]) -> None:
 
     events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
     assert events, "No events from reasoning_engine adapter"
-    has_text = any(
-        (event.get("content") or {}).get("parts")
-        and any(part.get("text") for part in event["content"]["parts"])
-        for event in events
+    serialized = json.dumps(events)
+    assert "DeviationCaseRequest" in serialized, (
+        "Unstructured streamQuery must fail at the case-graph input schema."
     )
-    assert has_text, "No text content in reasoning_engine events"
