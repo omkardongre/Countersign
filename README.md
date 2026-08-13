@@ -88,12 +88,14 @@ So Countersign is built on one non-negotiable rule:
 | Agent Identity on Runtime + gateway binding | Done |
 | **Enforced deny proof, 9/9 checks** | **Done** — see below |
 | **Model Armor as CONTENT_AUTHZ extension** | **Done** |
-| Deterministic intake + severity classification | Done — `app/domain/`, see below |
-| Multimodal evidence extraction, one BMR page | Done — `app/domain/`, see below |
-| Deterministic compliance engine (completeness, OOS, OOT) | Done — `app/domain/`, see below |
-| Parallel evidence branches (LIMS, EM, supplier CoA) | Not started |
-| Deterministic GMP compliance engine | Not started |
-| Investigation + Challenger agents (LLM) | Not started |
+| Deterministic intake + severity classification | Done — `app/domain/` |
+| Multimodal evidence extraction, one BMR page | Done — `app/domain/` |
+| Deterministic compliance engine (completeness, OOS, OOT) | Done — `app/domain/` |
+| Joined case `Workflow` on `app.agent` | Done — `deviation_case` |
+| Parallel department collectors (BMR, LIMS, EM, CoA) | Done — synthetic catalog, `JoinNode` |
+| Investigation + Challenger + citation gate | Done — LLM drafts; code gates citations |
+| Deterministic Annex 16 §1.7 confirmation checklist | Done — code; never certifies |
+| QP `RequestInput` + case `ResumabilityConfig` | Not started |
 | MCP tool servers (MES, LIMS, historian, supplier, QMS) | Not started |
 | TQA `ext_proc` extension | Not started — needs a VPC/DNS-peering spike |
 | 14-day sterility wait, kill/resume | Not started |
@@ -110,8 +112,9 @@ The first node of the GMP deviation-investigation graph (`final_reseach/05_archi
 - `classification.py` — pure-function minor/major/critical severity rules over structured
   signals (`patient_safety_impact`, `sterility_assurance_impact`, etc.), no model call, per the
   Annex 22 draft posture that the LLM is never in the critical decision path
-- `intake.py` — wraps classification as an ADK `Workflow` `FunctionNode`, with input/output
-  schemas inferred from type hints and enforced by the runtime
+- `intake.py` — `classify_intake` is shared by the standalone intake node and the joined
+  case graph. The case graph stamps tenant / case / batch onto the BMR ingest request and
+  stores the classified case in workflow state for the department join.
 
 Verified against installed `google-adk` 2.6.3 source directly (`workflow/_function_node.py`),
 not assumed from documentation. 14 unit tests in `tests/unit/test_classification.py` and
@@ -215,8 +218,8 @@ validate_page_evidence → evaluate_evidence_compliance
 - **Root-cause tagging** — every finding carries a `root_cause_category` (material / machine /
   method / measurement / personnel / environment), set as master data on the field spec itself,
   matching Katalyze's published Deviation Investigator framing
-  (`final_reseach/01_katalyze_ai.md` §3). This is a tag, not a determination: it gives the
-  future Investigation agent a starting hypothesis dimension, never a root cause.
+  (`final_reseach/01_katalyze_ai.md` §3). This is a tag, not a determination: it hands the
+  Investigation agent a starting hypothesis dimension, never a root cause.
 
 `ComplianceStatus` is `sufficient_for_investigation` or `insufficient_evidence` — still not a
 disposition. `decision_authority` stays `"none"`. Every `ComplianceFinding` carries its
@@ -230,11 +233,55 @@ at Phase II, not fall through to Phase I by default) and a guard against scoring
 another product's trend baseline. Reviewed via `semantic_reviewer` sub-agent before commit; both
 issues it found were fixed, not just noted.
 
-Not yet wired: this graph is standalone. Joining it to `intake.py`, adding the parallel
-LIMS/EM/supplier branches behind a `JoinNode` (the compliance engine already accepts one
-`ValidatedEvidence` per artifact and would need a small reconciliation step, not a redesign, to
-accept a joined dict of them), and replacing the scaffold agent in `app/agent.py` all come after
-this slice is trusted.
+The manufacturing BMR path still runs this engine. Parallel QC/supply checks and the joined
+case graph are described below.
+
+### Domain workflow — joined case graph (intake → departments → Annex 16)
+
+`app/agent.py` serves `build_deviation_case_workflow()` as `root_agent`. The GEAP hello agent
+used for Gateway deny proof stays under `infra/geap/hello_runtime` and is not this graph.
+
+```
+START → intake_and_bind_evidence
+      → (collect_manufacturing, collect_qc, collect_supply)
+      → join_departments
+      → reconcile_departments
+      → draft_investigation
+      → challenge_investigation
+      → gate_investigation
+      → evaluate_annex16_release_gate
+```
+
+- Intake classifies the deviation, persists `classified_case` in workflow state, and stamps
+  tenant / case / batch onto the BMR ingest request so an attachment cannot claim a different
+  sponsor than the case. Unstructured chat fails closed at `DeviationCaseRequest` schema.
+- Manufacturing runs ingest → extract → validate → compliance. `ctx.run_node` results are
+  re-validated as Pydantic models (ADK returns dicts). Disallowed MIME types fail that
+  branch with the integrity message; QC and supply still join. Reconcile refuses a
+  manufacturing result whose tenant / case / batch does not match the classified case.
+- QC and supply are **code**, not extra LLM agents: connector-shaped LIMS (Cloud SQL), EM
+  (BigQuery), and CoA (Drive) rows in `master_data/department_catalog_v1.json`, with
+  deterministic OOS / action-limit / signature / lot / retest / GMP-certificate checks.
+  Live MCP Toolbox calls are not wired; the catalog is the production shape, synthetic data.
+- Each collector always emits `Event.output` so a failed branch cannot stall `JoinNode`.
+- Investigation and Challenger are `single_turn`, `include_contents="none"`, `tools=[]`,
+  `output_schema` bound. Scope ids are stamped from the classified case. Investigation
+  runs when every department returned data, including when OOS findings exist — those
+  findings are the brief, not a reason to skip.
+- The citation gate is code: unknown `source_uri` / `finding_id` blocks. Challenger attacks
+  stay on the package for the QP and cannot veto a cited draft. `decision_authority` stays
+  `"none"`. This is not a batch disposition.
+- The Annex 16 node is also code. Checklist items live in hashed master data
+  (`master_data/annex16_checklist_v1.json`). Bound evaluators score only the matching
+  department branch: manufacturing completeness (1.7.11), QC LIMS OOS (1.7.13), CoA
+  gating (1.7.6). A supply completeness finding does not fail 1.7.11. Open-deviation
+  items 1.7.16 and 1.7.17 fail while lifecycle is `CLASSIFIED`. 1.7.18 stays
+  `not_evaluated` until the TQA extension exists. Required unevaluated or failed items
+  make the pack `not_ready`. Outcomes are `ready_for_qp_review` / `not_ready` — never
+  certified or released. This is a CDMO confirmation pack, not MAH certification.
+
+Standalone `evidence_graph.py` (ingest → extract → validate → comply) remains for the
+single-artifact path. The platform entrypoint is the joined case graph.
 
 ---
 
@@ -421,7 +468,22 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     evidence_validation.py              deterministic validation + confidence routing
     compliance_models.py                completeness / OOS / OOT finding schemas
     compliance.py                       the deterministic compliance engine
-    evidence_graph.py                   the evidence-extraction + compliance Workflow graph
+    evidence_graph.py                   standalone ingest → extract → validate → comply graph
+    case_graph.py                       joined deviation-case Workflow (platform entrypoint)
+    case_models.py                      DeviationCaseRequest / CaseComplianceResult
+    department_models.py                LIMS / EM / CoA snapshots + branch outcomes
+    department_catalog.py               pinned synthetic department catalog loader
+    department_checks.py                deterministic QC and supply checks
+    branches.py                         parallel collectors (always Event.output)
+    investigation.py                    draft-only investigation agent (no tools)
+    investigation_brief.py              citation-constrained brief for both LLM nodes
+    investigation_models.py             draft / challenger / gate schemas
+    investigation_gate.py               deterministic citation / readiness gate
+    challenger.py                       clean-context verifier (no tools)
+    release_models.py                   Annex 16 checklist result types
+    release_gate.py                     deterministic confirmation checklist
+    master_data/annex16_checklist_v1.json  hashed Annex 16 §1.7 item bindings
+    master_data/department_catalog_v1.json  synthetic LIMS / EM / CoA rows
 infra/geap/
   constants.env                       shared resource names
   agent-gateway-egress.yaml           Agent-to-Anywhere gateway spec
@@ -464,8 +526,10 @@ tests/                                unit, integration, eval
   **rejected**, not adapted: a GxP system that trusts unverified transport has no provenance
   claim to make. The `invoice-processing` sample's versioned master-data loader is adopted; its
   autonomous decide-and-rewrite flow is not.
-- `app/agent.py` still holds the `agents-cli` scaffold agent (weather/time). The domain graph is
-  not yet mounted on the Runtime entrypoint.
+- `app/agent.py` serves the joined deviation-case `Workflow`. The Gateway deny probe remains
+  `infra/geap/hello_runtime` so that proof stays isolated from the case graph.
+- Department LIMS / EM / CoA rows are **synthetic connector shapes**, not live Cloud SQL /
+  BigQuery / Drive calls. MCP tool-name policies are the next wiring for those systems.
 
 ---
 
