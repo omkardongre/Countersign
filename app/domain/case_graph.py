@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deviation case graph: intake → departments → investigation → challenger → gate.
+"""Deviation case graph: intake → departments → investigation → Annex 16 gate.
 
 ADK fan-out/fan-in (``workflows/fan_out_fan_in``): after classify, three
 department collectors run in parallel and a ``JoinNode`` waits for all of
@@ -26,10 +26,12 @@ stall the join (ADK JoinNode caution).
           -> draft_investigation
           -> challenge_investigation
           -> gate_investigation
+          -> evaluate_annex16_release_gate
 
 Manufacturing still runs the BMR transcriber. QC and supply are deterministic
 lookups over connector-shaped LIMS / EM / CoA records. Investigation and
-challenger are single-turn LLMs with no tools; the citation gate is code.
+challenger are single-turn LLMs with no tools; citation and Annex 16 gates
+are code. The Annex 16 node never certifies or releases a batch.
 """
 
 from __future__ import annotations
@@ -58,8 +60,9 @@ from app.domain.ingest import EvidenceIntegrityError
 from app.domain.intake import classify_intake
 from app.domain.investigation import draft_investigation
 from app.domain.investigation_gate import gate_investigation
-from app.domain.investigation_models import InvestigationCaseResult
 from app.domain.models import ClassifiedCase
+from app.domain.release_gate import evaluate_annex16_release_gate_node
+from app.domain.release_models import CaseReleasePackage
 
 CASE_WORKFLOW_NAME = "deviation_case"
 CLASSIFIED_CASE_STATE_KEY = "classified_case"
@@ -163,12 +166,12 @@ def reconcile_departments(
 
 
 def build_deviation_case_workflow() -> Workflow:
-    """Builds the full deviation-case Workflow through the citation gate."""
+    """Builds the full deviation-case Workflow through the Annex 16 gate."""
     join_departments = JoinNode(name="join_departments")
     return Workflow(
         name=CASE_WORKFLOW_NAME,
         input_schema=DeviationCaseRequest,
-        output_schema=InvestigationCaseResult,
+        output_schema=CaseReleasePackage,
         edges=[
             (START, intake_and_bind_evidence),
             (
@@ -179,6 +182,7 @@ def build_deviation_case_workflow() -> Workflow:
                 draft_investigation,
                 challenge_investigation,
                 gate_investigation,
+                evaluate_annex16_release_gate_node,
             ),
         ],
     )

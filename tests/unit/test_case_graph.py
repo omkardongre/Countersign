@@ -38,13 +38,17 @@ from app.domain.investigation import get_investigation_agent
 from app.domain.investigation_models import (
     ChallengerReport,
     CitedClaim,
-    InvestigationCaseResult,
     InvestigationDraft,
     ProductImpactDraft,
     RootCauseHypothesis,
 )
 from app.domain.master_data import RootCauseCategory
 from app.domain.models import DeviationSeverity, DocType, LifecycleState
+from app.domain.release_models import (
+    CaseReleasePackage,
+    ChecklistItemStatus,
+    ReleaseGateStatus,
+)
 from tests.unit.evidence_fixtures import SYNTHETIC_PAGE_BYTES, make_page_extraction
 
 _APP_NAME = "test_case_app"
@@ -177,17 +181,23 @@ async def _run(runner: InMemoryRunner, payload: dict) -> list:
     ]
 
 
-def _final_result(events: list) -> InvestigationCaseResult:
+def _final_result(events: list) -> CaseReleasePackage:
     outputs = [event.output for event in events if event.output is not None]
     assert outputs, "workflow produced no node output"
-    return InvestigationCaseResult.model_validate(outputs[-1])
+    return CaseReleasePackage.model_validate(outputs[-1])
+
+
+def _annex_item(package: CaseReleasePackage, annex_ref: str):
+    return next(
+        item for item in package.release_gate.items if item.annex_ref == annex_ref
+    )
 
 
 def test_case_workflow_is_named_and_schema_bound() -> None:
     workflow = build_deviation_case_workflow()
     assert workflow.name == CASE_WORKFLOW_NAME
     assert workflow.input_schema is not None
-    assert workflow.output_schema is not None
+    assert workflow.output_schema is CaseReleasePackage
 
 
 def test_platform_entrypoint_serves_the_case_workflow() -> None:
@@ -203,13 +213,23 @@ async def test_classified_case_and_compliance_share_scope(
 ) -> None:
     stub_ground_truth(make_page_extraction())
     result = _final_result(await _run(_runner(), _case_payload()))
-    case = result.case
+    investigation = result.investigation
+    case = investigation.case
 
     assert result.decision_authority == "none"
-    assert result.gate.passed is True
-    assert result.draft is not None
-    assert result.challenger is not None
-    assert result.draft.decision_authority == "none"
+    assert investigation.decision_authority == "none"
+    assert investigation.gate.passed is True
+    assert investigation.draft is not None
+    assert investigation.challenger is not None
+    assert investigation.draft.decision_authority == "none"
+    assert result.release_gate.decision_authority == "none"
+    assert result.release_gate.status is ReleaseGateStatus.NOT_READY
+    assert _annex_item(result, "1.7.11").status is ChecklistItemStatus.PASS
+    assert _annex_item(result, "1.7.13").status is ChecklistItemStatus.PASS
+    assert _annex_item(result, "1.7.6").status is ChecklistItemStatus.PASS
+    assert _annex_item(result, "1.7.16").status is ChecklistItemStatus.FAIL
+    assert _annex_item(result, "1.7.17").status is ChecklistItemStatus.FAIL
+    assert _annex_item(result, "1.7.18").status is ChecklistItemStatus.NOT_EVALUATED
     assert case.classified.severity is DeviationSeverity.CRITICAL
     assert case.classified.lifecycle_state is LifecycleState.CLASSIFIED
     assert case.compliance is not None
@@ -243,7 +263,7 @@ async def test_disallowed_mime_type_fails_manufacturing_without_stalling_join(
     payload = _case_payload()
     payload["evidence"]["mime_type"] = "application/zip"
     result = _final_result(await _run(_runner(), payload))
-    case = result.case
+    case = result.investigation.case
 
     manufacturing = next(
         branch
@@ -258,8 +278,11 @@ async def test_disallowed_mime_type_fails_manufacturing_without_stalling_join(
     supply = next(b for b in case.branches if b.department.value == "supply")
     assert qc.status.value == "ok"
     assert supply.status.value == "ok"
-    assert result.gate.passed is False
-    assert result.draft is None
+    assert result.investigation.gate.passed is False
+    assert result.investigation.draft is None
+    assert _annex_item(result, "1.7.11").status is ChecklistItemStatus.FAIL
+    assert _annex_item(result, "1.7.13").status is ChecklistItemStatus.PASS
+    assert result.release_gate.status is ReleaseGateStatus.NOT_READY
 
 
 @pytest.mark.asyncio
@@ -293,11 +316,14 @@ async def test_qc_oos_still_runs_investigation(
         branches_mod, "lookup_department_snapshot", lambda **_kwargs: dirty
     )
     result = _final_result(await _run(_runner(), _case_payload()))
-    assert result.draft is not None
-    assert result.gate.passed is True
+    assert result.investigation.draft is not None
+    assert result.investigation.gate.passed is True
     assert any(
-        finding.field_name == "ASSAY" for finding in result.case.findings
+        finding.field_name == "ASSAY" for finding in result.investigation.case.findings
     )
+    assert _annex_item(result, "1.7.13").status is ChecklistItemStatus.FAIL
+    assert _annex_item(result, "1.7.11").status is ChecklistItemStatus.PASS
+    assert result.release_gate.status is ReleaseGateStatus.NOT_READY
 
 
 def test_extractor_seam_is_unchanged() -> None:

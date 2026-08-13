@@ -1,0 +1,137 @@
+{
+  "spec_id": "annex16_qp_checklist",
+  "spec_version": "1.0.0",
+  "effective_date": "2026-08-01",
+  "approved_by": "QA-Head (synthetic)",
+  "change_control_ref": "CC-2026-0160 (synthetic)",
+  "description": "EU GMP Annex 16 section 1.7.1-1.7.21 as a change-controlled checklist. Evaluators name deterministic functions over the joined case. Items with evaluator none cannot be scored from current evidence and must stay not_evaluated. This file does not authorise batch certification.",
+  "source": "https://health.ec.europa.eu/system/files/2016-11/v4_an16_201510_en_0.pdf",
+  "items": [
+    {
+      "annex_ref": "1.7.1",
+      "title": "Manufacture and testing conducted in accordance with GMP.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.2",
+      "title": "Supply chain of the active substance and product documented for the QP.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.3",
+      "title": "Audits of manufacture and testing sites performed; reports available.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.4",
+      "title": "Sites of manufacture, analysis and certification compliant with the MA.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.5",
+      "title": "Manufacturing and testing activities consistent with the MA.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.6",
+      "title": "Starting and packaging material sources and specifications as in the MA.",
+      "evaluator": "materials_gating",
+      "required_for_confirmation": true
+    },
+    {
+      "annex_ref": "1.7.7",
+      "title": "Active substances manufactured in accordance with GMP and GDP where required.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.8",
+      "title": "API importation complies with Directive 2001/83/EC Article 46(b).",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.9",
+      "title": "Excipients manufactured in accordance with ascertained GMP.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.10",
+      "title": "TSE status of materials compliant with the MA where relevant.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.11",
+      "title": "Records complete and endorsed; required in-process controls made.",
+      "evaluator": "records_complete",
+      "required_for_confirmation": true
+    },
+    {
+      "annex_ref": "1.7.12",
+      "title": "Manufacturing and testing processes remain validated; personnel qualified.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.13",
+      "title": "Finished-product QC data complies with the MA specification or authorised RTRT.",
+      "evaluator": "finished_product_qc",
+      "required_for_confirmation": true
+    },
+    {
+      "annex_ref": "1.7.14",
+      "title": "Post-marketing commitments addressed; ongoing stability supports certification.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.15",
+      "title": "Impact of manufacturing or testing changes evaluated; extra checks complete.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.16",
+      "title": "Investigations for the batch, including OOS and OOT, complete enough to support certification.",
+      "evaluator": "investigations_complete",
+      "required_for_confirmation": true
+    },
+    {
+      "annex_ref": "1.7.17",
+      "title": "Ongoing complaints, investigations or recalls do not negate conditions for this batch.",
+      "evaluator": "open_batch_issues",
+      "required_for_confirmation": true
+    },
+    {
+      "annex_ref": "1.7.18",
+      "title": "Required technical agreements are in place.",
+      "evaluator": "technical_agreement",
+      "required_for_confirmation": true
+    },
+    {
+      "annex_ref": "1.7.19",
+      "title": "Self-inspection programme is active and current.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.20",
+      "title": "Appropriate arrangements for distribution and shipment are in place.",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    },
+    {
+      "annex_ref": "1.7.21",
+      "title": "Safety features affixed where required by Directive 2001/83/EC Article 54(o).",
+      "evaluator": "none",
+      "required_for_confirmation": false
+    }
+  ]
+}
