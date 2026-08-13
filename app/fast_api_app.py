@@ -30,6 +30,7 @@ from app.app_utils.reasoning_engine_adapter import (
     attach_reasoning_engine_routes,
 )
 from app.app_utils.typing import Feedback
+from app.scheduler.routes import attach_scheduler_routes
 
 load_dotenv()
 otel_to_cloud = os.environ.get(
@@ -88,6 +89,10 @@ app.description = "API for interacting with the Agent countersign-proto"
 # Proxy routes so the Vertex AI Console Playground (reasoning_engine SDK) can
 # talk to this agent alongside the native adk_api routes.
 attach_reasoning_engine_routes(app)
+
+# Cloud Scheduler wake-up for cases parked on the sterility hold. OIDC-guarded
+# in app/scheduler/auth.py; it can complete a GMP hold, so it is not open.
+attach_scheduler_routes(app)
 
 
 @app.post("/feedback")
