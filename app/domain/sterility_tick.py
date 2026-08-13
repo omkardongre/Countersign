@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mark due incubations complete. Wake-up is ADK resume, not an LLM turn."""
+"""Mark due incubations complete. Wake-up is ADK resume, not an LLM turn.
+
+Operator-facing: completes the clock only. ``POST /scheduler/sterility-tick``
+(``app/scheduler/routes.py``) is the scheduled path that also resumes the
+invocation parked on each hold.
+"""
 
 from __future__ import annotations
 

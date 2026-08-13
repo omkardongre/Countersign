@@ -27,6 +27,21 @@ class SterilityIncubationStatus(StrEnum):
     COMPLETE = "complete"
 
 
+class SterilityResumeHandle(BaseModel):
+    """Where the paused case invocation lives, so a tick can resume it.
+
+    Written by the hold node at checkpoint time. Without it the store can be
+    completed but nothing knows which invocation to continue, which is why
+    it is persisted next to the clock rather than held in process memory.
+    """
+
+    app_name: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    invocation_id: str = Field(min_length=1)
+    interrupt_id: str = Field(min_length=1)
+
+
 class SterilityIncubationRecord(BaseModel):
     """Per-batch incubation clock. Completing it is not a batch release."""
 
@@ -40,6 +55,7 @@ class SterilityIncubationRecord(BaseModel):
     hold_seconds: int
     compressed_for_demo: bool = False
     workflow_version: str
+    resume_handle: SterilityResumeHandle | None = None
     decision_authority: str = "none"
 
     @field_validator("decision_authority")

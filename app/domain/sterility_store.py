@@ -25,6 +25,7 @@ from typing import Protocol
 from app.domain.sterility_models import (
     SterilityIncubationRecord,
     SterilityIncubationStatus,
+    SterilityResumeHandle,
 )
 
 DEFAULT_HOLD = datetime.timedelta(days=14)
@@ -52,6 +53,30 @@ def _utcnow() -> datetime.datetime:
     return datetime.datetime.now(datetime.UTC)
 
 
+RESUME_HANDLE_COLUMNS = (
+    "app_name",
+    "user_id",
+    "session_id",
+    "invocation_id",
+    "interrupt_id",
+)
+
+
+def resume_handle_from_columns(
+    values: dict[str, str | None],
+) -> SterilityResumeHandle | None:
+    """Rebuild the handle only when every column is present."""
+    if any(not values.get(column) for column in RESUME_HANDLE_COLUMNS):
+        return None
+    return SterilityResumeHandle(
+        app_name=str(values["app_name"]),
+        user_id=str(values["user_id"]),
+        session_id=str(values["session_id"]),
+        invocation_id=str(values["invocation_id"]),
+        interrupt_id=str(values["interrupt_id"]),
+    )
+
+
 class SterilityStore(Protocol):
     def get(
         self, tenant_id: str, batch_id: str
@@ -73,6 +98,13 @@ class SterilityStore(Protocol):
         batch_id: str,
         *,
         now: datetime.datetime | None = None,
+    ) -> SterilityIncubationRecord: ...
+
+    def bind_resume_handle(
+        self,
+        tenant_id: str,
+        batch_id: str,
+        handle: SterilityResumeHandle,
     ) -> SterilityIncubationRecord: ...
 
     def tick_due(
@@ -142,21 +174,39 @@ class InMemorySterilityStore:
         self._rows[(tenant_id, batch_id)] = updated
         return updated
 
+    def bind_resume_handle(
+        self,
+        tenant_id: str,
+        batch_id: str,
+        handle: SterilityResumeHandle,
+    ) -> SterilityIncubationRecord:
+        record = self.get(tenant_id, batch_id)
+        if record is None:
+            raise KeyError(f"No incubation for {tenant_id}/{batch_id}.")
+        updated = record.model_copy(update={"resume_handle": handle})
+        self._rows[(tenant_id, batch_id)] = updated
+        return updated
+
     def tick_due(
         self, *, now: datetime.datetime | None = None
     ) -> list[SterilityIncubationRecord]:
+        """Claim-then-return, so a row only appears once even if called twice."""
         stamp = now or _utcnow()
         done: list[SterilityIncubationRecord] = []
-        for record in list(self._rows.values()):
+        for key, record in list(self._rows.items()):
             if (
-                record.status is SterilityIncubationStatus.PENDING
-                and stamp >= record.due_at
+                record.status is not SterilityIncubationStatus.PENDING
+                or stamp < record.due_at
             ):
-                done.append(
-                    self.complete(
-                        record.tenant_id, record.batch_id, now=stamp
-                    )
-                )
+                continue
+            updated = record.model_copy(
+                update={
+                    "status": SterilityIncubationStatus.COMPLETE,
+                    "completed_at": stamp,
+                }
+            )
+            self._rows[key] = updated
+            done.append(updated)
         return done
 
     def reset(self) -> None:
@@ -182,10 +232,27 @@ class SqliteSterilityStore:
                     hold_seconds INTEGER NOT NULL,
                     compressed_for_demo INTEGER NOT NULL,
                     workflow_version TEXT NOT NULL,
+                    app_name TEXT,
+                    user_id TEXT,
+                    session_id TEXT,
+                    invocation_id TEXT,
+                    interrupt_id TEXT,
                     PRIMARY KEY (tenant_id, batch_id)
                 )
                 """
             )
+            existing = {
+                row["name"]
+                for row in db.execute(
+                    "PRAGMA table_info(sterility_incubation)"
+                ).fetchall()
+            }
+            for column in RESUME_HANDLE_COLUMNS:
+                if column not in existing:
+                    db.execute(
+                        "ALTER TABLE sterility_incubation "
+                        f"ADD COLUMN {column} TEXT"
+                    )
             db.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -209,6 +276,9 @@ class SqliteSterilityStore:
             hold_seconds=raw["hold_seconds"],
             compressed_for_demo=bool(raw["compressed_for_demo"]),
             workflow_version=raw["workflow_version"],
+            resume_handle=resume_handle_from_columns(
+                {column: raw[column] for column in RESUME_HANDLE_COLUMNS}
+            ),
             decision_authority="none",
         )
 
@@ -305,29 +375,75 @@ class SqliteSterilityStore:
             )
             db.commit()
         updated = self.get(tenant_id, batch_id)
-        assert updated is not None
+        if updated is None:
+            raise RuntimeError(
+                f"Incubation update failed for {tenant_id}/{batch_id}."
+            )
+        return updated
+
+    def bind_resume_handle(
+        self,
+        tenant_id: str,
+        batch_id: str,
+        handle: SterilityResumeHandle,
+    ) -> SterilityIncubationRecord:
+        if self.get(tenant_id, batch_id) is None:
+            raise KeyError(f"No incubation for {tenant_id}/{batch_id}.")
+        with self._connect() as db:
+            db.execute(
+                """
+                UPDATE sterility_incubation
+                SET app_name = ?, user_id = ?, session_id = ?,
+                    invocation_id = ?, interrupt_id = ?
+                WHERE tenant_id = ? AND batch_id = ?
+                """,
+                (
+                    handle.app_name,
+                    handle.user_id,
+                    handle.session_id,
+                    handle.invocation_id,
+                    handle.interrupt_id,
+                    tenant_id,
+                    batch_id,
+                ),
+            )
+            db.commit()
+        updated = self.get(tenant_id, batch_id)
+        if updated is None:
+            raise RuntimeError(
+                f"Resume handle write failed for {tenant_id}/{batch_id}."
+            )
         return updated
 
     def tick_due(
         self, *, now: datetime.datetime | None = None
     ) -> list[SterilityIncubationRecord]:
+        """Atomic claim: the UPDATE itself decides which rows this call owns.
+
+        A select-then-update pair would let two overlapping ticks both read
+        the same pending row before either completed it, delivering the same
+        wake-up twice. ``UPDATE ... WHERE status = 'pending' ... RETURNING``
+        both claims and reads in one statement, so a row can only be
+        returned by the tick that actually flipped it.
+        """
         stamp = now or _utcnow()
         with self._connect() as db:
             rows = db.execute(
                 """
-                SELECT tenant_id, batch_id, due_at, status
-                FROM sterility_incubation
+                UPDATE sterility_incubation
+                SET status = ?, completed_at = ?
                 WHERE status = ? AND due_at <= ?
+                RETURNING *
                 """,
                 (
+                    SterilityIncubationStatus.COMPLETE.value,
+                    stamp.isoformat(),
                     SterilityIncubationStatus.PENDING.value,
                     stamp.isoformat(),
                 ),
             ).fetchall()
-        return [
-            self.complete(raw["tenant_id"], raw["batch_id"], now=stamp)
-            for raw in rows
-        ]
+            db.commit()
+        return [self._row(raw) for raw in rows]
 
     def reset(self) -> None:
         with self._connect() as db:

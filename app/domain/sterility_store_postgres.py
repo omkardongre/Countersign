@@ -24,8 +24,13 @@ from app.app_utils.cloud_sql import connect_pg8000
 from app.domain.sterility_models import (
     SterilityIncubationRecord,
     SterilityIncubationStatus,
+    SterilityResumeHandle,
 )
-from app.domain.sterility_store import incubation_hold
+from app.domain.sterility_store import (
+    RESUME_HANDLE_COLUMNS,
+    incubation_hold,
+    resume_handle_from_columns,
+)
 
 STERILITY_DDL = """
 CREATE TABLE IF NOT EXISTS sterility_incubation (
@@ -39,8 +44,27 @@ CREATE TABLE IF NOT EXISTS sterility_incubation (
     hold_seconds INTEGER NOT NULL,
     compressed_for_demo BOOLEAN NOT NULL,
     workflow_version TEXT NOT NULL,
+    app_name TEXT,
+    user_id TEXT,
+    session_id TEXT,
+    invocation_id TEXT,
+    interrupt_id TEXT,
     PRIMARY KEY (tenant_id, batch_id)
 )
+"""
+
+# Additive so an instance provisioned before the resume handle existed keeps
+# its rows instead of needing a drop.
+STERILITY_MIGRATIONS = tuple(
+    "ALTER TABLE sterility_incubation "
+    f"ADD COLUMN IF NOT EXISTS {column} TEXT"
+    for column in RESUME_HANDLE_COLUMNS
+)
+
+_SELECT_COLUMNS = """
+    tenant_id, batch_id, case_id, status, started_at, due_at, completed_at,
+    hold_seconds, compressed_for_demo, workflow_version, app_name, user_id,
+    session_id, invocation_id, interrupt_id
 """
 
 
@@ -64,7 +88,10 @@ def _connect() -> Iterator:
 class PostgresSterilityStore:
     def __init__(self) -> None:
         with _connect() as conn:
-            conn.cursor().execute(STERILITY_DDL)
+            cursor = conn.cursor()
+            cursor.execute(STERILITY_DDL)
+            for statement in STERILITY_MIGRATIONS:
+                cursor.execute(statement)
 
     def _row(self, raw: tuple) -> SterilityIncubationRecord:
         return SterilityIncubationRecord(
@@ -78,6 +105,9 @@ class PostgresSterilityStore:
             hold_seconds=raw[7],
             compressed_for_demo=bool(raw[8]),
             workflow_version=raw[9],
+            resume_handle=resume_handle_from_columns(
+                dict(zip(RESUME_HANDLE_COLUMNS, raw[10:15], strict=True))
+            ),
             decision_authority="none",
         )
 
@@ -87,10 +117,8 @@ class PostgresSterilityStore:
         with _connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                """
-                SELECT tenant_id, batch_id, case_id, status, started_at, due_at,
-                       completed_at, hold_seconds, compressed_for_demo,
-                       workflow_version
+                f"""
+                SELECT {_SELECT_COLUMNS}
                 FROM sterility_incubation
                 WHERE tenant_id = %s AND batch_id = %s
                 """,
@@ -189,22 +217,70 @@ class PostgresSterilityStore:
             )
         return updated
 
-    def tick_due(
-        self, *, now: datetime.datetime | None = None
-    ) -> list[SterilityIncubationRecord]:
-        stamp = now or _utcnow()
+    def bind_resume_handle(
+        self,
+        tenant_id: str,
+        batch_id: str,
+        handle: SterilityResumeHandle,
+    ) -> SterilityIncubationRecord:
         with _connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT tenant_id, batch_id
-                FROM sterility_incubation
-                WHERE status = %s AND due_at <= %s
+                UPDATE sterility_incubation
+                SET app_name = %s, user_id = %s, session_id = %s,
+                    invocation_id = %s, interrupt_id = %s
+                WHERE tenant_id = %s AND batch_id = %s
                 """,
-                (SterilityIncubationStatus.PENDING.value, stamp),
+                (
+                    handle.app_name,
+                    handle.user_id,
+                    handle.session_id,
+                    handle.invocation_id,
+                    handle.interrupt_id,
+                    tenant_id,
+                    batch_id,
+                ),
+            )
+            rowcount = cursor.rowcount
+        if rowcount == 0:
+            raise KeyError(f"No incubation for {tenant_id}/{batch_id}.")
+        updated = self.get(tenant_id, batch_id)
+        if updated is None:
+            raise RuntimeError(
+                f"Resume handle write failed for {tenant_id}/{batch_id}."
+            )
+        return updated
+
+    def tick_due(
+        self, *, now: datetime.datetime | None = None
+    ) -> list[SterilityIncubationRecord]:
+        """Atomic claim via ``UPDATE ... RETURNING``.
+
+        A select-then-update pair would let two overlapping ticks both read
+        the same pending row before either completed it, delivering the same
+        wake-up twice. The single statement here claims and reads together,
+        so Postgres's row-level locking prevents that double delivery.
+        """
+        stamp = now or _utcnow()
+        with _connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                f"""
+                UPDATE sterility_incubation
+                SET status = %s, completed_at = %s
+                WHERE status = %s AND due_at <= %s
+                RETURNING {_SELECT_COLUMNS}
+                """,
+                (
+                    SterilityIncubationStatus.COMPLETE.value,
+                    stamp,
+                    SterilityIncubationStatus.PENDING.value,
+                    stamp,
+                ),
             )
             rows = cursor.fetchall()
-        return [self.complete(raw[0], raw[1], now=stamp) for raw in rows]
+        return [self._row(raw) for raw in rows]
 
     def reset(self) -> None:
         with _connect() as conn:
