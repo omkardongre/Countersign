@@ -1,0 +1,16 @@
+name: countersign-tqa
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: CONTENT_AUTHZ
+action: CUSTOM
+customProvider:
+  authzExtension:
+    resources:
+      - "projects/countersign-505107/locations/us-central1/authzExtensions/countersign-tqa"
+httpRules:
+  - to:
+      operations:
+        - mcp:
+            methods:
+              - name: "tools/call"

@@ -1,0 +1,18 @@
+# Adds VPC egress + DNS peering for countersign.internal. only.
+# networkAttachment is immutable after the first successful import.
+# Does not replace IAP / Model Armor policies (those are separate resources).
+name: countersign-egress
+protocols:
+  - MCP
+googleManaged:
+  governedAccessPath: AGENT_TO_ANYWHERE
+registries:
+  - "//agentregistry.googleapis.com/projects/countersign-505107/locations/us-central1"
+networkConfig:
+  egress:
+    networkAttachment: projects/countersign-505107/regions/us-central1/networkAttachments/countersign-tqa-psc
+  dnsPeeringConfig:
+    domains:
+      - countersign.internal.
+    targetProject: countersign-505107
+    targetNetwork: projects/countersign-505107/global/networks/countersign-tqa

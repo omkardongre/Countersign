@@ -1,0 +1,6 @@
+# CONTENT_AUTHZ callout. failOpen false: a TQA outage must not admit department reads.
+# Scoped to MCP tools/call so Gemini generateContent is not gated on this extension.
+name: countersign-tqa
+service: tqa.countersign.internal
+failOpen: false
+timeout: 2s
