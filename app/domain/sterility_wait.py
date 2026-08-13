@@ -28,9 +28,10 @@ from app.domain.investigation_models import InvestigationCaseResult
 from app.domain.sterility_models import (
     SterilityHoldBrief,
     SterilityIncubationStatus,
+    SterilityResumeHandle,
     SterilityTickRequest,
 )
-from app.domain.sterility_store import get_sterility_store
+from app.domain.sterility_store_mcp import McpSterilityStore
 from app.domain.workflow_meta import CASE_WORKFLOW_VERSION
 
 STERILITY_INTERRUPT_PREFIX = "sterility_incubation"
@@ -53,13 +54,14 @@ def _tick(payload: SterilityTickRequest | dict) -> SterilityTickRequest:
     return SterilityTickRequest.model_validate(body)
 
 
-def build_sterility_hold_brief(
+async def build_sterility_hold_brief(
     investigation: InvestigationCaseResult,
     *,
     workflow_version: str,
+    store: McpSterilityStore,
 ) -> SterilityHoldBrief:
     classified = investigation.case.classified
-    record = get_sterility_store().start(
+    record = await store.start_async(
         tenant_id=classified.tenant_id,
         batch_id=classified.batch_id,
         case_id=classified.case_id,
@@ -80,14 +82,19 @@ def build_sterility_hold_brief(
 
 
 @node(name="await_sterility_incubation", rerun_on_resume=True)
-def await_sterility_incubation(
+async def await_sterility_incubation(
     node_input: InvestigationCaseResult, ctx: Context
 ):
-    """Pause until the incubation store is complete, then pass the case through."""
+    """Pause until the incubation store is complete, then pass the case through.
+
+    The clock is reached over MCP rather than a direct Cloud SQL connection:
+    an Agent Identity principal cannot be a Cloud SQL IAM database user, so
+    this node has the same credential shape as the QC/supply collectors.
+    """
     investigation = _investigation(node_input)
     classified = investigation.case.classified
-    store = get_sterility_store()
-    record = store.get(classified.tenant_id, classified.batch_id)
+    store = McpSterilityStore()
+    record = await store.get_async(classified.tenant_id, classified.batch_id)
     if record is not None and record.status is SterilityIncubationStatus.COMPLETE:
         yield investigation
         return
@@ -104,13 +111,26 @@ def await_sterility_incubation(
             raise ValueError("Sterility tick scope does not match the classified case.")
         # Store remains authoritative: a tick without a complete row does not advance.
 
-    record = store.get(classified.tenant_id, classified.batch_id)
+    record = await store.get_async(classified.tenant_id, classified.batch_id)
     if record is not None and record.status is SterilityIncubationStatus.COMPLETE:
         yield investigation
         return
 
-    brief = build_sterility_hold_brief(
-        investigation, workflow_version=CASE_WORKFLOW_VERSION
+    brief = await build_sterility_hold_brief(
+        investigation, workflow_version=CASE_WORKFLOW_VERSION, store=store
+    )
+    # Persist where this pause lives so a scheduler tick weeks later can
+    # resume the same invocation. Rebound on every pause: last checkpoint wins.
+    await store.bind_resume_handle_async(
+        classified.tenant_id,
+        classified.batch_id,
+        SterilityResumeHandle(
+            app_name=ctx.session.app_name,
+            user_id=ctx.user_id,
+            session_id=ctx.session.id,
+            invocation_id=ctx.invocation_id,
+            interrupt_id=interrupt_id,
+        ),
     )
     yield RequestInput(
         interrupt_id=interrupt_id,

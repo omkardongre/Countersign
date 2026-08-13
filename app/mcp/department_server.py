@@ -12,11 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Streamable-HTTP MCP server for LIMS / EM / CoA reads.
+"""Streamable-HTTP MCP server for LIMS / EM / CoA reads and the sterility clock.
 
-One process, three exact tool names. Gateway policies (not this process) decide
-which Agent Identity may call which name. stdio is not used: Agent Gateway
-needs Streamable HTTP. postgres-execute-sql is not registered.
+One process, six exact tool names: ``lims_query``, ``em_query``, ``coa_fetch``,
+and ``sterility_start`` / ``sterility_get`` / ``sterility_bind_resume_handle``.
+The sterility tools exist because an Agent Identity principal cannot be a
+Cloud SQL IAM database user (confirmed against the live instance), so the
+case Runtime reaches the clock through this service — which runs with a real
+service-account credential — instead of opening Cloud SQL itself.
+
+Gateway policies (not this process) decide which Agent Identity may call
+which name. stdio is not used: Agent Gateway needs Streamable HTTP.
+postgres-execute-sql is not registered.
 
 Pinned to PyPI ``mcp`` FastMCP (the API Agent Runtime already ships).
 """
@@ -36,7 +43,11 @@ from app.domain.department_tools import (
     COA_FETCH,
     EM_QUERY,
     LIMS_QUERY,
+    STERILITY_BIND_RESUME_HANDLE,
+    STERILITY_GET,
+    STERILITY_START,
     DepartmentRecordMissing,
+    SterilityTenantMismatch,
 )
 from app.domain.department_tools import (
     coa_fetch as load_coa,
@@ -47,9 +58,29 @@ from app.domain.department_tools import (
 from app.domain.department_tools import (
     lims_query as load_lims,
 )
+from app.domain.department_tools import (
+    sterility_bind_resume_handle as run_sterility_bind_resume_handle,
+)
+from app.domain.department_tools import (
+    sterility_get as run_sterility_get,
+)
+from app.domain.department_tools import (
+    sterility_start as run_sterility_start,
+)
+from app.domain.sterility_models import SterilityIncubationRecord
 
 _READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
+    idempotentHint=True,
+    openWorldHint=False,
+    destructiveHint=False,
+)
+
+# start/bind mutate the sterility clock. Not read-only, but idempotent
+# (start returns the existing row; bind overwrites the same key) and never
+# destructive — no row is ever deleted through this surface.
+_IDEMPOTENT_WRITE = ToolAnnotations(
+    readOnlyHint=False,
     idempotentHint=True,
     openWorldHint=False,
     destructiveHint=False,
@@ -133,6 +164,89 @@ def build_department_mcp(
         try:
             return load_coa(tenant_id=tenant_id, batch_id=batch_id)
         except DepartmentRecordMissing as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=STERILITY_START,
+        title="Start sterility incubation",
+        description=(
+            "Start (or return the existing) 14-day sterility incubation clock "
+            "for one tenant and batch. Idempotent. This is a lab clock, not a "
+            "batch disposition."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def sterility_start(
+        tenant_id: str,
+        batch_id: str,
+        case_id: str,
+        workflow_version: str,
+        case_tenant_id: str,
+    ) -> SterilityIncubationRecord:
+        try:
+            return run_sterility_start(
+                tenant_id=tenant_id,
+                batch_id=batch_id,
+                case_id=case_id,
+                workflow_version=workflow_version,
+                case_tenant_id=case_tenant_id,
+            )
+        except SterilityTenantMismatch as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=STERILITY_GET,
+        title="Get sterility incubation",
+        description=(
+            "Read the sterility incubation clock for one tenant and batch. "
+            "Returns null if none has started."
+        ),
+        annotations=_READ_ONLY,
+    )
+    def sterility_get(
+        tenant_id: str, batch_id: str, case_tenant_id: str
+    ) -> SterilityIncubationRecord | None:
+        try:
+            return run_sterility_get(
+                tenant_id=tenant_id,
+                batch_id=batch_id,
+                case_tenant_id=case_tenant_id,
+            )
+        except SterilityTenantMismatch as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=STERILITY_BIND_RESUME_HANDLE,
+        title="Bind sterility resume handle",
+        description=(
+            "Record where the paused case invocation lives, so a scheduler "
+            "tick weeks later can resume it. Overwrites any prior handle for "
+            "the same tenant and batch."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def sterility_bind_resume_handle(
+        tenant_id: str,
+        batch_id: str,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        invocation_id: str,
+        interrupt_id: str,
+        case_tenant_id: str,
+    ) -> SterilityIncubationRecord:
+        try:
+            return run_sterility_bind_resume_handle(
+                tenant_id=tenant_id,
+                batch_id=batch_id,
+                app_name=app_name,
+                user_id=user_id,
+                session_id=session_id,
+                invocation_id=invocation_id,
+                interrupt_id=interrupt_id,
+                case_tenant_id=case_tenant_id,
+            )
+        except (KeyError, SterilityTenantMismatch) as exc:
             raise ToolError(str(exc)) from exc
 
     return mcp

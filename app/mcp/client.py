@@ -33,7 +33,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 
-from app.domain.department_tools import ALLOWED_DEPARTMENT_TOOLS
+from app.domain.department_tools import ALLOWED_DEPARTMENT_TOOLS, STERILITY_TOOLS
 from app.mcp.department_server import get_department_mcp
 
 MCP_URL_ENV = "COUNTERSIGN_MCP_URL"
@@ -111,21 +111,47 @@ async def call_department_tool(
             f"Collectors may not call {name!r}; allowed={sorted(ALLOWED_DEPARTMENT_TOOLS)}"
         )
     acting = case_tenant_id if case_tenant_id is not None else tenant_id
-    async with _department_session() as session:
-        result = await session.call_tool(
-            name,
-            {
-                "tenant_id": tenant_id,
-                "case_tenant_id": acting,
-                "lifecycle_state": lifecycle_state,
-                "batch_id": batch_id,
-            },
+    payload = await call_mcp_tool(
+        name,
+        {
+            "tenant_id": tenant_id,
+            "case_tenant_id": acting,
+            "lifecycle_state": lifecycle_state,
+            "batch_id": batch_id,
+        },
+    )
+    if not payload:
+        raise DepartmentToolCallError(
+            f"{name} returned no structured content for {tenant_id}/{batch_id}."
         )
+    return payload
+
+
+async def call_sterility_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Call one named sterility tool over MCP. Fail closed on errors.
+
+    An Agent Identity principal cannot be a Cloud SQL IAM database user, so
+    the workflow reaches the sterility clock through this MCP tool — served
+    by a process holding a real service-account credential — rather than
+    opening Cloud SQL directly (see ``app/domain/department_tools.py``).
+    """
+    if name not in STERILITY_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(STERILITY_TOOLS)}"
+        )
+    payload = await call_mcp_tool(name, arguments)
+    return payload or {}
+
+
+async def call_mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    """Low-level ``tools/call``. Returns structured content, or ``None``."""
+    async with _department_session() as session:
+        result = await session.call_tool(name, arguments)
     if result.isError:
         raise DepartmentToolCallError(_error_text(result))
     payload = result.structuredContent
-    if not isinstance(payload, dict) or not payload:
+    if payload is not None and not isinstance(payload, dict):
         raise DepartmentToolCallError(
-            f"{name} returned no structured content for {tenant_id}/{batch_id}."
+            f"{name} returned a non-object structured content payload."
         )
     return payload
