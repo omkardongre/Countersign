@@ -1,0 +1,32 @@
+# Native MCP tool-name ALLOW for the deviation-case Workflow Agent Identity.
+# QC and supply are nodes of that one Runtime principal, so this identity
+# must be allowed lims_query, em_query, and coa_fetch. Do not attach the
+# qc_probe policy to this identity (coa_fetch would 403 on supply).
+#
+# bind_to: case_workflow
+# do_not_bind_to: qc_probe, hello_runtime
+#
+# MATCH_BASE_PROTOCOL_METHODS is required or initialize/ping are denied
+# and no MCP session can be established (07_geap_platform_notes.md §10.5).
+name: countersign-mcp-case-workflow-tools
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: REQUEST_AUTHZ
+action: ALLOW
+httpRules:
+  - to:
+      operations:
+        - mcp:
+            baseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+            methods:
+              - name: "tools/list"
+              - name: "tools/call"
+                params:
+                  - exact: "lims_query"
+              - name: "tools/call"
+                params:
+                  - exact: "em_query"
+              - name: "tools/call"
+                params:
+                  - exact: "coa_fetch"

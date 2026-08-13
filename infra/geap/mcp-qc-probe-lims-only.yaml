@@ -1,0 +1,27 @@
+# QC-probe Agent Identity for the wrong-department deny.
+# Allows tools/call lims_query only. coa_fetch and em_query stay denied
+# without splitting the case Workflow into extra Runtimes.
+#
+# bind_to: qc_probe
+# do_not_bind_to: case_workflow, hello_runtime
+#
+# MATCH_BASE_PROTOCOL_METHODS is required or initialize/ping are denied
+# and no MCP session can be established (07_geap_platform_notes.md §10.5).
+# Live 403 is proven only after this identity is bound on Runtime and
+# COUNTERSIGN_MCP_URL egresses through the Gateway.
+name: countersign-mcp-qc-probe-lims-only
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: REQUEST_AUTHZ
+action: ALLOW
+httpRules:
+  - to:
+      operations:
+        - mcp:
+            baseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+            methods:
+              - name: "tools/list"
+              - name: "tools/call"
+                params:
+                  - exact: "lims_query"

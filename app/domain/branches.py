@@ -21,14 +21,17 @@ from google.adk.events.event import Event
 from google.adk.workflow import node
 
 from app.domain.compliance import resolve_compliance_result
-from app.domain.department_catalog import lookup_department_snapshot
 from app.domain.department_checks import check_coa, check_em, check_lims
 from app.domain.department_models import (
     BranchOutcome,
     BranchStatus,
     CaseEvidenceBundle,
+    CoaSnapshot,
     Department,
+    EmSnapshot,
+    LimsSnapshot,
 )
+from app.domain.department_tools import COA_FETCH, EM_QUERY, LIMS_QUERY
 from app.domain.evidence_models import (
     ExtractedEvidence,
     IngestedArtifact,
@@ -37,6 +40,7 @@ from app.domain.evidence_models import (
 from app.domain.evidence_validation import validate_page_evidence
 from app.domain.extraction import extract_page_evidence
 from app.domain.ingest import decode_and_verify_payload, ingest_evidence_artifact
+from app.mcp.client import call_department_tool
 
 
 def _exc_message(exc: BaseException) -> str:
@@ -100,24 +104,26 @@ async def collect_manufacturing(
 
 
 @node(name="collect_qc")
-def collect_qc(node_input: CaseEvidenceBundle) -> Event:
-    """LIMS (Cloud SQL shape) + EM (BigQuery shape) for the classified batch."""
+async def collect_qc(node_input: CaseEvidenceBundle) -> Event:
+    """LIMS + EM via named MCP tools ``lims_query`` and ``em_query``."""
     try:
         bundle = _bundle(node_input)
-        snapshot = lookup_department_snapshot(
-            tenant_id=bundle.tenant_id, batch_id=bundle.batch_id
-        )
-        if snapshot is None:
-            return _failed(
-                Department.QC,
-                f"No QC snapshot for {bundle.tenant_id}/{bundle.batch_id}.",
+        lims = LimsSnapshot.model_validate(
+            await call_department_tool(
+                LIMS_QUERY, tenant_id=bundle.tenant_id, batch_id=bundle.batch_id
             )
-        findings = check_lims(snapshot.lims) + check_em(snapshot.em)
+        )
+        em = EmSnapshot.model_validate(
+            await call_department_tool(
+                EM_QUERY, tenant_id=bundle.tenant_id, batch_id=bundle.batch_id
+            )
+        )
+        findings = check_lims(lims) + check_em(em)
         return Event(
             output=BranchOutcome(
                 department=Department.QC,
                 status=BranchStatus.OK,
-                source_uris=[snapshot.lims.source_uri, snapshot.em.source_uri],
+                source_uris=[lims.source_uri, em.source_uri],
                 findings=findings,
             ).model_dump(mode="json")
         )
@@ -126,24 +132,21 @@ def collect_qc(node_input: CaseEvidenceBundle) -> Event:
 
 
 @node(name="collect_supply")
-def collect_supply(node_input: CaseEvidenceBundle) -> Event:
-    """Supplier CoA gating for the classified batch."""
+async def collect_supply(node_input: CaseEvidenceBundle) -> Event:
+    """Supplier CoA via named MCP tool ``coa_fetch``."""
     try:
         bundle = _bundle(node_input)
-        snapshot = lookup_department_snapshot(
-            tenant_id=bundle.tenant_id, batch_id=bundle.batch_id
-        )
-        if snapshot is None:
-            return _failed(
-                Department.SUPPLY,
-                f"No CoA snapshot for {bundle.tenant_id}/{bundle.batch_id}.",
+        coa = CoaSnapshot.model_validate(
+            await call_department_tool(
+                COA_FETCH, tenant_id=bundle.tenant_id, batch_id=bundle.batch_id
             )
-        findings = check_coa(snapshot.coa)
+        )
+        findings = check_coa(coa)
         return Event(
             output=BranchOutcome(
                 department=Department.SUPPLY,
                 status=BranchStatus.OK,
-                source_uris=[snapshot.coa.source_uri],
+                source_uris=[coa.source_uri],
                 findings=findings,
             ).model_dump(mode="json")
         )

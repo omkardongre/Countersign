@@ -1,0 +1,23 @@
+# Apply checklist — not a Gateway resource.
+# Tool-name ALLOW is per Agent Identity. The case Workflow is one principal;
+# QC and supply are graph nodes, not separate Runtimes.
+bindings:
+  - policy: mcp-case-workflow-tools-allow.yaml
+    identity: case_workflow
+    tools:
+      - lims_query
+      - em_query
+      - coa_fetch
+  - policy: mcp-qc-probe-lims-only.yaml
+    identity: qc_probe
+    tools:
+      - lims_query
+forbidden_bindings:
+  - policy: mcp-qc-probe-lims-only.yaml
+    identity: case_workflow
+  - policy: mcp-case-workflow-tools-allow.yaml
+    identity: qc_probe
+  - policy: mcp-case-workflow-tools-allow.yaml
+    identity: hello_runtime
+  - policy: mcp-qc-probe-lims-only.yaml
+    identity: hello_runtime

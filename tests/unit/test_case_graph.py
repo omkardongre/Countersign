@@ -23,8 +23,8 @@ from google.adk.runners import InMemoryRunner
 from google.adk.workflow import node
 from google.genai import types
 
-from app.domain import branches as branches_mod
 from app.domain import challenger as challenger_mod
+from app.domain import department_tools as department_tools_mod
 from app.domain import extraction
 from app.domain import investigation as investigation_mod
 from app.domain.case_graph import CASE_WORKFLOW_NAME, build_deviation_case_workflow
@@ -377,7 +377,7 @@ async def test_qc_oos_still_runs_investigation(
         }
     )
     monkeypatch.setattr(
-        branches_mod, "lookup_department_snapshot", lambda **_kwargs: dirty
+        department_tools_mod, "lookup_department_snapshot", lambda **_kwargs: dirty
     )
     result = _gate_package((await _start(_runner(), _case_payload()))[1])
     assert result.investigation.draft is not None
