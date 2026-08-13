@@ -98,7 +98,7 @@ So Countersign is built on one non-negotiable rule:
 | QP `RequestInput` + case `ResumabilityConfig` | Done — confirm refused while `not_ready` |
 | MCP department tools (`lims_query`, `em_query`, `coa_fetch`) | Done — FastMCP; Runtime requires `COUNTERSIGN_MCP_URL`; live Gateway 403 not attached |
 | TQA tenant + lifecycle `ext_proc` | Done live — callout denies cross-tenant and `dispositioned`; `countersign-egress` has VPC + DNS peering; Runtime MCP 403 not claimed |
-| 14-day sterility wait, kill/resume | Not started |
+| 14-day sterility wait, kill/resume | Cloud SQL live — `countersign-sessions` Postgres 16, IAM auth, ADK `sessions`/`events` + `sterility_incubation` proven. Runtime env and revision-kill not claimed |
 | UI, demo | Not started |
 
 ### Domain workflow — deterministic intake and classification
@@ -239,8 +239,10 @@ case graph are described below.
 ### Domain workflow — joined case graph (intake → departments → QP)
 
 `app/agent.py` serves `build_deviation_case_workflow()` as `root_agent` with
-`ResumabilityConfig(is_resumable=True)` so a paused QP prompt can continue by
-`invocation_id`. The GEAP hello agent used for Gateway deny proof stays under
+`ResumabilityConfig(is_resumable=True)` so sterility hold and QP prompts continue
+by `invocation_id`. Set `SESSION_SERVICE_URI` to `postgresql+asyncpg://…` for
+`DatabaseSessionService` (visible SQL rows). Vertex sessions are not used when
+that URI is set. The GEAP hello agent used for Gateway deny proof stays under
 `infra/geap/hello_runtime` and is not this graph.
 
 ```
@@ -251,6 +253,7 @@ START → intake_and_bind_evidence
       → draft_investigation
       → challenge_investigation
       → gate_investigation
+      → await_sterility_incubation
       → evaluate_annex16_release_gate
       → confirm_qp
 ```
@@ -279,6 +282,18 @@ START → intake_and_bind_evidence
 - The citation gate is code: unknown `source_uri` / `finding_id` blocks. Challenger attacks
   stay on the package for the QP and cannot veto a cited draft. `decision_authority` stays
   `"none"`. This is not a batch disposition.
+- Sterility incubation is external store state, not an LLM and not
+  `LongRunningFunctionTool`. `await_sterility_incubation` (`rerun_on_resume=True`)
+  starts a per-batch clock (14 days, or `COUNTERSIGN_STERILITY_HOLD_SECONDS` labelled
+  as compressed) and checkpoints with `RequestInput`. The store is authoritative: a
+  scheduler tick that does not mark the row complete does not advance. Tick via
+  `countersign-sterility-tick`. File-backed rows: `COUNTERSIGN_STERILITY_DB`. When
+  `INSTANCE_CONNECTION_NAME` is set, both ADK sessions and sterility use Cloud SQL
+  via the Python Connector and IAM auth. `DB_IAM_USER` is required (no default
+  admin user). Agent Runtime without that connection name fails closed instead of
+  silently using Vertex sessions. Proven live: `countersign-sessions` (`POSTGRES_16`, `adk_sessions`) — IAM write to
+  `sterility_incubation` and ADK session round-trip; tables `sessions`, `events`,
+  `sterility_incubation`. Not claimed: case Runtime env, Cloud Scheduler, revision kill.
 - The Annex 16 node is also code. Checklist items live in hashed master data
   (`master_data/annex16_checklist_v1.json`). Bound evaluators score only the matching
   department branch: manufacturing completeness (1.7.11), QC LIMS OOS (1.7.13), CoA
@@ -495,6 +510,12 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     investigation_brief.py              citation-constrained brief for both LLM nodes
     investigation_models.py             draft / challenger / gate schemas
     investigation_gate.py               deterministic citation / readiness gate
+    sterility_models.py                 incubation record / tick types
+    sterility_store.py                  in-memory or sqlite incubation table
+    sterility_store_postgres.py         Cloud SQL incubation table (IAM connector)
+    sterility_wait.py                   RequestInput checkpoint; store is authoritative
+    sterility_tick.py                   mark due incubations complete
+    workflow_meta.py                    workflow name + version stamped into session state
     challenger.py                       clean-context verifier (no tools)
     release_models.py                   Annex 16 checklist result types
     release_gate.py                     deterministic confirmation checklist
@@ -523,6 +544,9 @@ infra/geap/
   attach_tqa_gateway.sh               DNS peer + VPC attach + TQA CONTENT_AUTHZ
   verify_tqa_reachability.sh          FQDN TLS check from a VPC probe VM
   verify_tqa_policy.sh                allow/deny probe + gateway networkConfig
+  provision_sessions_sql.sh           Cloud SQL Postgres + IAM user + Secret Manager
+  bootstrap_sessions_sql.py           GRANT IAM user; create sterility_incubation
+  verify_sessions_sql.py              live IAM write + ADK session round-trip
   agent-gateway-vpc.yaml              live gateway networkConfig (attachment immutable)
   tqa-authz-extension.yaml            FQDN extension, failOpen false
   tqa-authz-policy.yaml               CONTENT_AUTHZ on MCP tools/call
