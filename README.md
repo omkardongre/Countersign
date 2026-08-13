@@ -97,7 +97,7 @@ So Countersign is built on one non-negotiable rule:
 | Deterministic Annex 16 §1.7 confirmation checklist | Done — code; never certifies |
 | QP `RequestInput` + case `ResumabilityConfig` | Done — confirm refused while `not_ready` |
 | MCP department tools (`lims_query`, `em_query`, `coa_fetch`) | Done — FastMCP; Runtime requires `COUNTERSIGN_MCP_URL`; live Gateway 403 not attached |
-| TQA `ext_proc` extension | Not started — needs a VPC/DNS-peering spike |
+| TQA tenant + lifecycle `ext_proc` | Done live — callout denies cross-tenant and `dispositioned`; `countersign-egress` has VPC + DNS peering; Runtime MCP 403 not claimed |
 | 14-day sterility wait, kill/resume | Not started |
 | UI, demo | Not started |
 
@@ -284,7 +284,8 @@ START → intake_and_bind_evidence
   department branch: manufacturing completeness (1.7.11), QC LIMS OOS (1.7.13), CoA
   gating (1.7.6). A supply completeness finding does not fail 1.7.11. Open-deviation
   items 1.7.16 and 1.7.17 fail while lifecycle is `CLASSIFIED`. 1.7.18 stays
-  `not_evaluated` until the TQA extension exists. Required unevaluated or failed items
+  `not_evaluated` until a pack-level TQA evaluator is bound (the gateway TQA
+  extension is separate and already live). Required unevaluated or failed items
   make the pack `not_ready`. Outcomes are `ready_for_qp_review` / `not_ready` — never
   certified or released. This is a CDMO confirmation pack, not MAH certification.
 - QP sign-off is a graph `RequestInput` pause on `confirm_qp` with
@@ -516,6 +517,16 @@ infra/geap/
   mcp-tool-policy-bindings.yaml       which identity may receive which policy
   deploy_department_mcp.sh            Cloud Run deploy; refuses unauthenticated
   cloudbuild-department-mcp.yaml      image build for Dockerfile.mcp
+  provision_tqa_vpc.sh                TQA VPC / NAT / private DNS / PSC attachment
+  deploy_tqa_callout.sh               private VM ext_proc on :443
+  update_tqa_callout.sh               rebuild image on the existing callout VM
+  attach_tqa_gateway.sh               DNS peer + VPC attach + TQA CONTENT_AUTHZ
+  verify_tqa_reachability.sh          FQDN TLS check from a VPC probe VM
+  verify_tqa_policy.sh                allow/deny probe + gateway networkConfig
+  agent-gateway-vpc.yaml              live gateway networkConfig (attachment immutable)
+  tqa-authz-extension.yaml            FQDN extension, failOpen false
+  tqa-authz-policy.yaml               CONTENT_AUTHZ on MCP tools/call
+  tqa_spike/                          tenant + lifecycle ext_proc server
   register_platform_endpoints.sh      registers endpoints + grants roles/iap.egressor
   verify_governance.sh                9-check governance gate
   evidence/                           captured proof from the last verification run
@@ -540,8 +551,8 @@ tests/                                unit, integration, eval
   with a separate write path for status changes.
 - Custom authorization extensions do **not** validate the callout server's TLS certificate;
   reachability is constrained to a VPC-internal FQDN instead.
-- Gateway custom authorization policy budget is 4 per Agent-to-Anywhere gateway. IAP and Model
-  Armor use 2; the TQA extension will use a 3rd, leaving 1 in reserve.
+- Gateway custom authorization policy budget is 4 per Agent-to-Anywhere gateway. IAP, Model
+  Armor, and TQA use 3; 1 remains in reserve.
 - IAP and Model Armor are configured with different `failOpen` values on purpose (`false` vs
   `true`) — see [Governance proof](#governance-proof). This is stated explicitly rather than
   left as an unexplained inconsistency.
@@ -562,6 +573,14 @@ tests/                                unit, integration, eval
   policies are not bound live yet, so a Gateway 403 is not claimed. Cloud Run
   deploy refuses `--allow-unauthenticated`; MCP POSTs also require a bearer
   token. MES and QMS are not this slice.
+- TQA is a `CONTENT_AUTHZ` extension (`countersign-tqa`, `failOpen: false`) on
+  `tqa.countersign.internal`, scoped to MCP `tools/call`. The callout allows
+  `aurex`/`classified` and denies `tenant_mismatch` and `lifecycle_denied`
+  (evidence `infra/geap/evidence/tqa-policy.txt`). `countersign-egress` has
+  `networkAttachment` `countersign-tqa-psc` and DNS peering for
+  `countersign.internal.` only. The platform does not verify the callout TLS
+  certificate. Wrong-department remains native MCP tool-name YAML (not bound
+  live). A Runtime MCP 403 through the gateway is not claimed.
 
 ---
 
