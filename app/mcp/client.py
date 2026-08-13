@@ -98,16 +98,28 @@ async def _department_session() -> AsyncIterator[ClientSession]:
 
 
 async def call_department_tool(
-    name: str, *, tenant_id: str, batch_id: str
+    name: str,
+    *,
+    tenant_id: str,
+    batch_id: str,
+    lifecycle_state: str = "classified",
+    case_tenant_id: str | None = None,
 ) -> dict[str, Any]:
     """Call one named department tool over MCP. Fail closed on errors."""
     if name not in ALLOWED_DEPARTMENT_TOOLS:
         raise DepartmentToolCallError(
             f"Collectors may not call {name!r}; allowed={sorted(ALLOWED_DEPARTMENT_TOOLS)}"
         )
+    acting = case_tenant_id if case_tenant_id is not None else tenant_id
     async with _department_session() as session:
         result = await session.call_tool(
-            name, {"tenant_id": tenant_id, "batch_id": batch_id}
+            name,
+            {
+                "tenant_id": tenant_id,
+                "case_tenant_id": acting,
+                "lifecycle_state": lifecycle_state,
+                "batch_id": batch_id,
+            },
         )
     if result.isError:
         raise DepartmentToolCallError(_error_text(result))

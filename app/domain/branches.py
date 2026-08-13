@@ -110,12 +110,20 @@ async def collect_qc(node_input: CaseEvidenceBundle) -> Event:
         bundle = _bundle(node_input)
         lims = LimsSnapshot.model_validate(
             await call_department_tool(
-                LIMS_QUERY, tenant_id=bundle.tenant_id, batch_id=bundle.batch_id
+                LIMS_QUERY,
+                tenant_id=bundle.tenant_id,
+                batch_id=bundle.batch_id,
+                lifecycle_state=bundle.lifecycle_state,
+                case_tenant_id=bundle.tenant_id,
             )
         )
         em = EmSnapshot.model_validate(
             await call_department_tool(
-                EM_QUERY, tenant_id=bundle.tenant_id, batch_id=bundle.batch_id
+                EM_QUERY,
+                tenant_id=bundle.tenant_id,
+                batch_id=bundle.batch_id,
+                lifecycle_state=bundle.lifecycle_state,
+                case_tenant_id=bundle.tenant_id,
             )
         )
         findings = check_lims(lims) + check_em(em)
@@ -138,7 +146,11 @@ async def collect_supply(node_input: CaseEvidenceBundle) -> Event:
         bundle = _bundle(node_input)
         coa = CoaSnapshot.model_validate(
             await call_department_tool(
-                COA_FETCH, tenant_id=bundle.tenant_id, batch_id=bundle.batch_id
+                COA_FETCH,
+                tenant_id=bundle.tenant_id,
+                batch_id=bundle.batch_id,
+                lifecycle_state=bundle.lifecycle_state,
+                case_tenant_id=bundle.tenant_id,
             )
         )
         findings = check_coa(coa)

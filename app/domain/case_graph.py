@@ -86,6 +86,7 @@ def intake_and_bind_evidence(node_input: DeviationCaseRequest) -> Event:
         tenant_id=classified.tenant_id,
         case_id=classified.case_id,
         batch_id=classified.batch_id,
+        lifecycle_state=classified.lifecycle_state.value,
         bmr=EvidenceIngestRequest(
             tenant_id=classified.tenant_id,
             case_id=classified.case_id,

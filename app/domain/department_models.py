@@ -105,6 +105,7 @@ class CaseEvidenceBundle(BaseModel):
     tenant_id: str
     case_id: str
     batch_id: str
+    lifecycle_state: str = "classified"
     bmr: EvidenceIngestRequest
 
 

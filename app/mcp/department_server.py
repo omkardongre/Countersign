@@ -81,7 +81,13 @@ def build_department_mcp(
         ),
         annotations=_READ_ONLY,
     )
-    def lims_query(tenant_id: str, batch_id: str) -> LimsSnapshot:
+    def lims_query(
+        tenant_id: str,
+        batch_id: str,
+        lifecycle_state: str = "classified",
+        case_tenant_id: str = "",
+    ) -> LimsSnapshot:
+        del lifecycle_state, case_tenant_id
         try:
             return load_lims(tenant_id=tenant_id, batch_id=batch_id)
         except DepartmentRecordMissing as exc:
@@ -96,7 +102,13 @@ def build_department_mcp(
         ),
         annotations=_READ_ONLY,
     )
-    def em_query(tenant_id: str, batch_id: str) -> EmSnapshot:
+    def em_query(
+        tenant_id: str,
+        batch_id: str,
+        lifecycle_state: str = "classified",
+        case_tenant_id: str = "",
+    ) -> EmSnapshot:
+        del lifecycle_state, case_tenant_id
         try:
             return load_em(tenant_id=tenant_id, batch_id=batch_id)
         except DepartmentRecordMissing as exc:
@@ -111,7 +123,13 @@ def build_department_mcp(
         ),
         annotations=_READ_ONLY,
     )
-    def coa_fetch(tenant_id: str, batch_id: str) -> CoaSnapshot:
+    def coa_fetch(
+        tenant_id: str,
+        batch_id: str,
+        lifecycle_state: str = "classified",
+        case_tenant_id: str = "",
+    ) -> CoaSnapshot:
+        del lifecycle_state, case_tenant_id
         try:
             return load_coa(tenant_id=tenant_id, batch_id=batch_id)
         except DepartmentRecordMissing as exc:
