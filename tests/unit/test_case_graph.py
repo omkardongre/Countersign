@@ -197,7 +197,9 @@ def _gate_package(events: list) -> CaseReleasePackage:
     return CaseReleasePackage.model_validate(outputs[-1])
 
 
-def _request_input(events: list) -> tuple[str, str, dict]:
+def _request_input(
+    events: list, *, interrupt_prefix: str = "qp_confirmation"
+) -> tuple[str, str, dict]:
     for event in events:
         if not event.content or not event.content.parts:
             continue
@@ -205,8 +207,13 @@ def _request_input(events: list) -> tuple[str, str, dict]:
             call = part.function_call
             if call is None or call.name != _REQUEST_INPUT_NAME:
                 continue
-            return event.invocation_id, call.id, dict(call.args or {})
-    raise AssertionError("workflow did not pause for QP confirmation")
+            interrupt_id = str(call.id or "")
+            if not interrupt_id.startswith(interrupt_prefix):
+                continue
+            return event.invocation_id, interrupt_id, dict(call.args or {})
+    raise AssertionError(
+        f"workflow did not pause for {interrupt_prefix} confirmation"
+    )
 
 
 async def _resume(
@@ -268,6 +275,7 @@ def test_platform_entrypoint_serves_the_case_workflow() -> None:
 async def test_classified_case_and_compliance_share_scope(
     stub_ground_truth,
     stub_investigation_agents,
+    sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())
     runner = _runner()
@@ -322,6 +330,7 @@ async def test_intake_schema_failure_stops_before_extraction(
 async def test_disallowed_mime_type_fails_manufacturing_without_stalling_join(
     stub_ground_truth,
     stub_investigation_agents,
+    sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())
     payload = _case_payload()
@@ -354,6 +363,7 @@ async def test_qc_oos_still_runs_investigation(
     stub_ground_truth,
     stub_investigation_agents,
     monkeypatch,
+    sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())
     snapshot = lookup_department_snapshot(tenant_id="aurex", batch_id="AX-2291")
@@ -394,6 +404,7 @@ async def test_qc_oos_still_runs_investigation(
 async def test_qp_decline_resumes_and_records_confirmation(
     stub_ground_truth,
     stub_investigation_agents,
+    sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())
     runner = _runner()
@@ -422,6 +433,7 @@ async def test_qp_decline_resumes_and_records_confirmation(
 async def test_qp_confirm_on_not_ready_is_rejected(
     stub_ground_truth,
     stub_investigation_agents,
+    sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())
     runner = _runner()

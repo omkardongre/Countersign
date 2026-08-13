@@ -188,6 +188,11 @@ testem.log
 Thumbs.db
 *.vscode*
 
+# Local session / sterility sqlite files
+*.sqlite
+*.sqlite3
+sessions.db
+
 # ADK
 .adk/
 
@@ -212,6 +217,9 @@ application_default_credentials.json
 **/application_default_credentials.json
 service-account*.json
 *service_account*.json
+
+# Gateway TLS inspection dumps (not for git)
+infra/geap/evidence/tqa-gateway.json
 
 # Local notes and packaging dumps
 semantic-review/

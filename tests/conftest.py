@@ -18,7 +18,36 @@ from __future__ import annotations
 
 import pytest
 
+from app.domain.sterility_store import get_sterility_store, reset_sterility_store_cache
+
 
 @pytest.fixture(autouse=True)
 def _department_mcp_inprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COUNTERSIGN_MCP_INPROCESS", "1")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_sterility_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("COUNTERSIGN_STERILITY_DB", raising=False)
+    monkeypatch.delenv("COUNTERSIGN_STERILITY_HOLD_SECONDS", raising=False)
+    monkeypatch.delenv("INSTANCE_CONNECTION_NAME", raising=False)
+    monkeypatch.delenv("DB_IAM_USER", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", raising=False)
+    monkeypatch.delenv("COUNTERSIGN_ALLOW_VERTEX_SESSIONS", raising=False)
+    reset_sterility_store_cache()
+    get_sterility_store().reset()
+    yield
+    reset_sterility_store_cache()
+
+
+@pytest.fixture
+def sterility_released() -> None:
+    """Mark the synthetic AX-2291 incubation complete so later nodes can run."""
+    store = get_sterility_store()
+    store.start(
+        tenant_id="aurex",
+        batch_id="AX-2291",
+        case_id="pre-released",
+        workflow_version="test",
+    )
+    store.complete("aurex", "AX-2291")
