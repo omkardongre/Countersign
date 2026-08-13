@@ -98,7 +98,9 @@ So Countersign is built on one non-negotiable rule:
 | QP `RequestInput` + case `ResumabilityConfig` | Done — confirm refused while `not_ready` |
 | MCP department tools (`lims_query`, `em_query`, `coa_fetch`) | Done — FastMCP; Runtime requires `COUNTERSIGN_MCP_URL`; live Gateway 403 not attached |
 | TQA tenant + lifecycle `ext_proc` | Done live — callout denies cross-tenant and `dispositioned`; `countersign-egress` has VPC + DNS peering; Runtime MCP 403 not claimed |
-| 14-day sterility wait, kill/resume | Cloud SQL live — `countersign-sessions` Postgres 16, IAM auth, ADK `sessions`/`events` + `sterility_incubation` proven. Runtime env and revision-kill not claimed |
+| 14-day sterility wait, kill/resume | Cloud SQL live — `countersign-sessions` Postgres 16, IAM auth, ADK `sessions`/`events` + `sterility_incubation` proven. Clock reached via MCP (`sterility_start`/`sterility_get`/`sterility_bind_resume_handle`), tenant-checked, atomic tick claim |
+| Scheduler wake-up (`POST /scheduler/sterility-tick`) | Done — OIDC-guarded, resumes the exact parked invocation, proven end to end in tests. Cloud Scheduler job itself not deployed |
+| Case-workflow Agent Runtime deploy | Script written (`infra/geap/deploy_case_runtime.py`), not run against the live project. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
 | UI, demo | Not started |
 
 ### Domain workflow — deterministic intake and classification
@@ -286,14 +288,50 @@ START → intake_and_bind_evidence
   `LongRunningFunctionTool`. `await_sterility_incubation` (`rerun_on_resume=True`)
   starts a per-batch clock (14 days, or `COUNTERSIGN_STERILITY_HOLD_SECONDS` labelled
   as compressed) and checkpoints with `RequestInput`. The store is authoritative: a
-  scheduler tick that does not mark the row complete does not advance. Tick via
-  `countersign-sterility-tick`. File-backed rows: `COUNTERSIGN_STERILITY_DB`. When
-  `INSTANCE_CONNECTION_NAME` is set, both ADK sessions and sterility use Cloud SQL
-  via the Python Connector and IAM auth. `DB_IAM_USER` is required (no default
-  admin user). Agent Runtime without that connection name fails closed instead of
-  silently using Vertex sessions. Proven live: `countersign-sessions` (`POSTGRES_16`, `adk_sessions`) — IAM write to
-  `sterility_incubation` and ADK session round-trip; tables `sessions`, `events`,
-  `sterility_incubation`. Not claimed: case Runtime env, Cloud Scheduler, revision kill.
+  scheduler tick that does not mark the row complete does not advance.
+  An Agent Identity SPIFFE principal **cannot** be a Cloud SQL IAM database
+  user — confirmed against the live instance (`gcloud sql users create
+  <effective_identity>` rejects the name) — so the workflow reaches the clock
+  through named MCP tools (`sterility_start`, `sterility_get`,
+  `sterility_bind_resume_handle`) on the same department MCP service as
+  LIMS/EM/CoA, not by opening Cloud SQL itself. Those tools require
+  `case_tenant_id` to match the tenant they are reading, the same
+  cross-tenant check the department reads already enforce (the TQA callout
+  only inspects `lims_query`/`em_query`/`coa_fetch`, not these). The MCP
+  server still owns Cloud SQL via the Python Connector and IAM auth
+  (`DB_IAM_USER`, no default admin user). At checkpoint time the node binds a
+  `SterilityResumeHandle` (`app_name`, `user_id`, `session_id`,
+  `invocation_id`, `interrupt_id`) onto the row so a scheduler tick weeks
+  later can resume the exact paused invocation. `tick_due` is an atomic
+  `UPDATE ... RETURNING` claim in every store, so two overlapping ticks
+  cannot both claim and deliver the same wake-up. Proven live:
+  `countersign-sessions` (`POSTGRES_16`, `adk_sessions`) — IAM write to
+  `sterility_incubation` and ADK session round-trip; tables `sessions`,
+  `events`, `sterility_incubation`.
+- `POST /scheduler/sterility-tick` (`app/scheduler/`) is the scheduled wake-up:
+  OIDC-guarded (audience + service-account allow-list; fails closed if either
+  is unset), completes due holds, and resumes each one via the in-process ADK
+  `Runner` or, when `COUNTERSIGN_CASE_ENGINE` is set, Agent Runtime
+  `:streamQuery` with the recorded `invocation_id`. A resume failure records
+  `recoverable: false` when the session/invocation itself is gone
+  (`SessionNotFoundError`, HTTP 404/400) versus `true` for a transient error,
+  so an operator can tell which completed holds actually need attention. A
+  hold that completes with no bound handle is reported, not silently
+  swallowed. Proven end to end in `tests/unit/test_sterility_wait.py`: a case
+  parked on the hold advances to `qp_confirmation` from a tick alone, with no
+  direct call into the workflow.
+- `infra/geap/deploy_case_runtime.py` deploys the real graph (`app.agent`) to
+  Agent Runtime with `identity_type=AGENT_IDENTITY` and
+  `agent_gateway_config`, following the same identity-assert and IAM-grant
+  pattern as the hello probe (`infra/geap/runtime_identity.py`). Because the
+  Runtime identity cannot hold Cloud SQL credentials, this deploy sets
+  `COUNTERSIGN_ALLOW_VERTEX_SESSIONS=1` plus `GOOGLE_CLOUD_AGENT_ENGINE_LOCATION`
+  (pinned to the Runtime's own region, not the `global` model-routing
+  location) instead of `INSTANCE_CONNECTION_NAME`/`DB_IAM_USER`, and requires
+  `COUNTERSIGN_MCP_URL`. Not claimed: this script has not been run against
+  the live project; Cloud Scheduler itself is not deployed; revision-kill is
+  proven only in `tests/unit/test_kill_resume.py`, not on a live Cloud Run
+  revision (Agent Runtime does not expose Cloud Run revisions to kill).
 - The Annex 16 node is also code. Checklist items live in hashed master data
   (`master_data/annex16_checklist_v1.json`). Bound evaluators score only the matching
   department branch: manufacturing completeness (1.7.11), QC LIMS OOS (1.7.13), CoA
@@ -510,11 +548,12 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     investigation_brief.py              citation-constrained brief for both LLM nodes
     investigation_models.py             draft / challenger / gate schemas
     investigation_gate.py               deterministic citation / readiness gate
-    sterility_models.py                 incubation record / tick types
-    sterility_store.py                  in-memory or sqlite incubation table
-    sterility_store_postgres.py         Cloud SQL incubation table (IAM connector)
+    sterility_models.py                 incubation record / resume-handle / tick types
+    sterility_store.py                  in-memory or sqlite incubation table (atomic tick_due)
+    sterility_store_postgres.py         Cloud SQL incubation table (IAM connector, atomic tick_due)
+    sterility_store_mcp.py              async client the case Runtime uses (no direct Cloud SQL)
     sterility_wait.py                   RequestInput checkpoint; store is authoritative
-    sterility_tick.py                   mark due incubations complete
+    sterility_tick.py                   mark due incubations complete (operator CLI)
     workflow_meta.py                    workflow name + version stamped into session state
     challenger.py                       clean-context verifier (no tools)
     release_models.py                   Annex 16 checklist result types
@@ -524,11 +563,19 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     master_data/annex16_checklist_v1.json  hashed Annex 16 §1.7 item bindings
     master_data/department_catalog_v1.json  synthetic LIMS / EM / CoA rows
   mcp/
-    department_server.py                FastMCP Streamable HTTP (`lims_query` / `em_query` / `coa_fetch`)
+    department_server.py                FastMCP Streamable HTTP: `lims_query` / `em_query` /
+                                           `coa_fetch` / `sterility_start` / `sterility_get` /
+                                           `sterility_bind_resume_handle`
     client.py                           collector MCP client (https URL or explicit in-process)
+  scheduler/
+    auth.py                              OIDC verify for Cloud Scheduler (fails closed)
+    resume.py                            deliver a tick; Runner or Agent Runtime :streamQuery
+    routes.py                            POST /scheduler/sterility-tick
 infra/geap/
   constants.env                       shared resource names
   agent-gateway-egress.yaml           Agent-to-Anywhere gateway spec
+  runtime_identity.py                 shared identity-assert / IAM-grant helpers
+  deploy_case_runtime.py              deploy the real graph to Agent Runtime (script only, not run)
   iap-request-authz-extension*.yaml   dry-run and enforced variants
   iap-request-authz-policy.yaml       binds the IAP extension to the gateway
   model-armor-authz-extension.yaml    Model Armor CONTENT_AUTHZ extension
@@ -605,6 +652,26 @@ tests/                                unit, integration, eval
   `countersign.internal.` only. The platform does not verify the callout TLS
   certificate. Wrong-department remains native MCP tool-name YAML (not bound
   live). A Runtime MCP 403 through the gateway is not claimed.
+- **An Agent Identity SPIFFE principal cannot be a Cloud SQL IAM database
+  user** — confirmed against the live instance, not assumed: `gcloud sql
+  users create <effective_identity>` rejects the name (too long, and the
+  type only accepts a user account, service account, or group). The case
+  Runtime therefore never opens Cloud SQL itself. It reaches the sterility
+  clock through the same MCP service that serves LIMS/EM/CoA, and uses
+  Vertex-managed sessions instead of `DatabaseSessionService`. The TQA
+  callout's tenant/lifecycle check only inspects
+  `lims_query`/`em_query`/`coa_fetch`, so the sterility MCP tools check
+  `tenant_id == case_tenant_id` themselves rather than relying on that
+  extension.
+- **The scheduler tick and the case-workflow Runtime deploy are not deployed
+  live.** `POST /scheduler/sterility-tick` is implemented, OIDC-guarded, and
+  proven end to end against an in-process `Runner` in tests. No Cloud
+  Scheduler job calls it. `infra/geap/deploy_case_runtime.py` is written to
+  the same identity/gateway pattern as the proven hello deploy, but has not
+  been run against `countersign-505107`. Revision-kill is proven only in
+  `tests/unit/test_kill_resume.py`; Agent Runtime does not expose a Cloud Run
+  revision to delete, so the live version of this beat still needs its own
+  proof, not a rerun of that test.
 
 ---
 
