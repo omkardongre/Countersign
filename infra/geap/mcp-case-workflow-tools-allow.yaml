@@ -3,6 +3,11 @@
 # must be allowed lims_query, em_query, and coa_fetch. Do not attach the
 # qc_probe policy to this identity (coa_fetch would 403 on supply).
 #
+# sterility_start and sterility_bind_resume_handle are also included: an
+# Agent Identity principal cannot be a Cloud SQL IAM database user (confirmed
+# against the live instance), so the case workflow reaches the sterility
+# clock through these MCP tools rather than opening Cloud SQL itself.
+#
 # bind_to: case_workflow
 # do_not_bind_to: qc_probe, hello_runtime
 #
@@ -30,3 +35,12 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "coa_fetch"
+              - name: "tools/call"
+                params:
+                  - exact: "sterility_get"
+              - name: "tools/call"
+                params:
+                  - exact: "sterility_start"
+              - name: "tools/call"
+                params:
+                  - exact: "sterility_bind_resume_handle"

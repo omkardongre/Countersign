@@ -8,6 +8,9 @@ bindings:
       - lims_query
       - em_query
       - coa_fetch
+      - sterility_get
+      - sterility_start
+      - sterility_bind_resume_handle
   - policy: mcp-qc-probe-lims-only.yaml
     identity: qc_probe
     tools:
