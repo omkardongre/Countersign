@@ -55,6 +55,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+.ruff_cache/
 
 # Translations
 *.mo
@@ -212,7 +213,8 @@ application_default_credentials.json
 service-account*.json
 *service_account*.json
 
-# Local Runtime packaging / verification dumps
+# Local notes and packaging dumps
+semantic-review/
 countersign_hello_deploy_*/
 /tmp/cs-*.txt
 /tmp/sdk-*.txt

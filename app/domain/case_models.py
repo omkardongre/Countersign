@@ -24,7 +24,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.domain.compliance_models import ComplianceResult
+from app.domain.compliance_models import (
+    ComplianceFinding,
+    ComplianceResult,
+    ComplianceStatus,
+)
+from app.domain.department_models import BranchOutcome
 from app.domain.models import CaseIntake, ClassifiedCase
 
 
@@ -46,12 +51,17 @@ class DeviationCaseRequest(BaseModel):
 
 
 class CaseComplianceResult(BaseModel):
-    """Classified case plus compliance of its first evidence page.
+    """Classified case plus joined department evidence.
 
     ``decision_authority`` stays ``"none"``: this is an investigation brief,
-    not a batch disposition.
+    not a batch disposition. ``compliance`` is the manufacturing-page engine
+    result when that branch succeeded; ``aggregated_status`` is the join of
+    all departments.
     """
 
     classified: ClassifiedCase
-    compliance: ComplianceResult
+    compliance: ComplianceResult | None = None
+    aggregated_status: ComplianceStatus
+    branches: list[BranchOutcome] = Field(default_factory=list)
+    findings: list[ComplianceFinding] = Field(default_factory=list)
     decision_authority: str = "none"
