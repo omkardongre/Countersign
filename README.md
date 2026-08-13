@@ -96,7 +96,7 @@ So Countersign is built on one non-negotiable rule:
 | Investigation + Challenger + citation gate | Done — LLM drafts; code gates citations |
 | Deterministic Annex 16 §1.7 confirmation checklist | Done — code; never certifies |
 | QP `RequestInput` + case `ResumabilityConfig` | Done — confirm refused while `not_ready` |
-| MCP tool servers (MES, LIMS, historian, supplier, QMS) | Not started |
+| MCP department tools (`lims_query`, `em_query`, `coa_fetch`) | Done — FastMCP; Runtime requires `COUNTERSIGN_MCP_URL`; live Gateway 403 not attached |
 | TQA `ext_proc` extension | Not started — needs a VPC/DNS-peering spike |
 | 14-day sterility wait, kill/resume | Not started |
 | UI, demo | Not started |
@@ -262,10 +262,15 @@ START → intake_and_bind_evidence
   re-validated as Pydantic models (ADK returns dicts). Disallowed MIME types fail that
   branch with the integrity message; QC and supply still join. Reconcile refuses a
   manufacturing result whose tenant / case / batch does not match the classified case.
-- QC and supply are **code**, not extra LLM agents: connector-shaped LIMS (Cloud SQL), EM
-  (BigQuery), and CoA (Drive) rows in `master_data/department_catalog_v1.json`, with
-  deterministic OOS / action-limit / signature / lot / retest / GMP-certificate checks.
-  Live MCP Toolbox calls are not wired; the catalog is the production shape, synthetic data.
+- QC and supply are **code**, not extra LLM agents. They call named MCP tools
+  `lims_query`, `em_query`, and `coa_fetch` over the MCP protocol. Runtime must
+  set `COUNTERSIGN_MCP_URL` (https Streamable HTTP) so egress hits Agent Gateway;
+  omitting it fails the branch. Unit tests set `COUNTERSIGN_MCP_INPROCESS=1`.
+  Tool bodies read connector-shaped LIMS / EM / CoA rows from
+  `master_data/department_catalog_v1.json`; OOS, action-limit, signature, lot,
+  retest, and GMP-certificate checks stay deterministic after the fetch.
+  Investigation still has `tools=[]`. MES, historian, and QMS are not registered.
+  Live Cloud SQL / BigQuery / Drive are not wired.
 - Each collector always emits `Event.output` so a failed branch cannot stall `JoinNode`.
 - Investigation and Challenger are `single_turn`, `include_contents="none"`, `tools=[]`,
   `output_schema` bound. Scope ids are stamped from the classified case. Investigation
@@ -482,6 +487,7 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     case_models.py                      DeviationCaseRequest / CaseComplianceResult
     department_models.py                LIMS / EM / CoA snapshots + branch outcomes
     department_catalog.py               pinned synthetic department catalog loader
+    department_tools.py                 named LIMS / EM / CoA tool bodies
     department_checks.py                deterministic QC and supply checks
     branches.py                         parallel collectors (always Event.output)
     investigation.py                    draft-only investigation agent (no tools)
@@ -495,6 +501,9 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     qp_confirmation.py                  RequestInput pause; reruns on resume
     master_data/annex16_checklist_v1.json  hashed Annex 16 §1.7 item bindings
     master_data/department_catalog_v1.json  synthetic LIMS / EM / CoA rows
+  mcp/
+    department_server.py                FastMCP Streamable HTTP (`lims_query` / `em_query` / `coa_fetch`)
+    client.py                           collector MCP client (https URL or explicit in-process)
 infra/geap/
   constants.env                       shared resource names
   agent-gateway-egress.yaml           Agent-to-Anywhere gateway spec
@@ -502,10 +511,16 @@ infra/geap/
   iap-request-authz-policy.yaml       binds the IAP extension to the gateway
   model-armor-authz-extension.yaml    Model Armor CONTENT_AUTHZ extension
   model-armor-authz-policy.yaml       binds the Model Armor extension to the gateway
+  mcp-case-workflow-tools-allow.yaml  native MCP ALLOW: all three tools (case identity)
+  mcp-qc-probe-lims-only.yaml         QC-probe identity: lims_query only
+  mcp-tool-policy-bindings.yaml       which identity may receive which policy
+  deploy_department_mcp.sh            Cloud Run deploy; refuses unauthenticated
+  cloudbuild-department-mcp.yaml      image build for Dockerfile.mcp
   register_platform_endpoints.sh      registers endpoints + grants roles/iap.egressor
   verify_governance.sh                9-check governance gate
   evidence/                           captured proof from the last verification run
   hello_runtime/                      minimal agent used for the governance proof
+Dockerfile.mcp                        Cloud Run image for the department MCP server
 tests/                                unit, integration, eval
 ```
 
@@ -540,7 +555,13 @@ tests/                                unit, integration, eval
 - `app/agent.py` serves the joined deviation-case `Workflow`. The Gateway deny probe remains
   `infra/geap/hello_runtime` so that proof stays isolated from the case graph.
 - Department LIMS / EM / CoA rows are **synthetic connector shapes**, not live Cloud SQL /
-  BigQuery / Drive calls. MCP tool-name policies are the next wiring for those systems.
+  BigQuery / Drive calls. Collectors reach them through named MCP tools. Runtime
+  without `COUNTERSIGN_MCP_URL` fails closed (tests opt in with
+  `COUNTERSIGN_MCP_INPROCESS=1`). Gateway YAML allows all three names on the
+  **case Workflow** identity; `lims_query` only on the QC-probe identity. Those
+  policies are not bound live yet, so a Gateway 403 is not claimed. Cloud Run
+  deploy refuses `--allow-unauthenticated`; MCP POSTs also require a bearer
+  token. MES and QMS are not this slice.
 
 ---
 
