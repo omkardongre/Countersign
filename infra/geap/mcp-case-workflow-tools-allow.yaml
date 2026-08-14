@@ -8,6 +8,12 @@
 # against the live instance), so the case workflow reaches the sterility
 # clock through these MCP tools rather than opening Cloud SQL itself.
 #
+# prior_art_query and prior_art_write are Case Memory: the same identity
+# constraint applies to Firestore as to Cloud SQL, so the workflow reaches
+# Case Memory through this MCP process too. prior_art_redact is deliberately
+# NOT included here — redaction is an operator action, not something the
+# case workflow itself should be able to invoke on its own behalf.
+#
 # bind_to: case_workflow
 # do_not_bind_to: qc_probe, hello_runtime
 #
@@ -44,3 +50,9 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "sterility_bind_resume_handle"
+              - name: "tools/call"
+                params:
+                  - exact: "prior_art_query"
+              - name: "tools/call"
+                params:
+                  - exact: "prior_art_write"

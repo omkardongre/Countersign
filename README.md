@@ -73,7 +73,7 @@ So Countersign is built on one non-negotiable rule:
 | **Domain policy** | **Countersign TQA `ext_proc` extension — ours** |
 | Runtime | Agent Runtime, `gemini-3.6-flash` via Vertex AI |
 | Durable state | Cloud SQL Postgres via ADK `DatabaseSessionService` |
-| Case memory | Firestore + embeddings (provenance and tenant filtering that Memory Bank cannot round-trip) |
+| Case memory | Firestore + embeddings (provenance and tenant filtering that Memory Bank cannot round-trip); code done, not yet live |
 | Observability | Agent Observability, Cloud Trace, Cloud Logging |
 
 ---
@@ -101,6 +101,7 @@ So Countersign is built on one non-negotiable rule:
 | 14-day sterility wait, kill/resume | Cloud SQL live — `countersign-sessions` Postgres 16, IAM auth, ADK `sessions`/`events` + `sterility_incubation` proven. Clock reached via MCP (`sterility_start`/`sterility_get`/`sterility_bind_resume_handle`), tenant-checked, atomic tick claim |
 | Scheduler wake-up (`POST /scheduler/sterility-tick`) | Done live — Cloud Scheduler job `countersign-sterility-tick` (OIDC, `*/15 * * * *`) hits the deployed tick Cloud Run service; manual trigger returns `200` |
 | Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `6585223078622527488`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
+| Case Memory (Firestore + embeddings) | Done in code, reviewed, `firestore.googleapis.com` not yet enabled on the live project — see below |
 | UI, demo | Not started |
 
 ### Domain workflow — deterministic intake and classification
@@ -354,6 +355,60 @@ START → intake_and_bind_evidence
 Standalone `evidence_graph.py` (ingest → extract → validate → comply) remains for the
 single-artifact path. The platform entrypoint is the joined case graph.
 
+### Domain workflow — Case Memory (Firestore + embeddings)
+
+`retrieve_prior_art` runs after `reconcile_departments` and before Investigation;
+`record_case_memory` runs after `confirm_qp`. Neither is an LLM and neither is on the
+citation gate's critical path — a Case Memory outage degrades to an empty `prior_art`
+list or a skipped write, not a failed case.
+
+- **Not `VertexAiMemoryBankService`.** `search_memory` drops `custom_metadata`/`id` on
+  read (provenance cannot round-trip), scopes only by `app_name`/`user_id` (no tenant
+  filter), has no delete method (a poisoned fact cannot be redacted), and writes are
+  fire-and-forget. `CaseMemoryFact` (`app/domain/case_memory_models.py`) carries
+  `fact_id`, `source_uri`, `tenant_id` and `confidence` as first-class fields; every
+  write is `await`ed synchronously; `redact()` exists on both backends and is
+  tenant-scoped.
+- **Retrieval is semantic, not keyword.** `text-embedding-005` via
+  `google.genai`'s `embed_content` (not a separate embeddings SDK — already a
+  transitive dependency through `google-adk`), then Firestore's native
+  `find_nearest` KNN query (`Vector`, `DistanceMeasure.COSINE`). If embeddings are
+  unavailable, retrieval falls back to a tenant-scoped recency query and reports
+  `query_embedded: false` — "no similar priors" is never confused with "search
+  degraded."
+- **Reached over MCP, not opened directly.** Same reason as the sterility clock: an
+  Agent Identity principal cannot itself hold Firestore IAM credentials. Three new
+  tools on the department MCP process — `prior_art_query`, `prior_art_write`,
+  `prior_art_redact` — mirror the existing `lims_query`/`sterility_*` pattern (tenant
+  self-check, `ToolError` wrapping, read-only vs idempotent-write annotations).
+  `prior_art_redact` is deliberately **not** on the case-workflow Gateway allow-list —
+  redaction is an operator decision about a fact's correctness, not something a case
+  should trigger on its own behalf — and has its own CLI entry point,
+  `countersign-case-memory-redact` (`app/domain/case_memory_redact.py`).
+- **The one durable write is idempotent.** `record_case_memory` is
+  `rerun_on_resume=True`, so a crash between `confirm_qp` completing and this write
+  landing, followed by an ADK resume, reruns the node. The fact document id is
+  deterministic (`qp_outcome:{tenant_id}:{case_id}`), not a fresh `uuid4` per call, so
+  a rerun overwrites the same fact instead of duplicating it — the same idempotency-key
+  property `sterility_start` already has.
+- **Store-outage exceptions are narrow, on purpose.** Both nodes catch only the actual
+  failure modes an outage can raise (`DepartmentToolCallError`, `McpError`,
+  `GoogleAPICallError`, `RetryError`, `ConnectionError`, `TimeoutError`) — not bare
+  `Exception` — so a real bug in this code path fails loudly instead of masquerading as
+  Case Memory being down.
+- Reviewed via `semantic_reviewer` sub-agent before commit. Verdict: needs changes; all
+  findings fixed before commit — the write-idempotency and narrow-exception points
+  above are exactly what that review caught, plus removing two unused request models
+  and adding the redact CLI so the tool has an actual caller.
+- **Not claimed:** `FirestoreCaseMemoryStore`'s live Firestore path (`find_nearest`,
+  `Vector`, `embed_text`) is verified against the installed SDK's real method
+  signatures but is not exercised by an integration test against a live Firestore
+  instance or emulator — all Case Memory unit tests run against
+  `InMemoryCaseMemoryStore` (`COUNTERSIGN_CASE_MEMORY_INMEMORY=1`). `firestore.googleapis.com`
+  is not yet enabled on `countersign-505107`; no Firestore Native database, IAM grant,
+  or vector index exists live yet — see `infra/geap/deploy_department_mcp.sh` for the
+  exact commands this needs before the MCP service can actually serve these tools.
+
 ---
 
 ## Governance proof
@@ -557,6 +612,11 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     sterility_store_mcp.py              async client the case Runtime uses (no direct Cloud SQL)
     sterility_wait.py                   RequestInput checkpoint; store is authoritative
     sterility_tick.py                   mark due incubations complete (operator CLI)
+    case_memory_models.py               CaseMemoryFact / query result types
+    case_memory_store.py                Firestore (find_nearest) or in-memory Case Memory store
+    case_memory_mcp.py                  async client the case Runtime uses (no direct Firestore)
+    case_memory_node.py                 retrieve_prior_art / record_case_memory graph nodes
+    case_memory_redact.py               redact one poisoned fact (operator CLI)
     workflow_meta.py                    workflow name + version stamped into session state
     challenger.py                       clean-context verifier (no tools)
     release_models.py                   Annex 16 checklist result types
@@ -568,7 +628,8 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
   mcp/
     department_server.py                FastMCP Streamable HTTP: `lims_query` / `em_query` /
                                            `coa_fetch` / `sterility_start` / `sterility_get` /
-                                           `sterility_bind_resume_handle`
+                                           `sterility_bind_resume_handle` / `prior_art_query` /
+                                           `prior_art_write` / `prior_art_redact`
     client.py                           collector MCP client (https URL or explicit in-process)
   scheduler/
     auth.py                              OIDC verify for Cloud Scheduler (fails closed)
@@ -583,7 +644,8 @@ infra/geap/
   iap-request-authz-policy.yaml       binds the IAP extension to the gateway
   model-armor-authz-extension.yaml    Model Armor CONTENT_AUTHZ extension
   model-armor-authz-policy.yaml       binds the Model Armor extension to the gateway
-  mcp-case-workflow-tools-allow.yaml  native MCP ALLOW: all three tools (case identity)
+  mcp-case-workflow-tools-allow.yaml  native MCP ALLOW: department, sterility and Case
+                                         Memory read/write tools (case identity)
   mcp-qc-probe-lims-only.yaml         QC-probe identity: lims_query only
   mcp-tool-policy-bindings.yaml       which identity may receive which policy
   deploy_department_mcp.sh            Cloud Run deploy; refuses unauthenticated

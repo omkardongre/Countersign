@@ -11,6 +11,8 @@ bindings:
       - sterility_get
       - sterility_start
       - sterility_bind_resume_handle
+      - prior_art_query
+      - prior_art_write
   - policy: mcp-qc-probe-lims-only.yaml
     identity: qc_probe
     tools:

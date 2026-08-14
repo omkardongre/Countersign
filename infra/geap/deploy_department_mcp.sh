@@ -34,11 +34,27 @@ gcloud run deploy "${SERVICE}" \
   --port=8080 \
   --no-allow-unauthenticated \
   --service-account="${MCP_SERVICE_ACCOUNT}" \
-  --set-env-vars="INSTANCE_CONNECTION_NAME=${SQL_INSTANCE_CONNECTION_NAME},DB_NAME=${SESSIONS_SQL_DB},DB_IAM_USER=${SQL_DB_IAM_USER}" \
+  --set-env-vars="INSTANCE_CONNECTION_NAME=${SQL_INSTANCE_CONNECTION_NAME},DB_NAME=${SESSIONS_SQL_DB},DB_IAM_USER=${SQL_DB_IAM_USER},GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" \
   --min-instances=0 \
   --max-instances=3 \
+  --quiet
+
+echo "Granting roles/datastore.user for Case Memory (Firestore native mode)"
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${MCP_SERVICE_ACCOUNT}" \
+  --role="roles/datastore.user" \
+  --condition=None \
   --quiet
 
 echo "Deployed. Register this URL in Agent Registry and grant roles/iap.egressor"
 echo "to the case Workflow Agent Identity. Do not bind the qc_probe tool-name"
 echo "policy to that identity."
+echo "If firestore.googleapis.com is not yet enabled, or no Firestore Native"
+echo "database exists in this project, run:"
+echo "  gcloud services enable firestore.googleapis.com --project=${PROJECT_ID}"
+echo "  gcloud firestore databases create --project=${PROJECT_ID} --location=${LOCATION} --type=firestore-native"
+echo "and create the vector index Case Memory needs for prior-art retrieval"
+echo "(text-embedding-005 is 768-dimensional):"
+echo "  gcloud firestore indexes composite create --project=${PROJECT_ID} \\"
+echo "    --collection-group=case_memory_facts \\"
+echo "    --field-config=vector-config='{\"dimension\":768,\"flat\":{}}',field-path=embedding"
