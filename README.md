@@ -101,7 +101,7 @@ So Countersign is built on one non-negotiable rule:
 | 14-day sterility wait, kill/resume | Cloud SQL live — `countersign-sessions` Postgres 16, IAM auth, ADK `sessions`/`events` + `sterility_incubation` proven. Clock reached via MCP (`sterility_start`/`sterility_get`/`sterility_bind_resume_handle`), tenant-checked, atomic tick claim |
 | Scheduler wake-up (`POST /scheduler/sterility-tick`) | Done live — Cloud Scheduler job `countersign-sterility-tick` (OIDC, `*/15 * * * *`) hits the deployed tick Cloud Run service; manual trigger returns `200` |
 | Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `6585223078622527488`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
-| Case Memory (Firestore + embeddings) | Done in code, reviewed, `firestore.googleapis.com` not yet enabled on the live project — see below |
+| Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; vector + recency indexes `READY`; MCP SA has `datastore.user` + `aiplatform.user`; `verify_case_memory.py` KNN + tenant filter + redact. MCP Cloud Run redeploy with the new env vars is not claimed |
 | UI, demo | Not started |
 
 ### Domain workflow — deterministic intake and classification
@@ -400,14 +400,19 @@ list or a skipped write, not a failed case.
   findings fixed before commit — the write-idempotency and narrow-exception points
   above are exactly what that review caught, plus removing two unused request models
   and adding the redact CLI so the tool has an actual caller.
-- **Not claimed:** `FirestoreCaseMemoryStore`'s live Firestore path (`find_nearest`,
-  `Vector`, `embed_text`) is verified against the installed SDK's real method
-  signatures but is not exercised by an integration test against a live Firestore
-  instance or emulator — all Case Memory unit tests run against
-  `InMemoryCaseMemoryStore` (`COUNTERSIGN_CASE_MEMORY_INMEMORY=1`). `firestore.googleapis.com`
-  is not yet enabled on `countersign-505107`; no Firestore Native database, IAM grant,
-  or vector index exists live yet — see `infra/geap/deploy_department_mcp.sh` for the
-  exact commands this needs before the MCP service can actually serve these tools.
+- **Live store is proven.** `infra/geap/provision_case_memory.sh` created Native
+  `(default)` in `us-central1`. The vector composite index is `tenant_id` +
+  `redacted` + `embedding` (768, `text-embedding-005`) because `query()` pre-filters
+  both fields before `find_nearest` — a vector-only index would not serve that
+  query ([pre-filter requires a composite vector index](https://cloud.google.com/firestore/native/docs/vector-search)).
+  Recency fallback has its own composite (`tenant_id`, `redacted`, `observed_at DESC`).
+  Both indexes are `READY`. The department MCP SA holds `roles/datastore.user` and
+  `roles/aiplatform.user`. `infra/geap/verify_case_memory.py` wrote two probe facts,
+  ran an embedded KNN query that returned only the matching tenant, redacted, and
+  deleted the probes. Unit tests still use `InMemoryCaseMemoryStore`.
+  **Not claimed:** a round-trip through the already-deployed MCP Cloud Run service
+  (env vars for Case Memory are on `deploy_department_mcp.sh` for the next deploy);
+  a live Runtime case that actually retrieved prior art.
 
 ---
 
@@ -658,6 +663,8 @@ infra/geap/
   verify_tqa_reachability.sh          FQDN TLS check from a VPC probe VM
   verify_tqa_policy.sh                allow/deny probe + gateway networkConfig
   provision_sessions_sql.sh           Cloud SQL Postgres + IAM user + Secret Manager
+  provision_case_memory.sh            Firestore Native + vector/recency indexes + MCP IAM
+  verify_case_memory.py               live KNN + tenant filter + redact probe
   bootstrap_sessions_sql.py           GRANT IAM user; create sterility_incubation
   verify_sessions_sql.py              live IAM write + ADK session round-trip
   agent-gateway-vpc.yaml              live gateway networkConfig (attachment immutable)
@@ -743,6 +750,11 @@ tests/                                unit, integration, eval
   proof of that beat is still open. A live Gateway 403 from the deployed
   Runtime's own MCP egress (as opposed to the hello probe's) is also not yet
   captured as evidence.
+- **Case Memory Firestore is live.** Native `(default)` in `us-central1`, both
+  composite indexes `READY`, MCP SA granted Firestore + Vertex embed IAM.
+  `verify_case_memory.py` passed with `query_embedded=true` and tenant isolation.
+  A Case Memory call through the currently running MCP Cloud Run revision is not
+  claimed until that service is redeployed with the Case Memory env vars.
 
 ---
 
