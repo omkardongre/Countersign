@@ -23,12 +23,14 @@ stall the join (ADK JoinNode caution).
           -> (collect_manufacturing, collect_qc, collect_supply)
           -> join_departments
           -> reconcile_departments
+          -> retrieve_prior_art
           -> draft_investigation
           -> challenge_investigation
           -> gate_investigation
           -> await_sterility_incubation
           -> evaluate_annex16_release_gate
           -> confirm_qp
+          -> record_case_memory
 
 Manufacturing still runs the BMR transcriber. QC and supply are deterministic
 lookups over connector-shaped LIMS / EM / CoA records. Investigation and
@@ -52,6 +54,7 @@ from app.domain.branches import (
     collect_qc,
     collect_supply,
 )
+from app.domain.case_memory_node import record_case_memory, retrieve_prior_art
 from app.domain.case_models import CaseComplianceResult, DeviationCaseRequest
 from app.domain.challenger import challenge_investigation
 from app.domain.compliance_models import ComplianceStatus
@@ -195,12 +198,14 @@ def build_deviation_case_workflow() -> Workflow:
                 (collect_manufacturing, collect_qc, collect_supply),
                 join_departments,
                 reconcile_departments,
+                retrieve_prior_art,
                 draft_investigation,
                 challenge_investigation,
                 gate_investigation,
                 await_sterility_incubation,
                 evaluate_annex16_release_gate_node,
                 confirm_qp,
+                record_case_memory,
             ),
         ],
     )

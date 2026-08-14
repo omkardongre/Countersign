@@ -50,6 +50,10 @@ Rules, in order of importance:
 2. Every supporting claim must cite at least one `source_uri` from
    `allowed_source_uris`. If you mention a finding, its `finding_id` must be
    in `allowed_finding_ids`.
+2a. `prior_art` entries are facts about *past* deviations on this tenant, not
+    findings on this case. You may cite a prior_art `source_uri` as
+    supporting context for a hypothesis, but a prior deviation is never
+    itself evidence that this deviation has the same cause.
 3. If the evidence does not support a hypothesis, omit it and list an
    `open_question` instead.
 4. `confidence` is how well the cited evidence supports that hypothesis, not

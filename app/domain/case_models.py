@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from app.domain.case_memory_models import CaseMemoryFact
 from app.domain.compliance_models import (
     ComplianceFinding,
     ComplianceResult,
@@ -56,7 +57,9 @@ class CaseComplianceResult(BaseModel):
     ``decision_authority`` stays ``"none"``: this is an investigation brief,
     not a batch disposition. ``compliance`` is the manufacturing-page engine
     result when that branch succeeded; ``aggregated_status`` is the join of
-    all departments.
+    all departments. ``prior_art`` is retrieved Case Memory facts about past
+    deviations on this tenant — advisory input for Investigation, never a
+    finding of this case's own evidence.
     """
 
     classified: ClassifiedCase
@@ -64,4 +67,6 @@ class CaseComplianceResult(BaseModel):
     aggregated_status: ComplianceStatus
     branches: list[BranchOutcome] = Field(default_factory=list)
     findings: list[ComplianceFinding] = Field(default_factory=list)
+    prior_art: list[CaseMemoryFact] = Field(default_factory=list)
+    prior_art_embedded: bool = False
     decision_authority: str = "none"

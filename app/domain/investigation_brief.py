@@ -30,6 +30,9 @@ def allowed_source_uris(case: CaseComplianceResult) -> set[str]:
         for finding in case.compliance.findings:
             if finding.anchor is not None:
                 uris.add(finding.anchor.source_uri)
+    for fact in case.prior_art:
+        if not fact.redacted:
+            uris.add(fact.source_uri)
     return {uri for uri in uris if uri}
 
 
@@ -54,6 +57,16 @@ def build_investigation_brief(case: CaseComplianceResult) -> dict:
     universe the deterministic gate will enforce.
     """
     classified = case.classified
+    prior_art = [
+        {
+            "fact_id": fact.fact_id,
+            "fact": fact.fact,
+            "source_uri": fact.source_uri,
+            "confidence": fact.confidence,
+        }
+        for fact in case.prior_art
+        if not fact.redacted
+    ]
     findings = []
     for finding in case.findings:
         findings.append(
@@ -90,4 +103,6 @@ def build_investigation_brief(case: CaseComplianceResult) -> dict:
         ],
         "findings": findings,
         "classification_rationale": classified.rationale,
+        "prior_art": prior_art,
+        "prior_art_embedded": case.prior_art_embedded,
     }
