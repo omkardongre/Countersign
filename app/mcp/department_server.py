@@ -38,14 +38,22 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from app.domain.case_memory_models import (
+    CaseMemoryFact,
+    CaseMemoryQueryResult,
+)
 from app.domain.department_models import CoaSnapshot, EmSnapshot, LimsSnapshot
 from app.domain.department_tools import (
     COA_FETCH,
     EM_QUERY,
     LIMS_QUERY,
+    PRIOR_ART_QUERY,
+    PRIOR_ART_REDACT,
+    PRIOR_ART_WRITE,
     STERILITY_BIND_RESUME_HANDLE,
     STERILITY_GET,
     STERILITY_START,
+    CaseMemoryTenantMismatch,
     DepartmentRecordMissing,
     SterilityTenantMismatch,
 )
@@ -57,6 +65,15 @@ from app.domain.department_tools import (
 )
 from app.domain.department_tools import (
     lims_query as load_lims,
+)
+from app.domain.department_tools import (
+    prior_art_query as run_prior_art_query,
+)
+from app.domain.department_tools import (
+    prior_art_redact as run_prior_art_redact,
+)
+from app.domain.department_tools import (
+    prior_art_write as run_prior_art_write,
 )
 from app.domain.department_tools import (
     sterility_bind_resume_handle as run_sterility_bind_resume_handle,
@@ -247,6 +264,84 @@ def build_department_mcp(
                 case_tenant_id=case_tenant_id,
             )
         except (KeyError, SterilityTenantMismatch) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=PRIOR_ART_QUERY,
+        title="Prior-art query",
+        description=(
+            "Tenant-filtered semantic retrieval of prior-deviation facts "
+            "from Case Memory. Advisory input for Investigation, never a "
+            "conclusion. Read-only."
+        ),
+        annotations=_READ_ONLY,
+    )
+    async def prior_art_query(
+        tenant_id: str, query: str, case_tenant_id: str, top_k: int = 5
+    ) -> CaseMemoryQueryResult:
+        try:
+            return await run_prior_art_query(
+                tenant_id=tenant_id,
+                query=query,
+                case_tenant_id=case_tenant_id,
+                top_k=top_k,
+            )
+        except CaseMemoryTenantMismatch as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=PRIOR_ART_WRITE,
+        title="Prior-art write",
+        description=(
+            "Write one fact about a case into Case Memory, with its source "
+            "and confidence, for future prior-art retrieval."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    async def prior_art_write(
+        tenant_id: str,
+        case_id: str,
+        batch_id: str,
+        fact: str,
+        source_uri: str,
+        confidence: float,
+        case_tenant_id: str,
+        fact_id: str | None = None,
+    ) -> CaseMemoryFact:
+        try:
+            return await run_prior_art_write(
+                tenant_id=tenant_id,
+                case_id=case_id,
+                batch_id=batch_id,
+                fact=fact,
+                source_uri=source_uri,
+                confidence=confidence,
+                case_tenant_id=case_tenant_id,
+                fact_id=fact_id,
+            )
+        except CaseMemoryTenantMismatch as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=PRIOR_ART_REDACT,
+        title="Prior-art redact",
+        description=(
+            "Redact one poisoned or incorrect Case Memory fact by id. "
+            "Tenant-scoped; does not delete other facts."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    async def prior_art_redact(
+        tenant_id: str, fact_id: str, reason: str, case_tenant_id: str
+    ) -> CaseMemoryFact:
+        try:
+            return await run_prior_art_redact(
+                tenant_id=tenant_id,
+                fact_id=fact_id,
+                reason=reason,
+                case_tenant_id=case_tenant_id,
+            )
+        except (KeyError, CaseMemoryTenantMismatch) as exc:
             raise ToolError(str(exc)) from exc
 
     return mcp

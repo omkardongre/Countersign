@@ -36,6 +36,17 @@ STERILITY_TOOLS = frozenset(
     {STERILITY_START, STERILITY_GET, STERILITY_BIND_RESUME_HANDLE}
 )
 
+# Case Memory: prior-deviation facts, reached over MCP for the same reason
+# as the sterility clock (an Agent Identity principal cannot itself hold
+# Firestore IAM credentials). Query is read-only; write/redact are their own
+# tools rather than piggybacking on a department name.
+PRIOR_ART_QUERY = "prior_art_query"
+PRIOR_ART_WRITE = "prior_art_write"
+PRIOR_ART_REDACT = "prior_art_redact"
+CASE_MEMORY_TOOLS = frozenset(
+    {PRIOR_ART_QUERY, PRIOR_ART_WRITE, PRIOR_ART_REDACT}
+)
+
 ALLOWED_DEPARTMENT_TOOLS = frozenset({LIMS_QUERY, EM_QUERY, COA_FETCH})
 
 
@@ -147,4 +158,81 @@ def sterility_bind_resume_handle(
             invocation_id=invocation_id,
             interrupt_id=interrupt_id,
         ),
+    )
+
+
+class CaseMemoryTenantMismatch(Exception):
+    """The calling case is not the tenant that owns this fact/query."""
+
+
+def _check_memory_tenant(tenant_id: str, case_tenant_id: str) -> None:
+    if tenant_id != case_tenant_id:
+        raise CaseMemoryTenantMismatch(
+            f"case_tenant_id {case_tenant_id!r} does not match "
+            f"tenant_id {tenant_id!r}."
+        )
+
+
+async def prior_art_query(
+    *, tenant_id: str, query: str, case_tenant_id: str, top_k: int = 5
+):
+    """Tenant-filtered retrieval of prior-deviation facts. Advisory input only.
+
+    Runs inside the MCP process, which holds real Firestore credentials —
+    an Agent Identity principal cannot itself be a Firestore IAM principal
+    any more than it can be a Cloud SQL one.
+    """
+    _check_memory_tenant(tenant_id, case_tenant_id)
+    from app.domain.case_memory_models import CaseMemoryQueryResult
+    from app.domain.case_memory_store import get_case_memory_store
+
+    facts, embedded = await get_case_memory_store().query(
+        tenant_id=tenant_id, query=query, top_k=top_k
+    )
+    return CaseMemoryQueryResult(
+        tenant_id=tenant_id, query=query, facts=facts, query_embedded=embedded
+    )
+
+
+async def prior_art_write(
+    *,
+    tenant_id: str,
+    case_id: str,
+    batch_id: str,
+    fact: str,
+    source_uri: str,
+    confidence: float,
+    case_tenant_id: str,
+    fact_id: str | None = None,
+):
+    """Write one fact about a case into Case Memory for future retrieval.
+
+    ``fact_id`` is optional; a caller with a natural idempotency key (see
+    ``app/domain/case_memory_node.py::record_case_memory``) should pass one
+    so a resume-triggered rerun overwrites the same fact instead of writing
+    a duplicate.
+    """
+    _check_memory_tenant(tenant_id, case_tenant_id)
+    from app.domain.case_memory_store import get_case_memory_store
+
+    return await get_case_memory_store().write_fact(
+        tenant_id=tenant_id,
+        case_id=case_id,
+        batch_id=batch_id,
+        fact=fact,
+        source_uri=source_uri,
+        confidence=confidence,
+        fact_id=fact_id,
+    )
+
+
+async def prior_art_redact(
+    *, tenant_id: str, fact_id: str, reason: str, case_tenant_id: str
+):
+    """Redact one poisoned or incorrect fact. Tenant-scoped, not a delete-all."""
+    _check_memory_tenant(tenant_id, case_tenant_id)
+    from app.domain.case_memory_store import get_case_memory_store
+
+    return await get_case_memory_store().redact(
+        tenant_id=tenant_id, fact_id=fact_id, reason=reason
     )

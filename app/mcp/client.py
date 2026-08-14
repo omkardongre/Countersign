@@ -33,7 +33,11 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.memory import create_connected_server_and_client_session
 
-from app.domain.department_tools import ALLOWED_DEPARTMENT_TOOLS, STERILITY_TOOLS
+from app.domain.department_tools import (
+    ALLOWED_DEPARTMENT_TOOLS,
+    CASE_MEMORY_TOOLS,
+    STERILITY_TOOLS,
+)
 from app.mcp.department_server import get_department_mcp
 
 MCP_URL_ENV = "COUNTERSIGN_MCP_URL"
@@ -141,6 +145,22 @@ async def call_sterility_tool(name: str, arguments: dict[str, Any]) -> dict[str,
         )
     payload = await call_mcp_tool(name, arguments)
     return payload or {}
+
+
+async def call_case_memory_tool(
+    name: str, arguments: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Call one named Case Memory tool over MCP. Fail closed on errors.
+
+    Same reason as ``call_sterility_tool``: an Agent Identity principal
+    cannot itself hold Firestore IAM credentials, so Case Memory is reached
+    through this MCP tool rather than opened directly.
+    """
+    if name not in CASE_MEMORY_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(CASE_MEMORY_TOOLS)}"
+        )
+    return await call_mcp_tool(name, arguments)
 
 
 async def call_mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
