@@ -99,8 +99,8 @@ So Countersign is built on one non-negotiable rule:
 | MCP department tools (`lims_query`, `em_query`, `coa_fetch`) | Done — FastMCP; Runtime requires `COUNTERSIGN_MCP_URL`; live Gateway 403 not attached |
 | TQA tenant + lifecycle `ext_proc` | Done live — callout denies cross-tenant and `dispositioned`; `countersign-egress` has VPC + DNS peering; Runtime MCP 403 not claimed |
 | 14-day sterility wait, kill/resume | Cloud SQL live — `countersign-sessions` Postgres 16, IAM auth, ADK `sessions`/`events` + `sterility_incubation` proven. Clock reached via MCP (`sterility_start`/`sterility_get`/`sterility_bind_resume_handle`), tenant-checked, atomic tick claim |
-| Scheduler wake-up (`POST /scheduler/sterility-tick`) | Done — OIDC-guarded, resumes the exact parked invocation, proven end to end in tests. Cloud Scheduler job itself not deployed |
-| Case-workflow Agent Runtime deploy | Script written (`infra/geap/deploy_case_runtime.py`), not run against the live project. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
+| Scheduler wake-up (`POST /scheduler/sterility-tick`) | Done live — Cloud Scheduler job `countersign-sterility-tick` (OIDC, `*/15 * * * *`) hits the deployed tick Cloud Run service; manual trigger returns `200` |
+| Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `6585223078622527488`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
 | UI, demo | Not started |
 
 ### Domain workflow — deterministic intake and classification
@@ -325,13 +325,16 @@ START → intake_and_bind_evidence
   `agent_gateway_config`, following the same identity-assert and IAM-grant
   pattern as the hello probe (`infra/geap/runtime_identity.py`). Because the
   Runtime identity cannot hold Cloud SQL credentials, this deploy sets
-  `COUNTERSIGN_ALLOW_VERTEX_SESSIONS=1` plus `GOOGLE_CLOUD_AGENT_ENGINE_LOCATION`
-  (pinned to the Runtime's own region, not the `global` model-routing
-  location) instead of `INSTANCE_CONNECTION_NAME`/`DB_IAM_USER`, and requires
-  `COUNTERSIGN_MCP_URL`. Not claimed: this script has not been run against
-  the live project; Cloud Scheduler itself is not deployed; revision-kill is
-  proven only in `tests/unit/test_kill_resume.py`, not on a live Cloud Run
-  revision (Agent Runtime does not expose Cloud Run revisions to kill).
+  `COUNTERSIGN_ALLOW_VERTEX_SESSIONS=1` and `COUNTERSIGN_MCP_URL` instead of
+  `INSTANCE_CONNECTION_NAME`/`DB_IAM_USER` (`GOOGLE_CLOUD_AGENT_ENGINE_LOCATION`
+  and `GOOGLE_CLOUD_PROJECT` are now platform-reserved and injected
+  automatically, not set by this script). Run live against
+  `countersign-505107`: reasoningEngine `6585223078622527488`, pinned to
+  Python 3.12 (the platform's default build image is 3.10, which lacks
+  `enum.StrEnum`). Not claimed: a live Gateway 403 from this deployed
+  Runtime's own MCP egress; revision-kill is proven only in
+  `tests/unit/test_kill_resume.py`, not on a live Cloud Run revision (Agent
+  Runtime does not expose Cloud Run revisions to kill).
 - The Annex 16 node is also code. Checklist items live in hashed master data
   (`master_data/annex16_checklist_v1.json`). Bound evaluators score only the matching
   department branch: manufacturing completeness (1.7.11), QC LIMS OOS (1.7.13), CoA
@@ -575,7 +578,7 @@ infra/geap/
   constants.env                       shared resource names
   agent-gateway-egress.yaml           Agent-to-Anywhere gateway spec
   runtime_identity.py                 shared identity-assert / IAM-grant helpers
-  deploy_case_runtime.py              deploy the real graph to Agent Runtime (script only, not run)
+  deploy_case_runtime.py              deploy the real graph to Agent Runtime — run live
   iap-request-authz-extension*.yaml   dry-run and enforced variants
   iap-request-authz-policy.yaml       binds the IAP extension to the gateway
   model-armor-authz-extension.yaml    Model Armor CONTENT_AUTHZ extension
@@ -585,6 +588,7 @@ infra/geap/
   mcp-tool-policy-bindings.yaml       which identity may receive which policy
   deploy_department_mcp.sh            Cloud Run deploy; refuses unauthenticated
   cloudbuild-department-mcp.yaml      image build for Dockerfile.mcp
+  deploy_tick_service.sh              Cloud Run deploy for the scheduler tick service
   provision_tqa_vpc.sh                TQA VPC / NAT / private DNS / PSC attachment
   deploy_tqa_callout.sh               private VM ext_proc on :443
   update_tqa_callout.sh               rebuild image on the existing callout VM
@@ -663,15 +667,20 @@ tests/                                unit, integration, eval
   `lims_query`/`em_query`/`coa_fetch`, so the sterility MCP tools check
   `tenant_id == case_tenant_id` themselves rather than relying on that
   extension.
-- **The scheduler tick and the case-workflow Runtime deploy are not deployed
-  live.** `POST /scheduler/sterility-tick` is implemented, OIDC-guarded, and
-  proven end to end against an in-process `Runner` in tests. No Cloud
-  Scheduler job calls it. `infra/geap/deploy_case_runtime.py` is written to
-  the same identity/gateway pattern as the proven hello deploy, but has not
-  been run against `countersign-505107`. Revision-kill is proven only in
-  `tests/unit/test_kill_resume.py`; Agent Runtime does not expose a Cloud Run
-  revision to delete, so the live version of this beat still needs its own
-  proof, not a rerun of that test.
+- **The scheduler tick and the case-workflow Runtime deploy are live.**
+  `POST /scheduler/sterility-tick` runs on Cloud Run
+  (`countersign-tick-service`, its own least-privilege service account,
+  `--no-allow-unauthenticated`), and Cloud Scheduler job
+  `countersign-sterility-tick` calls it on a `*/15 * * * *` OIDC-authenticated
+  schedule — a manual trigger returns `200`. `infra/geap/deploy_case_runtime.py`
+  has been run against `countersign-505107` (reasoningEngine
+  `6585223078622527488`), granted `roles/run.invoker` on the department MCP
+  service and `roles/iap.egressor` on its registered Agent Registry endpoint.
+  Revision-kill is still proven only in `tests/unit/test_kill_resume.py`;
+  Agent Runtime does not expose a Cloud Run revision to delete, so a live
+  proof of that beat is still open. A live Gateway 403 from the deployed
+  Runtime's own MCP egress (as opposed to the hello probe's) is also not yet
+  captured as evidence.
 
 ---
 
