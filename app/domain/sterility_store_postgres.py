@@ -20,6 +20,8 @@ import datetime
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+import pg8000.exceptions
+
 from app.app_utils.cloud_sql import connect_pg8000
 from app.domain.sterility_models import (
     SterilityIncubationRecord,
@@ -85,13 +87,43 @@ def _connect() -> Iterator:
         conn.close()
 
 
+_INSUFFICIENT_PRIVILEGE = "42501"
+
+
 class PostgresSterilityStore:
     def __init__(self) -> None:
         with _connect() as conn:
             cursor = conn.cursor()
-            cursor.execute(STERILITY_DDL)
-            for statement in STERILITY_MIGRATIONS:
-                cursor.execute(statement)
+            try:
+                cursor.execute(STERILITY_DDL)
+                for statement in STERILITY_MIGRATIONS:
+                    cursor.execute(statement)
+            except pg8000.exceptions.DatabaseError as exc:
+                if not self._is_missing_ddl_privilege(exc):
+                    raise
+                conn.rollback()
+                self._require_existing_table(cursor)
+
+    @staticmethod
+    def _is_missing_ddl_privilege(exc: pg8000.exceptions.DatabaseError) -> bool:
+        args = exc.args[0] if exc.args else {}
+        return isinstance(args, dict) and args.get("C") == _INSUFFICIENT_PRIVILEGE
+
+    @staticmethod
+    def _require_existing_table(cursor) -> None:
+        """A caller without DDL rights (e.g. the tick service) must find the
+        table already provisioned by an account with schema privileges.
+        Missing table here is a real deployment error, not something to
+        silently swallow."""
+        cursor.execute(
+            "SELECT to_regclass('public.sterility_incubation') IS NOT NULL"
+        )
+        (exists,) = cursor.fetchone()
+        if not exists:
+            raise RuntimeError(
+                "sterility_incubation table does not exist and this "
+                "connection lacks privilege to create it."
+            )
 
     def _row(self, raw: tuple) -> SterilityIncubationRecord:
         return SterilityIncubationRecord(
