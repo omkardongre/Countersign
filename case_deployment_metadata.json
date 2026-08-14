@@ -1,0 +1,12 @@
+{
+  "case_agent_runtime_id": "projects/777448403573/locations/us-central1/reasoningEngines/6585223078622527488",
+  "deployment_target": "agent_runtime",
+  "deploy_mode": "sdk_adkapp_source",
+  "agent_directory": "app",
+  "deployment_timestamp": "2026-08-14T09:45:20.483987+00:00",
+  "effective_identity": "agents.global.org-334195573957.system.id.goog/resources/aiplatform/projects/777448403573/locations/us-central1/reasoningEngines/6585223078622527488",
+  "agent_gateway": "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress",
+  "sessions": "vertex_managed",
+  "mcp_url": "https://countersign-department-mcp-777448403573.us-central1.run.app/mcp",
+  "project_number": "777448403573"
+}

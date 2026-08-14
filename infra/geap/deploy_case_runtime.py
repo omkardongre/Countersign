@@ -131,12 +131,11 @@ def main() -> int:
         # deploy does not set INSTANCE_CONNECTION_NAME/DB_IAM_USER. Sessions
         # use Vertex-managed storage; services.py otherwise fails closed to
         # prevent silently hiding SQL rows that were never the plan here.
-        # GOOGLE_CLOUD_AGENT_ENGINE_LOCATION is set explicitly so session
-        # storage stays pinned to the Runtime's actual region rather than
-        # implicitly following GOOGLE_CLOUD_LOCATION=global (model routing).
+        # GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_AGENT_ENGINE_LOCATION/_ID are
+        # reserved names the platform now injects automatically (rejected if
+        # set manually); app_utils/a2a.py falls back to "us-central1" if the
+        # location var is absent for any reason.
         "COUNTERSIGN_ALLOW_VERTEX_SESSIONS": "1",
-        "GOOGLE_CLOUD_AGENT_ENGINE_LOCATION": args.region,
-        "GOOGLE_CLOUD_PROJECT": args.project,
         # Department tools, and the sterility clock, must egress through
         # the department MCP service, never run in-process.
         "COUNTERSIGN_MCP_URL": args.mcp_url,
@@ -174,6 +173,9 @@ def main() -> int:
 
         deploy_config: dict = {
             "staging_bucket": staging_bucket,
+            # Runtime's build image defaults to Python 3.10 (no enum.StrEnum);
+            # the codebase requires >=3.11 (pyproject.toml, .python-version).
+            "python_version": "3.12",
             "requirements": CASE_REQUIREMENTS,
             "extra_packages": ["app"],
             "env_vars": env_vars,
@@ -189,30 +191,24 @@ def main() -> int:
         }
 
         if existing_name:
-            print(f"Updating existing {existing_name}")
-            deployed = client.agent_engines.update(
-                name=existing_name, agent=runtime_app, config=deploy_config
-            )
-        else:
-            print("Step 1: create AGENT_IDENTITY shell")
-            shell = client.agent_engines.create(
-                config={
-                    "display_name": args.display_name,
-                    "description": DESCRIPTION,
-                    "identity_type": types.IdentityType.AGENT_IDENTITY,
-                }
-            )
-            effective = assert_identity(shell.api_resource.spec.effective_identity)
-            principal = f"principal://{effective}"
-            print("Step 2: grant project IAM + endpoint egress")
-            grant_project_roles(args.project, principal, BASELINE_ROLES)
-            grant_endpoint_egress(args.project, args.region, principal)
-            print("Step 3: update with the case AdkApp + agent_gateway_config")
-            deployed = client.agent_engines.update(
-                name=shell.api_resource.name,
-                agent=runtime_app,
-                config=deploy_config,
-            )
+            # agent_engines.update() does not include spec.package_spec.
+            # python_version in its update_mask (SDK gap): a plain update()
+            # silently keeps the previous Python version on the build image.
+            # create() has no such mask, so delete and recreate in one
+            # create() call instead of shell-then-update.
+            print(f"Deleting existing {existing_name} to apply python_version")
+            client.agent_engines.delete(name=existing_name, force=True)
+
+        print("Step 1: create AGENT_IDENTITY shell + case AdkApp in one call")
+        deployed = client.agent_engines.create(
+            agent=runtime_app,
+            config=deploy_config,
+        )
+        effective = assert_identity(deployed.api_resource.spec.effective_identity)
+        principal = f"principal://{effective}"
+        print("Step 2: grant project IAM + endpoint egress")
+        grant_project_roles(args.project, principal, BASELINE_ROLES)
+        grant_endpoint_egress(args.project, args.region, principal)
     finally:
         os.chdir(original_cwd)
         shutil.rmtree(staging_dir, ignore_errors=True)
