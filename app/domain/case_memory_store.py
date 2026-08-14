@@ -118,7 +118,11 @@ class FirestoreCaseMemoryStore:
         if client is None:
             from google.cloud import firestore as firestore_module
 
-            self._client = firestore_module.AsyncClient()
+            project = os.environ.get("GOOGLE_CLOUD_PROJECT") or None
+            database = os.environ.get("COUNTERSIGN_CASE_MEMORY_DATABASE", "(default)")
+            self._client = firestore_module.AsyncClient(
+                project=project, database=database
+            )
         else:
             self._client = client
         self._collection_name = collection or os.environ.get(
