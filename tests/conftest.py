@@ -18,12 +18,28 @@ from __future__ import annotations
 
 import pytest
 
+from app.domain.case_memory_store import (
+    get_case_memory_store,
+    reset_case_memory_store_cache,
+)
 from app.domain.sterility_store import get_sterility_store, reset_sterility_store_cache
 
 
 @pytest.fixture(autouse=True)
 def _department_mcp_inprocess(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COUNTERSIGN_MCP_INPROCESS", "1")
+
+
+@pytest.fixture(autouse=True)
+def _fresh_case_memory_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No Firestore in unit tests: explicit opt-out, like MCP in-process."""
+    monkeypatch.setenv("COUNTERSIGN_CASE_MEMORY_INMEMORY", "1")
+    reset_case_memory_store_cache()
+    store = get_case_memory_store()
+    if hasattr(store, "reset"):
+        store.reset()
+    yield
+    reset_case_memory_store_cache()
 
 
 @pytest.fixture(autouse=True)

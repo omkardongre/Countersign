@@ -48,6 +48,8 @@ def test_case_workflow_policy_allows_all_named_tools() -> None:
         "sterility_get",
         "sterility_start",
         "sterility_bind_resume_handle",
+        "prior_art_query",
+        "prior_art_write",
     }
 
 
