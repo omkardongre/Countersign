@@ -155,6 +155,8 @@ tmp*
 **/node_modules
 npm-debug.log
 yarn-error.log
+web/.next/
+web/out/
 
 # IDEs and editors
 .idea/
