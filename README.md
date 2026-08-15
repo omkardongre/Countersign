@@ -101,7 +101,7 @@ So Countersign is built on one non-negotiable rule:
 | 14-day sterility wait, kill/resume | Cloud SQL live — `countersign-sessions` Postgres 16, IAM auth, ADK `sessions`/`events` + `sterility_incubation` proven. Clock reached via MCP (`sterility_start`/`sterility_get`/`sterility_bind_resume_handle`), tenant-checked, atomic tick claim |
 | Scheduler wake-up (`POST /scheduler/sterility-tick`) | Done live — Cloud Scheduler job `countersign-sterility-tick` (OIDC, `*/15 * * * *`) hits the deployed tick Cloud Run service; manual trigger returns `200` |
 | Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `6585223078622527488`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
-| Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; vector + recency indexes `READY`; MCP SA has `datastore.user` + `aiplatform.user`; `verify_case_memory.py` KNN + tenant filter + redact. MCP Cloud Run redeploy with the new env vars is not claimed |
+| Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; indexes `READY`; MCP Cloud Run `countersign-department-mcp` serves `prior_art_*` (`verify_mcp_case_memory.py`, embedded KNN). Runtime prior-art on a live case and Gateway 403 are not claimed |
 | UI, demo | Not started |
 
 ### Domain workflow — deterministic intake and classification
@@ -410,9 +410,14 @@ list or a skipped write, not a failed case.
   `roles/aiplatform.user`. `infra/geap/verify_case_memory.py` wrote two probe facts,
   ran an embedded KNN query that returned only the matching tenant, redacted, and
   deleted the probes. Unit tests still use `InMemoryCaseMemoryStore`.
-  **Not claimed:** a round-trip through the already-deployed MCP Cloud Run service
-  (env vars for Case Memory are on `deploy_department_mcp.sh` for the next deploy);
-  a live Runtime case that actually retrieved prior art.
+- **Department MCP Cloud Run serves Case Memory.** Redeployed
+  `countersign-department-mcp` with Vertex + Firestore env.
+  `verify_mcp_case_memory.py` listed `prior_art_*`, wrote and queried over
+  Streamable HTTP `/mcp` with a user identity token (Cloud Run `--audiences`
+  requires a service account; the [developer invoke path](https://docs.cloud.google.com/run/docs/authenticating/developers)
+  uses a user token). Result: `query_embedded=true`.
+  **Not claimed:** a live Runtime case that retrieved prior art through Agent
+  Gateway; a Gateway 403 from that Runtime's MCP egress.
 
 ---
 
@@ -665,6 +670,7 @@ infra/geap/
   provision_sessions_sql.sh           Cloud SQL Postgres + IAM user + Secret Manager
   provision_case_memory.sh            Firestore Native + vector/recency indexes + MCP IAM
   verify_case_memory.py               live KNN + tenant filter + redact probe
+  verify_mcp_case_memory.py           authenticated Streamable HTTP prior_art_* on Cloud Run
   bootstrap_sessions_sql.py           GRANT IAM user; create sterility_incubation
   verify_sessions_sql.py              live IAM write + ADK session round-trip
   agent-gateway-vpc.yaml              live gateway networkConfig (attachment immutable)
@@ -750,11 +756,12 @@ tests/                                unit, integration, eval
   proof of that beat is still open. A live Gateway 403 from the deployed
   Runtime's own MCP egress (as opposed to the hello probe's) is also not yet
   captured as evidence.
-- **Case Memory Firestore is live.** Native `(default)` in `us-central1`, both
-  composite indexes `READY`, MCP SA granted Firestore + Vertex embed IAM.
-  `verify_case_memory.py` passed with `query_embedded=true` and tenant isolation.
-  A Case Memory call through the currently running MCP Cloud Run revision is not
-  claimed until that service is redeployed with the Case Memory env vars.
+- **Case Memory Firestore and department MCP are live.** Native `(default)` in
+  `us-central1`, both composite indexes `READY`, MCP SA granted Firestore + Vertex
+  embed IAM. `verify_mcp_case_memory.py` called `prior_art_write`/`prior_art_query`
+  on `countersign-department-mcp` with a user identity token (developer path;
+  `--audiences` is service-account only) and got `query_embedded=true`. Runtime
+  prior-art on a live case and a Gateway 403 from that Runtime are not claimed.
 
 ---
 
