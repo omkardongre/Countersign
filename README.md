@@ -102,7 +102,7 @@ So Countersign is built on one non-negotiable rule:
 | Scheduler wake-up (`POST /scheduler/sterility-tick`) | Done live — Cloud Scheduler job `countersign-sterility-tick` (OIDC, `*/15 * * * *`) hits the deployed tick Cloud Run service; manual trigger returns `200` |
 | Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `6585223078622527488`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
 | Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; indexes `READY`; MCP Cloud Run `countersign-department-mcp` serves `prior_art_*` (`verify_mcp_case_memory.py`, embedded KNN). Runtime prior-art on a live case and Gateway 403 are not claimed |
-| UI, demo | Scaffold only — Next.js 16.3.1 App Router in `web/` (React 19.2, Tailwind v4, Turbopack). Case desk not started |
+| UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel. Labelled synthetic fixtures. Live Runtime `streamQuery` proxy not wired. Architecture diagram and demo film not started |
 
 ### Domain workflow — deterministic intake and classification
 
@@ -682,9 +682,19 @@ infra/geap/
   evidence/                           captured proof from the last verification run
   hello_runtime/                      minimal agent used for the governance proof
 Dockerfile.mcp                        Cloud Run image for the department MCP server
-web/                                  Next.js 16.3 App Router scaffold (case desk not started)
+web/                                  Next.js 16.3 case desk (queue, case, QP; fixtures)
 tests/                                unit, integration, eval
 ```
+
+### Case desk
+
+Next.js 16.3 App Router in `web/` (`npm run dev` from that directory). Queue, case
+review, and structured intake. Fixtures are labelled synthetic (`AX-2291` pack
+`not_ready`, `AX-2402` `ready_for_qp_review`, `HX-104` on 14-day sterility hold).
+Severity on new intake uses the same rules as `app/domain/classification.py`.
+QP confirm is refused while the pack is `not_ready`. The desk does not hold an
+SSE stream. Live Agent Runtime `streamQuery` is not proxied yet (`501` if
+`source: live`). Intake-opened cases are in-process and reset on restart.
 
 ---
 
