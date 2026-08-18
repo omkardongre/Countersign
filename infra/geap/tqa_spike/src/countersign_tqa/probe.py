@@ -1,4 +1,10 @@
-"""Send allow/deny MCP tools/call bodies to the live TQA ext_proc server."""
+"""Send allow/deny MCP tools/call bodies to the live TQA ext_proc server.
+
+TLS, trusting whatever CA signed the presented certificate (this probe
+runs from inside the private VPC, same as ``server.py``'s trust model:
+the gateway trusts the CA via BackendAuthenticationConfig/TrustConfig
+rather than the leaf certificate being self-signed).
+"""
 
 from __future__ import annotations
 

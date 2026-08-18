@@ -1,6 +1,15 @@
 # Apply checklist — not a Gateway resource.
 # Tool-name ALLOW is per Agent Identity. The case Workflow is one principal;
 # QC and supply are graph nodes, not separate Runtimes.
+#
+# aiplatform-sessions-allow.yaml is not identity-scoped: it allows every
+# identity on countersign-egress to reach the aiplatform.googleapis.com /
+# us-central1-aiplatform.googleapis.com hosts for Vertex-managed sessions
+# and streamQuery/query. Required by any Runtime deployed with
+# COUNTERSIGN_ALLOW_VERTEX_SESSIONS=1 (currently case_workflow). Without it,
+# the case Runtime's own async_create_session call is denied
+# "RBAC: access denied" — found live 2026-08-17, see
+# mcp-case-workflow-tools-allow.yaml header.
 bindings:
   - policy: mcp-case-workflow-tools-allow.yaml
     identity: case_workflow

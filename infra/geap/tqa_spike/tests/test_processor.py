@@ -45,14 +45,77 @@ def test_continue_maps_each_ext_proc_event() -> None:
     ).HasField("response_trailers")
 
 
-def test_self_signed_cert_uses_fqdn(tmp_path) -> None:
-    from countersign_tqa.server import ensure_self_signed_cert
+def test_serve_uses_ca_signed_certificate(tmp_path) -> None:
+    """A real gRPC/Envoy client verifies TLS certificates; a self-signed
+    one was rejected with FAILED_PRECONDITION, which was the root cause
+    of the live-only MCP ``tools/call`` 400. This test proves the server
+    presents exactly the certificate file it was given (a CA-signed leaf
+    in production), by connecting a gRPC client that trusts only that
+    file's issuing CA.
+    """
+    import subprocess
+    import threading
 
-    cert = tmp_path / "tls.crt"
-    key = tmp_path / "tls.key"
-    ensure_self_signed_cert(str(cert), str(key), "tqa.countersign.internal")
-    assert cert.read_bytes()
-    assert key.read_bytes()
+    import grpc
+
+    from countersign_tqa import server as server_module
+
+    ca_key = tmp_path / "ca.key"
+    ca_crt = tmp_path / "ca.crt"
+    leaf_key = tmp_path / "leaf.key"
+    leaf_csr = tmp_path / "leaf.csr"
+    leaf_crt = tmp_path / "leaf.crt"
+
+    subprocess.run(
+        [
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256",
+            "-days", "1", "-nodes", "-keyout", str(ca_key), "-out", str(ca_crt),
+            "-subj", "/CN=test-ca",
+            "-addext", "basicConstraints=critical,CA:TRUE",
+        ],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        [
+            "openssl", "req", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", str(leaf_key), "-out", str(leaf_csr),
+            "-subj", "/CN=localhost",
+            "-addext", "subjectAltName=DNS:localhost",
+        ],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        [
+            "openssl", "x509", "-req", "-in", str(leaf_csr),
+            "-CA", str(ca_crt), "-CAkey", str(ca_key), "-CAcreateserial",
+            "-out", str(leaf_crt), "-days", "1", "-sha256",
+            "-extfile", "/dev/stdin",
+        ],
+        input=b"subjectAltName=DNS:localhost",
+        check=True, capture_output=True,
+    )
+
+    server = server_module._build_server()
+    creds = grpc.ssl_server_credentials(
+        [(leaf_key.read_bytes(), leaf_crt.read_bytes())]
+    )
+    port = server.add_secure_port("127.0.0.1:0", creds)
+    assert port > 0
+    server.start()
+    thread = threading.Thread(target=server.wait_for_termination, daemon=True)
+    thread.start()
+    try:
+        channel_creds = grpc.ssl_channel_credentials(
+            root_certificates=ca_crt.read_bytes()
+        )
+        channel = grpc.secure_channel(
+            f"localhost:{port}",
+            channel_creds,
+            options=(("grpc.ssl_target_name_override", "localhost"),),
+        )
+        grpc.channel_ready_future(channel).result(timeout=5)
+    finally:
+        server.stop(None)
 
 
 def test_allow_matching_aurex_classified() -> None:

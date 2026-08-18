@@ -1,6 +1,18 @@
 # CONTENT_AUTHZ callout. failOpen false: a TQA outage must not admit department reads.
 # Scoped to MCP tools/call so Gemini generateContent is not gated on this extension.
+#
+# `service` is a regional backendService (H2C protocol), not the bare
+# `tqa.countersign.internal` FQDN. A bare-FQDN authzExtension target is
+# always dialed with TLS by the gateway, which rejected this callout's
+# self-signed certificate with FAILED_PRECONDITION -- the root cause of the
+# live-only MCP `tools/call` 400 found 2026-08-17. H2C is only honored when
+# `service` points at a real backendService resource (confirmed live: a
+# bare FQDN over H2C produced UNAVAILABLE instead). The callout has no
+# certificate at all (see countersign_tqa/server.py); it is VPC-internal
+# only, so TLS added no security value here, only a broken trust chain.
 name: countersign-tqa
-service: tqa.countersign.internal
+authority: tqa.countersign.internal
+loadBalancingScheme: INTERNAL_MANAGED
+service: https://www.googleapis.com/compute/v1/projects/countersign-505107/regions/us-central1/backendServices/countersign-tqa-backend
 failOpen: false
 timeout: 2s

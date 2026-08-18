@@ -9,6 +9,11 @@
 # and no MCP session can be established (07_geap_platform_notes.md §10.5).
 # Live 403 is proven only after this identity is bound on Runtime and
 # COUNTERSIGN_MCP_URL egresses through the Gateway.
+#
+# `hosts` scopes this rule to the department MCP service only, for the same
+# reason as mcp-case-workflow-tools-allow.yaml: an unscoped ALLOW policy on
+# the whole gateway denies any non-matching request, including this
+# identity's own session/runtime traffic.
 name: countersign-mcp-qc-probe-lims-only
 target:
   resources:
@@ -18,7 +23,9 @@ action: ALLOW
 httpRules:
   - to:
       operations:
-        - mcp:
+        - hosts:
+            - exact: "countersign-department-mcp-777448403573.us-central1.run.app"
+          mcp:
             baseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
             methods:
               - name: "tools/list"

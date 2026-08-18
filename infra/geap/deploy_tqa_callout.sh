@@ -37,7 +37,13 @@ apt-get install -y -qq docker.io google-cloud-cli >/dev/null
 gcloud auth configure-docker ${LOCATION}-docker.pkg.dev --quiet
 docker pull ${IMAGE}
 docker rm -f tqa-callout >/dev/null 2>&1 || true
+mkdir -p /etc/tqa
+if [ -f /tmp/tqa-leaf.crt ] && [ -f /tmp/tqa-leaf.key ]; then
+  mv /tmp/tqa-leaf.crt /etc/tqa/tls.crt
+  mv /tmp/tqa-leaf.key /etc/tqa/tls.key
+fi
 docker run -d --restart=always --name tqa-callout -p 443:443 \
+  -v /etc/tqa:/etc/tqa:ro \
   -e TQA_FQDN=${TQA_FQDN} ${IMAGE}
 EOF
 

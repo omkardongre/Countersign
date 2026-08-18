@@ -14,6 +14,19 @@
 # NOT included here — redaction is an operator action, not something the
 # case workflow itself should be able to invoke on its own behalf.
 #
+# The `hosts` match scopes this rule to the department MCP service only.
+# Without it, an AuthzPolicy with action: ALLOW targeting the whole gateway
+# denies every request that doesn't match one of its rules (Cloud docs:
+# "if ALLOW policies exist, but there is no match, the request is denied" —
+# logged as denied_as_no_allow_policies_matched_request). That is exactly
+# what blocked async_create_session: the Runtime's own outbound call to the
+# Vertex AI sessions API (for COUNTERSIGN_ALLOW_VERTEX_SESSIONS=1) matched no
+# rule in this file and was denied "RBAC: access denied", even though the
+# rule content was only ever meant to gate MCP tool calls. Scoping by host
+# stops this MCP allow-list from accidentally gating non-MCP egress too.
+# See aiplatform-sessions-allow.yaml for the rule that allows session
+# management traffic itself.
+#
 # bind_to: case_workflow
 # do_not_bind_to: qc_probe, hello_runtime
 #
@@ -28,7 +41,9 @@ action: ALLOW
 httpRules:
   - to:
       operations:
-        - mcp:
+        - hosts:
+            - exact: "countersign-department-mcp-777448403573.us-central1.run.app"
+          mcp:
             baseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
             methods:
               - name: "tools/list"

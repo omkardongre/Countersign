@@ -1,0 +1,71 @@
+# Allows every Agent Identity on this gateway to reach the Vertex AI
+# aiplatform.googleapis.com hosts for session management (async_create_session,
+# async_get_session, async_append_event, etc.) and the Reasoning Engine
+# streamQuery/query surface itself.
+#
+# Why this exists (found live, 2026-08-17): the case Runtime is deployed with
+# COUNTERSIGN_ALLOW_VERTEX_SESSIONS=1, so ADK's VertexAiSessionService opens
+# an outbound call to the Vertex AI sessions API on every session op. Before
+# this file existed, the only ALLOW policy on countersign-egress
+# (mcp-case-workflow-tools-allow.yaml) matched MCP traffic only. Per Google's
+# authorization-policy evaluation order, "if ALLOW policies exist, but there
+# is no match, the request is denied" — so the Runtime's own session calls
+# were denied "RBAC: access denied" even though nothing in this project
+# intended to block them. Confirmed with a direct probe: the same session
+# create call succeeds (HTTP 200) when made with an operator's own
+# credentials outside the gateway, and fails only from inside the Runtime.
+#
+# Scope is deliberately host-based, not identity-based: every Agent Identity
+# that needs Vertex-managed sessions needs this, and none of them should be
+# able to reach arbitrary internet hosts (the MCP tool-name rules remain the
+# only thing that scopes department-tool access).
+#
+# The `.mtls.` hosts are the ones that actually matter and are easy to miss.
+# An Agent Identity presents an mTLS-bound client certificate, so the genai
+# client egresses to us-central1-aiplatform.mtls.googleapis.com, not the plain
+# host. Confirmed from the gateway log for the denied request:
+#   enforcedGatewaySecurityPolicy.hostname:
+#     "us-central1-aiplatform.mtls.googleapis.com"
+#   requestWasTlsIntercepted: true
+#   authzPolicyInfo.policies[].details:
+#     "denied_as_no_allow_policies_matched_request"
+# A first version of this file listed only the plain hosts and still denied
+# every session call. The plain hosts are kept for any non-mTLS caller.
+#
+# telemetry.mtls.googleapis.com is included for the same reason, found in the
+# same gateway logs: deploy_case_runtime.py sets
+# GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true, so the Runtime exports
+# traces and metrics to telemetry.googleapis.com. Those exports were being
+# denied by the same no-matching-ALLOW-rule default, which silently disables
+# the Agent Observability traces that `10` P4 / `11` Beat 5 depend on. The
+# failure mode is quiet: the graph still runs, only the traces go missing.
+#
+# iamcredentials.mtls.googleapis.com is included for the same reason again,
+# found the same way (gateway log: denied_as_no_allow_policies_matched_request
+# for hostname iamcredentials.mtls.googleapis.com). app/mcp/client.py mints
+# the department MCP OIDC token by impersonating
+# COUNTERSIGN_MCP_INVOKER_SERVICE_ACCOUNT via
+# impersonated_credentials.Credentials / IDTokenCredentials, which calls
+# IAMCredentials.GenerateIdToken. Without this host allowed, that
+# impersonation call itself is denied before it ever reaches Cloud Run.
+#
+# bind_to: case_workflow, qc_probe, hello_runtime (any identity using
+#   COUNTERSIGN_ALLOW_VERTEX_SESSIONS=1 or calling :streamQuery/:query)
+name: countersign-aiplatform-sessions-allow
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: REQUEST_AUTHZ
+action: ALLOW
+httpRules:
+  - to:
+      operations:
+        - hosts:
+            - exact: "us-central1-aiplatform.mtls.googleapis.com"
+            - exact: "aiplatform.mtls.googleapis.com"
+            - exact: "us-central1-aiplatform.googleapis.com"
+            - exact: "aiplatform.googleapis.com"
+            - exact: "telemetry.mtls.googleapis.com"
+            - exact: "telemetry.googleapis.com"
+            - exact: "iamcredentials.mtls.googleapis.com"
+            - exact: "iamcredentials.googleapis.com"
