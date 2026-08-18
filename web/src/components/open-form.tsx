@@ -13,10 +13,11 @@ const DOCS: { value: DocType; label: string }[] = [
   { value: "environmental_log", label: "Environmental log" },
 ];
 
-export function OpenForm() {
+export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [useLive, setUseLive] = useState(liveEngine);
   const [form, setForm] = useState({
     tenant_id: "aurex",
     batch_id: "",
@@ -46,7 +47,10 @@ export function OpenForm() {
       const res = await fetch("/api/cases", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ source: "intake", intake: toIntake(form) }),
+        body: JSON.stringify({
+          source: useLive ? "live" : "intake",
+          intake: toIntake(form),
+        }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -66,9 +70,31 @@ export function OpenForm() {
     <form onSubmit={onSubmit} className="max-w-2xl space-y-5">
       <p className="text-sm text-ink-muted">
         Structured intake only. Classification is the same deterministic rule
-        as <span className="font-mono">app/domain/classification.py</span>. The
-        joined graph is not started from this form.
+        as <span className="font-mono">app/domain/classification.py</span>.
       </p>
+      <fieldset className="border border-line bg-paper-raised px-4 py-3">
+        <legend className="px-1 text-[12px] uppercase text-ink-muted">
+          Execution
+        </legend>
+        <label htmlFor="use_live" className="flex items-start gap-2 text-sm">
+          <input
+            id="use_live"
+            type="checkbox"
+            checked={useLive}
+            disabled={!liveEngine}
+            onChange={(e) => setUseLive(e.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            Run on the deployed Agent Runtime
+            <span className="mt-0.5 block text-[12px] text-ink-muted">
+              {liveEngine
+                ? "Starts the real deviation-case graph: departments over MCP, investigation, challenger, Annex 16, QP pause. Desk polls session state."
+                : "Unavailable — COUNTERSIGN_CASE_ENGINE_URL is not set. Unchecked opens a local classified case only."}
+            </span>
+          </span>
+        </label>
+      </fieldset>
       <div className="grid gap-4 sm:grid-cols-2">
         <Text
           id="tenant_id"
@@ -215,8 +241,20 @@ export function OpenForm() {
         disabled={pending}
         className="bg-teal-deep px-4 py-2 text-sm text-paper-raised disabled:opacity-50"
       >
-        {pending ? "Opening…" : "Open classified case"}
+        {pending
+          ? useLive
+            ? "Running graph on Agent Runtime…"
+            : "Opening…"
+          : useLive
+            ? "Open case on Agent Runtime"
+            : "Open classified case"}
       </button>
+      {useLive && (
+        <p className="text-[12px] text-ink-muted">
+          First run reaches the QP pause or the sterility hold, whichever comes
+          first. This may take up to a minute.
+        </p>
+      )}
     </form>
   );
 }

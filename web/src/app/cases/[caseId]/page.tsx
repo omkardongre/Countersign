@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CasePanels } from "@/components/case-panels";
+import { LivePoller } from "@/components/live-poller";
 import { Pipeline } from "@/components/pipeline";
 import { QpPanel } from "@/components/qp-panel";
 import { GatePill, SeverityPill, StagePill } from "@/components/status-pill";
-import { getCase } from "@/lib/store";
+import { getAnyCase } from "@/lib/desk";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +15,14 @@ export default async function CasePage({
   params: Promise<{ caseId: string }>;
 }) {
   const { caseId } = await params;
-  const record = getCase(caseId);
+  const record = getAnyCase(caseId);
   if (!record) notFound();
   const { classified } = record;
+  // A live case is only "settled" once the QP has acted. Until then the
+  // graph is either running or parked on an interrupt, so the desk polls
+  // rather than holding a stream open (final_reseach/11 §1).
+  const shouldPoll =
+    record.origin === "live" && record.desk_stage !== "qp_recorded";
 
   return (
     <AppShell current="/">
@@ -30,12 +36,18 @@ export default async function CasePage({
           </h1>
           <p className="text-sm text-ink-muted">{classified.product_name}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <SeverityPill value={classified.severity} />
           <StagePill value={record.desk_stage} />
           <GatePill value={record.release_gate?.status ?? null} />
+          {record.origin === "live" && (
+            <span className="inline-flex items-center rounded-sm bg-teal/10 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-teal-deep ring-1 ring-teal/25">
+              live runtime
+            </span>
+          )}
         </div>
       </div>
+      {shouldPoll && <LivePoller caseId={classified.case_id} />}
       <Pipeline stage={record.desk_stage} lifecycle={classified.lifecycle_state} />
       <div className="mt-5 space-y-4">
         <QpPanel record={record} />

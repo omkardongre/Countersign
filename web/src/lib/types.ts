@@ -220,7 +220,7 @@ export type SterilityHold = {
 
 export type CaseDeskRecord = {
   data_class: "labelled_synthetic";
-  origin: "fixture" | "intake";
+  origin: "fixture" | "intake" | "live";
   desk_stage: DeskStage;
   intake: CaseIntake;
   classified: ClassifiedCase;
@@ -248,7 +248,20 @@ export type CaseQueueItem = {
   lifecycle_state: LifecycleState;
   desk_stage: DeskStage;
   gate_status: ReleaseGateStatus | null;
-  origin: "fixture" | "intake";
+  origin: "fixture" | "intake" | "live";
+};
+
+/** Live-engine session pointer, kept alongside the record for resume/poll. */
+export type LiveSession = {
+  engine_resource: string;
+  user_id: string;
+  session_id: string;
+  pending_interrupt: {
+    interrupt_id: string;
+    function_name: string;
+    node: string;
+    message: string;
+  } | null;
 };
 
 export type QpConfirmBody = {

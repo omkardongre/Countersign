@@ -5,6 +5,7 @@ import type {
   CaseDeskRecord,
   CaseIntake,
   CaseQueueItem,
+  ClassifiedCase,
   QpConfirmBody,
 } from "./types";
 
@@ -32,30 +33,47 @@ export function getCase(caseId: string): CaseDeskRecord | null {
   return globalStore().cases.get(caseId) ?? null;
 }
 
-export function openFromIntake(intake: CaseIntake): CaseDeskRecord {
+/**
+ * Builds the desk's classified record without persisting it.
+ *
+ * Shared by the intake path (which then stores it here) and the live path
+ * (which stores it in the live-session map instead, so a live case does not
+ * also appear as an in-memory intake case). `case_id` must satisfy
+ * `app/domain/ingest.py`'s `_SAFE_SCOPE_ID` because it becomes part of the
+ * evidence artifact filename on the graph side.
+ */
+export function buildClassifiedCase(intake: CaseIntake): ClassifiedCase {
   const { severity, rationale } = classifySeverity(intake);
   const caseId = `case-${intake.tenant_id}-${intake.batch_id}-${Date.now()}`
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-");
-  const now = new Date().toISOString();
-  const record: CaseDeskRecord = {
+  return {
+    case_id: caseId,
+    tenant_id: intake.tenant_id,
+    batch_id: intake.batch_id,
+    product_name: intake.product_name,
+    doc_type: intake.doc_type,
+    severity,
+    lifecycle_state: "classified",
+    decision_authority: "none",
+    evidence_refs: intake.evidence_refs,
+    rationale,
+    classified_at: new Date().toISOString(),
+  };
+}
+
+/** Empty desk record around an already-classified case. */
+export function emptyDeskRecord(
+  intake: CaseIntake,
+  classified: ClassifiedCase,
+  origin: CaseDeskRecord["origin"],
+): CaseDeskRecord {
+  return {
     data_class: "labelled_synthetic",
-    origin: "intake",
+    origin,
     desk_stage: "classified",
     intake,
-    classified: {
-      case_id: caseId,
-      tenant_id: intake.tenant_id,
-      batch_id: intake.batch_id,
-      product_name: intake.product_name,
-      doc_type: intake.doc_type,
-      severity,
-      lifecycle_state: "classified",
-      decision_authority: "none",
-      evidence_refs: intake.evidence_refs,
-      rationale,
-      classified_at: now,
-    },
+    classified,
     aggregated_status: null,
     branches: [],
     findings: [],
@@ -70,7 +88,12 @@ export function openFromIntake(intake: CaseIntake): CaseDeskRecord {
     qp_confirmation: null,
     decision_authority: "none",
   };
-  globalStore().cases.set(caseId, record);
+}
+
+export function openFromIntake(intake: CaseIntake): CaseDeskRecord {
+  const classified = buildClassifiedCase(intake);
+  const record = emptyDeskRecord(intake, classified, "intake");
+  globalStore().cases.set(classified.case_id, record);
   return record;
 }
 
@@ -118,7 +141,7 @@ export function confirmCase(
   return { record: next };
 }
 
-function toQueueItem(record: CaseDeskRecord): CaseQueueItem {
+export function toQueueItem(record: CaseDeskRecord): CaseQueueItem {
   return {
     case_id: record.classified.case_id,
     tenant_id: record.classified.tenant_id,

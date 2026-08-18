@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
 import { GatePill, SeverityPill, StagePill } from "@/components/status-pill";
-import { listCases, liveEngineConfigured } from "@/lib/store";
+import { listAllCases, liveEngineConfigured } from "@/lib/desk";
 
 export const dynamic = "force-dynamic";
 
 export default function Home() {
-  const cases = listCases();
+  const cases = listAllCases();
   const live = liveEngineConfigured();
 
   return (
@@ -27,7 +27,7 @@ export default function Home() {
         </Link>
       </div>
       <p className="mb-4 font-mono text-[12px] text-ink-muted">
-        Live Runtime {live ? "env present" : "not wired"} · queue is labelled
+        Live Runtime {live ? "wired" : "not wired"} · queue is labelled
         synthetic
       </p>
       <div className="overflow-x-auto border border-line bg-paper-raised">
@@ -40,6 +40,7 @@ export default function Home() {
               <th className="px-4 py-2.5 font-medium">Severity</th>
               <th className="px-4 py-2.5 font-medium">Stage</th>
               <th className="px-4 py-2.5 font-medium">Gate</th>
+              <th className="px-4 py-2.5 font-medium">Source</th>
             </tr>
           </thead>
           <tbody>
@@ -63,6 +64,15 @@ export default function Home() {
                 </td>
                 <td className="px-4 py-3">
                   <GatePill value={c.gate_status} />
+                </td>
+                <td className="px-4 py-3">
+                  <span
+                    className={`font-mono text-[11px] uppercase ${
+                      c.origin === "live" ? "text-teal-deep" : "text-ink-muted"
+                    }`}
+                  >
+                    {c.origin === "live" ? "live runtime" : c.origin}
+                  </span>
                 </td>
               </tr>
             ))}
