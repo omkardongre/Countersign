@@ -9,9 +9,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:live": "node scripts/verify-live-projection.mjs"
   },
   "dependencies": {
+    "google-auth-library": "^11.0.2",
     "next": "16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
