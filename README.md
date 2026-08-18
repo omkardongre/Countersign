@@ -100,14 +100,14 @@ So Countersign is built on one non-negotiable rule:
 | TQA tenant + lifecycle `ext_proc` | Done live — callout denies cross-tenant and `dispositioned`; `countersign-egress` has VPC + DNS peering; Runtime MCP 403 not claimed |
 | 14-day sterility wait, kill/resume | Cloud SQL live — `countersign-sessions` Postgres 16, IAM auth, ADK `sessions`/`events` + `sterility_incubation` proven. Clock reached via MCP (`sterility_start`/`sterility_get`/`sterility_bind_resume_handle`), tenant-checked, atomic tick claim |
 | Scheduler wake-up (`POST /scheduler/sterility-tick`) | Done live — Cloud Scheduler job `countersign-sterility-tick` (OIDC, `*/15 * * * *`) hits the deployed tick Cloud Run service; manual trigger returns `200` |
-| Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `6585223078622527488`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
+| Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `4625084117367652352`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
 | Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; indexes `READY`; MCP Cloud Run `countersign-department-mcp` serves `prior_art_*` (`verify_mcp_case_memory.py`, embedded KNN). Runtime prior-art on a live case and Gateway 403 are not claimed |
-| UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel. Labelled synthetic fixtures. Live Runtime `streamQuery` proxy not wired. Architecture diagram and demo film not started |
+| UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; architecture diagram and demo film not started |
 
 ### Domain workflow — deterministic intake and classification
 
-The first node of the GMP deviation-investigation graph (`final_reseach/05_architecture.md`
-§5/§11 step 1) is implemented in `app/domain/`:
+The first node of the GMP deviation-investigation graph (`final_reseach/ARCHITECTURE.md`
+§7 / §12) is implemented in `app/domain/`:
 
 - `models.py` — `CaseIntake` (structured detection payload) and `ClassifiedCase`
   (`tenant_id`, `lifecycle_state`, `decision_authority: "none"` on every record), following
@@ -126,7 +126,7 @@ bare function.
 
 ### Domain workflow — multimodal evidence extraction
 
-The second stage (`final_reseach/05_architecture.md` §5, §11 step 4) is implemented as a static
+The second stage (`final_reseach/ARCHITECTURE.md` §7) is implemented as a static
 ADK 2.x `Workflow` graph with exactly one model call inside it:
 
 ```
@@ -188,7 +188,7 @@ question, not settled by these tests.
 
 ### Domain workflow — deterministic GMP compliance engine
 
-The third stage (`final_reseach/05_architecture.md` §5, "Deterministic compliance engine")
+The third stage (`final_reseach/ARCHITECTURE.md` §7, "Deterministic compliance engine")
 runs after validation, still with zero model calls, and asks three separately regulated
 questions rather than one blended verdict:
 
@@ -330,12 +330,16 @@ START → intake_and_bind_evidence
   `INSTANCE_CONNECTION_NAME`/`DB_IAM_USER` (`GOOGLE_CLOUD_AGENT_ENGINE_LOCATION`
   and `GOOGLE_CLOUD_PROJECT` are now platform-reserved and injected
   automatically, not set by this script). Run live against
-  `countersign-505107`: reasoningEngine `6585223078622527488`, pinned to
+  `countersign-505107`: reasoningEngine `4625084117367652352`, pinned to
   Python 3.12 (the platform's default build image is 3.10, which lacks
-  `enum.StrEnum`). Not claimed: a live Gateway 403 from this deployed
-  Runtime's own MCP egress; revision-kill is proven only in
-  `tests/unit/test_kill_resume.py`, not on a live Cloud Run revision (Agent
-  Runtime does not expose Cloud Run revisions to kill).
+  `enum.StrEnum`). Sterility hold + scheduler resume proven live end to end
+  (2026-08-18): a disposable case parked on a compressed hold, the real
+  `/scheduler/sterility-tick` endpoint resumed the exact `invocation_id` it
+  parked on, and an unrelated due case was left untouched. Not claimed: a
+  live Gateway 403 from this deployed Runtime's own MCP egress; Agent
+  Runtime does not expose Cloud Run revisions to kill, so revision-kill is
+  still proven only in `tests/unit/test_kill_resume.py`, against an
+  in-process `Runner`.
 - The Annex 16 node is also code. Checklist items live in hashed master data
   (`master_data/annex16_checklist_v1.json`). Bound evaluators score only the matching
   department branch: manufacturing completeness (1.7.11), QC LIMS OOS (1.7.13), CoA
@@ -753,19 +757,23 @@ SSE stream. Live Agent Runtime `streamQuery` is not proxied yet (`501` if
   `lims_query`/`em_query`/`coa_fetch`, so the sterility MCP tools check
   `tenant_id == case_tenant_id` themselves rather than relying on that
   extension.
-- **The scheduler tick and the case-workflow Runtime deploy are live.**
-  `POST /scheduler/sterility-tick` runs on Cloud Run
-  (`countersign-tick-service`, its own least-privilege service account,
-  `--no-allow-unauthenticated`), and Cloud Scheduler job
+- **The scheduler tick and the case-workflow Runtime deploy are live, and the
+  hold/resume path is proven end to end.** `POST /scheduler/sterility-tick`
+  runs on Cloud Run (`countersign-tick-service`, its own least-privilege
+  service account, `--no-allow-unauthenticated`), and Cloud Scheduler job
   `countersign-sterility-tick` calls it on a `*/15 * * * *` OIDC-authenticated
-  schedule — a manual trigger returns `200`. `infra/geap/deploy_case_runtime.py`
-  has been run against `countersign-505107` (reasoningEngine
-  `6585223078622527488`), granted `roles/run.invoker` on the department MCP
-  service and `roles/iap.egressor` on its registered Agent Registry endpoint.
-  Revision-kill is still proven only in `tests/unit/test_kill_resume.py`;
-  Agent Runtime does not expose a Cloud Run revision to delete, so a live
-  proof of that beat is still open. A live Gateway 403 from the deployed
-  Runtime's own MCP egress (as opposed to the hello probe's) is also not yet
+  schedule. `infra/geap/deploy_case_runtime.py` has been run against
+  `countersign-505107` (reasoningEngine `4625084117367652352`), granted
+  `roles/run.invoker` on the department MCP service and `roles/iap.egressor`
+  on its registered Agent Registry endpoint. A disposable case parked on a
+  compressed hold, an authenticated call to the real tick endpoint reported
+  `{"completed":1,"resumed":1}` with the same `invocation_id` the case
+  parked on, the desk's next poll showed it advanced past the hold, and an
+  unrelated case with a later `due_at` was left untouched. Revision-kill
+  itself is still proven only in `tests/unit/test_kill_resume.py`, against
+  an in-process `Runner` — Agent Runtime does not expose a Cloud Run
+  revision to delete. A live Gateway 403 from the deployed Runtime's own MCP
+  egress (as opposed to the hello probe's) is also not yet
   captured as evidence.
 - **Case Memory Firestore and department MCP are live.** Native `(default)` in
   `us-central1`, both composite indexes `READY`, MCP SA granted Firestore + Vertex
@@ -778,6 +786,9 @@ SSE stream. Live Agent Runtime `streamQuery` is not proxied yet (`501` if
 
 ## Sources
 
+- `final_reseach/ARCHITECTURE.md` — build source of truth (merged 04+05+07)
+- `final_reseach/10_gap_analysis_and_win_plan.md` — remaining work
+- `final_reseach/11_demo_and_proof_plan.md` — demo beats
 - [Agent Gateway overview](https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/gateways/agent-gateway-overview)
 - [Set up Agent Gateway](https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/gateways/set-up-agent-gateway)
 - [Delegate authorization with Service Extensions](https://docs.cloud.google.com/gemini-enterprise-agent-platform/govern/gateways/delegate-authorization)
