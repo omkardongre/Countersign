@@ -55,6 +55,12 @@ CASE_REQUIREMENTS = [
     "mcp>=1.26.0,<2.0.0",
     "cloudpickle",
     "pydantic",
+    # app/mcp/client.py mints an OIDC identity token for the private Cloud Run
+    # MCP service. google-auth arrives transitively today, but the import is
+    # direct, so it is pinned here rather than left to another package's
+    # dependency tree.
+    "google-auth>=2.38.0,<3.0.0",
+    "requests>=2.32.0,<3.0.0",
 ]
 
 DESCRIPTION = (
@@ -81,6 +87,28 @@ def main() -> int:
         "--mcp-url",
         required=True,
         help="https Streamable HTTP URL of the department MCP service.",
+    )
+    parser.add_argument(
+        "--mcp-invoker-service-account",
+        required=True,
+        help=(
+            "Service account the Agent Identity impersonates to mint the "
+            "Cloud Run ID token for the department MCP service. Cloud Run's "
+            "invoker check does not accept a raw Workload-Identity-Federation "
+            "token from an Agent Identity's own ambient credentials — see "
+            "app/mcp/client.py::_mcp_auth_headers. The Agent Identity must "
+            "hold roles/iam.serviceAccountTokenCreator on this account, and "
+            "this account must hold roles/run.invoker on the MCP service."
+        ),
+    )
+    parser.add_argument(
+        "--mcp-auth-debug",
+        action="store_true",
+        help=(
+            "Temporary: log the MCP OIDC token's header/claims (never the "
+            "token itself) to diagnose a live 401 from the department MCP "
+            "service. See app/mcp/client.py::_mcp_auth_headers."
+        ),
     )
     parser.add_argument(
         "--sterility-hold-seconds",
@@ -139,7 +167,10 @@ def main() -> int:
         # Department tools, and the sterility clock, must egress through
         # the department MCP service, never run in-process.
         "COUNTERSIGN_MCP_URL": args.mcp_url,
+        "COUNTERSIGN_MCP_INVOKER_SERVICE_ACCOUNT": args.mcp_invoker_service_account,
     }
+    if args.mcp_auth_debug:
+        env_vars["COUNTERSIGN_MCP_AUTH_DEBUG"] = "1"
     if args.sterility_hold_seconds:
         env_vars["COUNTERSIGN_STERILITY_HOLD_SECONDS"] = str(
             args.sterility_hold_seconds
@@ -237,6 +268,7 @@ def main() -> int:
         "agent_gateway": args.agent_gateway,
         "sessions": "vertex_managed",
         "mcp_url": args.mcp_url,
+        "mcp_invoker_service_account": args.mcp_invoker_service_account,
         "project_number": project_number(args.project),
     }
     (ROOT / "case_deployment_metadata.json").write_text(
@@ -247,6 +279,14 @@ def main() -> int:
         "\nNext: export COUNTERSIGN_CASE_ENGINE="
         f"{deployed.api_resource.name} on the tick service so a completed "
         "hold resumes this deployment."
+    )
+    print(
+        "\nAlso required (delete+recreate rotates the engine id, so these "
+        "IAM bindings do not carry over automatically):\n"
+        "  gcloud iam service-accounts add-iam-policy-binding "
+        f"{args.mcp_invoker_service_account} \\\n"
+        f"    --member='principal://{effective}' \\\n"
+        "    --role=roles/iam.serviceAccountTokenCreator\n"
     )
     return 0
 
