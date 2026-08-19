@@ -1,7 +1,8 @@
 # Native MCP tool-name ALLOW for the deviation-case Workflow Agent Identity.
 # QC and supply are nodes of that one Runtime principal, so this identity
-# must be allowed lims_query, em_query, and coa_fetch. Do not attach the
-# qc_probe policy to this identity (coa_fetch would 403 on supply).
+# must be allowed lims_query, em_query, coa_fetch, and drive_fetch_evidence
+# (manufacturing's real Drive pull). Do not attach the qc_probe policy to
+# this identity (coa_fetch would 403 on supply).
 #
 # sterility_start and sterility_bind_resume_handle are also included: an
 # Agent Identity principal cannot be a Cloud SQL IAM database user (confirmed
@@ -56,6 +57,9 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "coa_fetch"
+              - name: "tools/call"
+                params:
+                  - exact: "drive_fetch_evidence"
               - name: "tools/call"
                 params:
                   - exact: "sterility_get"

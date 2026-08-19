@@ -23,6 +23,7 @@ from app.domain.department_tools import (
     ALLOWED_DEPARTMENT_TOOLS,
     CASE_MEMORY_TOOLS,
     COA_FETCH,
+    DRIVE_TOOLS,
     EM_QUERY,
     LIMS_QUERY,
     STERILITY_TOOLS,
@@ -47,7 +48,13 @@ async def test_department_mcp_exposes_exactly_the_named_tools() -> None:
     async with create_connected_server_and_client_session(mcp) as session:
         listed = await session.list_tools()
     names = {tool.name for tool in listed.tools}
-    assert names == ALLOWED_DEPARTMENT_TOOLS | STERILITY_TOOLS | CASE_MEMORY_TOOLS
+    assert (
+        names
+        == ALLOWED_DEPARTMENT_TOOLS
+        | DRIVE_TOOLS
+        | STERILITY_TOOLS
+        | CASE_MEMORY_TOOLS
+    )
     assert "postgres-execute-sql" not in names
 
 

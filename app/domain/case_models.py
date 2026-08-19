@@ -35,13 +35,22 @@ from app.domain.models import CaseIntake, ClassifiedCase
 
 
 class EvidenceAttachment(BaseModel):
-    """Retrieved evidence bytes attached at case intake, without scope claims."""
+    """Retrieved evidence bytes attached at case intake, without scope claims.
+
+    Either ``content_base64`` carries the bytes directly (fixture path), or
+    ``drive_file_id`` names a Google Drive file the manufacturing collector
+    pulls over the ``drive_fetch_evidence`` MCP tool before ingest — mirroring
+    how QC/supply pull LIMS/EM/CoA rather than having them pushed in. When
+    ``drive_file_id`` is set, ``mime_type``/``content_base64`` are ignored and
+    may be left as placeholders; the real values come back from Drive.
+    """
 
     source_uri: str
-    mime_type: str
-    content_base64: str
+    mime_type: str = ""
+    content_base64: str = ""
     page_count: int = Field(default=1, ge=1)
     spec_version_expected: str | None = None
+    drive_file_id: str | None = None
 
 
 class DeviationCaseRequest(BaseModel):

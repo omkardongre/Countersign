@@ -90,3 +90,19 @@ def get_artifact_service():
 _registry = get_service_registry()
 _registry.register_session_service("shared", lambda uri, **kw: get_session_service())
 _registry.register_artifact_service("shared", lambda uri, **kw: get_artifact_service())
+
+
+def get_google_credentials(*, scopes: list[str]):
+    """Ambient service-account credentials scoped for a specific Google API.
+
+    Same ADC pattern already used in ``app/mcp/client.py`` for the MCP
+    invoker token — ``google.auth.default`` picks up the department MCP
+    Cloud Run service's own service account in production, or the
+    operator's ``gcloud auth application-default login`` credentials
+    locally. Not cached: a scoped credentials object is cheap to build and
+    a caller may request different scopes.
+    """
+    import google.auth
+
+    credentials, _ = google.auth.default(scopes=scopes)
+    return credentials

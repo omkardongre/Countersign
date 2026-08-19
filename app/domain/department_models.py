@@ -90,6 +90,23 @@ class CoaSnapshot(BaseModel):
     gmp_certificate_current: bool
 
 
+class DriveEvidencePayload(BaseModel):
+    """One scanned BMR page fetched live from Google Drive.
+
+    Distinct from ``CoaSnapshot`` (a synthetic catalog row that only
+    *claims* to be Drive-shaped): this carries real bytes read from the
+    Drive API, ready to hand to ``EvidenceIngestRequest``/
+    ``decode_and_verify_payload`` unchanged.
+    """
+
+    system: str = "drive"
+    source_uri: str
+    file_id: str
+    mime_type: str
+    content_base64: str
+    page_count: int = 1
+
+
 class DepartmentSnapshot(BaseModel):
     tenant_id: str
     batch_id: str
@@ -100,13 +117,20 @@ class DepartmentSnapshot(BaseModel):
 
 
 class CaseEvidenceBundle(BaseModel):
-    """Shared fan-out input: classified scope plus the manufacturing BMR."""
+    """Shared fan-out input: classified scope plus the manufacturing BMR.
+
+    ``drive_file_id`` set means ``collect_manufacturing`` pulls the page's
+    real bytes/MIME type over the ``drive_fetch_evidence`` MCP tool before
+    ingest, ignoring whatever placeholder is in ``bmr``. Unset keeps the
+    fixture path: ``bmr`` already carries real bytes.
+    """
 
     tenant_id: str
     case_id: str
     batch_id: str
     lifecycle_state: str = "classified"
     bmr: EvidenceIngestRequest
+    drive_file_id: str | None = None
 
 
 class BranchOutcome(BaseModel):

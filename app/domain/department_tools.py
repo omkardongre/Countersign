@@ -20,11 +20,17 @@ MES and QMS are not in this slice. Investigation must not call these tools.
 from __future__ import annotations
 
 from app.domain.department_catalog import lookup_department_snapshot
-from app.domain.department_models import CoaSnapshot, EmSnapshot, LimsSnapshot
+from app.domain.department_models import (
+    CoaSnapshot,
+    DriveEvidencePayload,
+    EmSnapshot,
+    LimsSnapshot,
+)
 
 LIMS_QUERY = "lims_query"
 EM_QUERY = "em_query"
 COA_FETCH = "coa_fetch"
+DRIVE_FETCH_EVIDENCE = "drive_fetch_evidence"
 STERILITY_START = "sterility_start"
 STERILITY_GET = "sterility_get"
 
@@ -49,9 +55,19 @@ CASE_MEMORY_TOOLS = frozenset(
 
 ALLOWED_DEPARTMENT_TOOLS = frozenset({LIMS_QUERY, EM_QUERY, COA_FETCH})
 
+# drive_fetch_evidence takes a file_id, unlike the fixed
+# tenant_id/batch_id/lifecycle_state/case_tenant_id shape
+# call_department_tool hardcodes for the other three reads, so it is called
+# through call_drive_tool with its own allow-list instead.
+DRIVE_TOOLS = frozenset({DRIVE_FETCH_EVIDENCE})
+
 
 class DepartmentRecordMissing(Exception):
     """No catalog row for the requested tenant/batch."""
+
+
+class DriveFetchError(Exception):
+    """The Drive API call failed, or returned a file this ingest path rejects."""
 
 
 def _snapshot(*, tenant_id: str, batch_id: str):
@@ -76,6 +92,83 @@ def em_query(*, tenant_id: str, batch_id: str) -> EmSnapshot:
 def coa_fetch(*, tenant_id: str, batch_id: str) -> CoaSnapshot:
     """Supplier CoA in Drive-normalized connector shape."""
     return _snapshot(tenant_id=tenant_id, batch_id=batch_id).coa
+
+
+# MIME types the Drive API may return that ingest.py's allow-list also
+# accepts (app/domain/evidence_models.py::ALLOWED_EVIDENCE_MIME_TYPES).
+# Google-native formats (Docs/Sheets/Slides) have no fixed byte
+# representation and are rejected rather than silently exported to PDF,
+# since an exported copy is not the artifact the case would be citing.
+_ALLOWED_DRIVE_MIME_TYPES = frozenset(
+    {
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/tiff",
+        "image/webp",
+    }
+)
+
+# Same per-artifact ceiling ingest.py enforces
+# (app/domain/evidence_models.py::MAX_EVIDENCE_BYTES), checked here too so a
+# huge Drive file is rejected before its bytes are base64-encoded and
+# shipped over MCP, not just later at ingest.
+_MAX_DRIVE_FETCH_BYTES = 20 * 1024 * 1024
+
+
+def drive_fetch_evidence(*, tenant_id: str, file_id: str) -> DriveEvidencePayload:
+    """Fetches one scanned BMR page from Google Drive as base64 bytes.
+
+    Runs inside the MCP process, which holds the Drive credential — an
+    Agent Identity principal cannot itself be a Drive OAuth/service-account
+    principal any more than it can be a Cloud SQL or Firestore one (same
+    reasoning as the sterility clock and Case Memory). The Drive folder
+    containing scanned BMR pages is shared read-only with this process's
+    service account; ``tenant_id`` is accepted for parity with the other
+    department tools and for audit logging, not because Drive itself is
+    tenant-partitioned in this slice.
+    """
+    import base64
+
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+
+    from app.app_utils.services import get_google_credentials
+
+    del tenant_id  # audit/logging parity only; Drive ACLs are per-file here
+    try:
+        credentials = get_google_credentials(
+            scopes=["https://www.googleapis.com/auth/drive.readonly"]
+        )
+        service = build("drive", "v3", credentials=credentials)
+        meta = (
+            service.files()
+            .get(fileId=file_id, fields="id,name,mimeType,size,webViewLink")
+            .execute()
+        )
+        mime_type = meta["mimeType"]
+        if mime_type not in _ALLOWED_DRIVE_MIME_TYPES:
+            raise DriveFetchError(
+                f"Drive file {file_id} has MIME type {mime_type!r}, which "
+                f"is not an accepted evidence type. Accepted: "
+                f"{sorted(_ALLOWED_DRIVE_MIME_TYPES)}."
+            )
+        size = int(meta.get("size") or 0)
+        if size > _MAX_DRIVE_FETCH_BYTES:
+            raise DriveFetchError(
+                f"Drive file {file_id} is {size} bytes, above the "
+                f"{_MAX_DRIVE_FETCH_BYTES}-byte per-artifact limit."
+            )
+        payload = service.files().get_media(fileId=file_id).execute()
+    except HttpError as exc:
+        raise DriveFetchError(f"Drive API call for {file_id} failed: {exc}") from exc
+
+    return DriveEvidencePayload(
+        source_uri=meta.get("webViewLink") or f"drive://{file_id}",
+        file_id=file_id,
+        mime_type=mime_type,
+        content_base64=base64.b64encode(payload).decode("ascii"),
+    )
 
 
 class SterilityTenantMismatch(Exception):

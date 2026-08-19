@@ -104,11 +104,12 @@ def intake_and_bind_evidence(node_input: DeviationCaseRequest) -> Event:
             case_id=classified.case_id,
             batch_id=classified.batch_id,
             source_uri=attachment.source_uri,
-            mime_type=attachment.mime_type,
+            mime_type=attachment.mime_type or "application/pdf",
             content_base64=attachment.content_base64,
             page_count=attachment.page_count,
             spec_version_expected=attachment.spec_version_expected,
         ),
+        drive_file_id=attachment.drive_file_id,
     )
     return Event(
         output=bundle.model_dump(mode="json"),

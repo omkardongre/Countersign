@@ -42,9 +42,15 @@ from app.domain.case_memory_models import (
     CaseMemoryFact,
     CaseMemoryQueryResult,
 )
-from app.domain.department_models import CoaSnapshot, EmSnapshot, LimsSnapshot
+from app.domain.department_models import (
+    CoaSnapshot,
+    DriveEvidencePayload,
+    EmSnapshot,
+    LimsSnapshot,
+)
 from app.domain.department_tools import (
     COA_FETCH,
+    DRIVE_FETCH_EVIDENCE,
     EM_QUERY,
     LIMS_QUERY,
     PRIOR_ART_QUERY,
@@ -55,10 +61,14 @@ from app.domain.department_tools import (
     STERILITY_START,
     CaseMemoryTenantMismatch,
     DepartmentRecordMissing,
+    DriveFetchError,
     SterilityTenantMismatch,
 )
 from app.domain.department_tools import (
     coa_fetch as load_coa,
+)
+from app.domain.department_tools import (
+    drive_fetch_evidence as run_drive_fetch_evidence,
 )
 from app.domain.department_tools import (
     em_query as load_em,
@@ -181,6 +191,23 @@ def build_department_mcp(
         try:
             return load_coa(tenant_id=tenant_id, batch_id=batch_id)
         except DepartmentRecordMissing as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=DRIVE_FETCH_EVIDENCE,
+        title="Drive fetch evidence",
+        description=(
+            "Fetch one scanned BMR page from Google Drive by file id, "
+            "base64-encoded and ready for evidence ingest. Read-only."
+        ),
+        annotations=_READ_ONLY,
+    )
+    def drive_fetch_evidence(
+        tenant_id: str, file_id: str
+    ) -> DriveEvidencePayload:
+        try:
+            return run_drive_fetch_evidence(tenant_id=tenant_id, file_id=file_id)
+        except DriveFetchError as exc:
             raise ToolError(str(exc)) from exc
 
     @mcp.tool(

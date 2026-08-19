@@ -28,11 +28,18 @@ from app.domain.department_models import (
     CaseEvidenceBundle,
     CoaSnapshot,
     Department,
+    DriveEvidencePayload,
     EmSnapshot,
     LimsSnapshot,
 )
-from app.domain.department_tools import COA_FETCH, EM_QUERY, LIMS_QUERY
+from app.domain.department_tools import (
+    COA_FETCH,
+    DRIVE_FETCH_EVIDENCE,
+    EM_QUERY,
+    LIMS_QUERY,
+)
 from app.domain.evidence_models import (
+    EvidenceIngestRequest,
     ExtractedEvidence,
     IngestedArtifact,
     ValidatedEvidence,
@@ -40,7 +47,7 @@ from app.domain.evidence_models import (
 from app.domain.evidence_validation import validate_page_evidence
 from app.domain.extraction import extract_page_evidence
 from app.domain.ingest import decode_and_verify_payload, ingest_evidence_artifact
-from app.mcp.client import call_department_tool
+from app.mcp.client import call_department_tool, call_drive_tool
 
 
 def _exc_message(exc: BaseException) -> str:
@@ -77,11 +84,33 @@ async def collect_manufacturing(
     """BMR ingest → extract → validate → compliance. Failsafe Event on error."""
     try:
         bundle = _bundle(node_input)
+        bmr = bundle.bmr
+        if bundle.drive_file_id:
+            # Pull the real page from Drive instead of trusting whatever
+            # placeholder is in bundle.bmr — same pull pattern as
+            # collect_qc/collect_supply, for the same reason: the Drive
+            # credential lives in the MCP process, not the Agent Identity.
+            drive_payload = DriveEvidencePayload.model_validate(
+                await call_drive_tool(
+                    DRIVE_FETCH_EVIDENCE,
+                    {"tenant_id": bundle.tenant_id, "file_id": bundle.drive_file_id},
+                )
+            )
+            bmr = EvidenceIngestRequest(
+                tenant_id=bundle.tenant_id,
+                case_id=bundle.case_id,
+                batch_id=bundle.batch_id,
+                source_uri=drive_payload.source_uri,
+                mime_type=drive_payload.mime_type,
+                content_base64=drive_payload.content_base64,
+                page_count=drive_payload.page_count,
+                spec_version_expected=bmr.spec_version_expected,
+            )
         # MIME/hash fail closed here so JoinNode gets the integrity message,
         # not ADK's wrapped "Dynamic node ... failed".
-        decode_and_verify_payload(bundle.bmr)
+        decode_and_verify_payload(bmr)
         artifact = IngestedArtifact.model_validate(
-            await ctx.run_node(ingest_evidence_artifact, node_input=bundle.bmr)
+            await ctx.run_node(ingest_evidence_artifact, node_input=bmr)
         )
         extracted = ExtractedEvidence.model_validate(
             await ctx.run_node(extract_page_evidence, node_input=artifact)
@@ -94,7 +123,7 @@ async def collect_manufacturing(
             output=BranchOutcome(
                 department=Department.MANUFACTURING,
                 status=BranchStatus.OK,
-                source_uris=[bundle.bmr.source_uri],
+                source_uris=[bmr.source_uri],
                 findings=list(compliance.findings),
                 manufacturing_compliance=compliance,
             ).model_dump(mode="json")

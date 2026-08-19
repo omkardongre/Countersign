@@ -41,6 +41,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from app.domain.department_tools import (
     ALLOWED_DEPARTMENT_TOOLS,
     CASE_MEMORY_TOOLS,
+    DRIVE_TOOLS,
     STERILITY_TOOLS,
 )
 from app.mcp.department_server import get_department_mcp
@@ -255,6 +256,25 @@ async def call_department_tool(
         raise DepartmentToolCallError(
             f"{name} returned no structured content for {tenant_id}/{batch_id}."
         )
+    return payload
+
+
+async def call_drive_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Call one named Drive tool over MCP. Fail closed on errors.
+
+    Separate from ``call_department_tool``: ``drive_fetch_evidence`` takes a
+    ``file_id`` rather than the fixed
+    ``tenant_id/batch_id/lifecycle_state/case_tenant_id`` shape that helper
+    hardcodes, and reaches a real Drive credential the MCP process holds —
+    same reason an Agent Identity cannot open Cloud SQL or Firestore itself.
+    """
+    if name not in DRIVE_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(DRIVE_TOOLS)}"
+        )
+    payload = await call_mcp_tool(name, arguments)
+    if not payload:
+        raise DepartmentToolCallError(f"{name} returned no structured content.")
     return payload
 
 
