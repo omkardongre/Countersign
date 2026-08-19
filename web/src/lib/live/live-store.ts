@@ -88,7 +88,19 @@ export function getLiveSessionPointer(caseId: string) {
 export async function openLiveCase(args: {
   intake: CaseIntake;
   classified: ClassifiedCase;
-  evidence: { sourceUri: string; mimeType: string; contentBase64: string };
+  evidence: {
+    sourceUri: string;
+    mimeType: string;
+    contentBase64: string;
+    /**
+     * Google Drive file id. When set, `collect_manufacturing` pulls the
+     * real page over the `drive_fetch_evidence` MCP tool and ignores
+     * `mimeType`/`contentBase64` here entirely (see
+     * `app/domain/branches.py`) — same pull pattern as the QC/supply
+     * collectors, instead of trusting whatever this route pushes in.
+     */
+    driveFileId?: string;
+  };
 }): Promise<CaseDeskRecord> {
   const engineResource = liveEngineResourceName();
   if (!engineResource) {
@@ -107,6 +119,7 @@ export async function openLiveCase(args: {
       mime_type: args.evidence.mimeType,
       content_base64: args.evidence.contentBase64,
       page_count: 1,
+      drive_file_id: args.evidence.driveFileId,
     },
   });
 

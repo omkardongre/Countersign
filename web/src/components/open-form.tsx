@@ -18,6 +18,7 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [useLive, setUseLive] = useState(liveEngine);
+  const [driveFileId, setDriveFileId] = useState("");
   const [form, setForm] = useState({
     tenant_id: "aurex",
     batch_id: "",
@@ -50,6 +51,7 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
         body: JSON.stringify({
           source: useLive ? "live" : "intake",
           intake: toIntake(form),
+          ...(useLive ? { drive_file_id: driveFileId.trim() } : {}),
         }),
       });
       const body = await res.json();
@@ -94,6 +96,29 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
             </span>
           </span>
         </label>
+        {useLive && (
+          <div className="mt-3">
+            <label
+              htmlFor="drive_file_id"
+              className="block text-[12px] uppercase text-ink-muted"
+            >
+              Google Drive file id (scanned BMR page)
+            </label>
+            <input
+              id="drive_file_id"
+              required
+              value={driveFileId}
+              onChange={(e) => setDriveFileId(e.target.value)}
+              className="mt-1 w-full border border-line bg-paper px-3 py-2 text-sm"
+              placeholder="e.g. 111o4PUsXxcID6iDxvrwyuMHkydfH5T9j"
+            />
+            <p className="mt-1 text-[12px] text-ink-muted">
+              Required. There is no placeholder evidence — the manufacturing
+              branch pulls this exact file from Drive. The file must be
+              shared read-only with the department MCP service account.
+            </p>
+          </div>
+        )}
       </fieldset>
       <div className="grid gap-4 sm:grid-cols-2">
         <Text

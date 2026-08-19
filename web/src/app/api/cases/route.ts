@@ -4,13 +4,6 @@ import { listAllCases, liveEngineConfigured } from "@/lib/desk";
 import { openLiveCase } from "@/lib/live/live-store";
 import type { CaseIntake, DocType, ProductQualityImpact } from "@/lib/types";
 
-// One 1x1 transparent PNG. A placeholder evidence page for opening a live
-// case before the desk has a real file-upload flow — passes ingest's MIME
-// allow-list and base64/size checks (app/domain/ingest.py) so the graph's
-// manufacturing branch runs the real extractor rather than being skipped.
-const PLACEHOLDER_EVIDENCE_PNG_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-
 const DOC_TYPES: DocType[] = [
   "batch_record",
   "lab_result",
@@ -48,6 +41,19 @@ export async function POST(request: Request) {
         { status: 501 },
       );
     }
+    const driveFileId =
+      typeof body.drive_file_id === "string" ? body.drive_file_id.trim() : "";
+    if (!driveFileId) {
+      return NextResponse.json(
+        {
+          error:
+            "drive_file_id is required to open a live case. The manufacturing " +
+            "branch pulls the real BMR page from Google Drive over the " +
+            "drive_fetch_evidence MCP tool; there is no placeholder evidence.",
+        },
+        { status: 400 },
+      );
+    }
     // Same deterministic rule as the intake path, but not persisted here —
     // the live session map owns the record so one live case does not also
     // appear as an in-memory intake case in the queue. The graph's own
@@ -58,9 +64,13 @@ export async function POST(request: Request) {
         intake,
         classified,
         evidence: {
-          sourceUri: `synthetic-placeholder://${intake.tenant_id}/${intake.batch_id}`,
-          mimeType: "image/png",
-          contentBase64: PLACEHOLDER_EVIDENCE_PNG_BASE64,
+          // mimeType/contentBase64 are placeholders the Runtime never uses
+          // once drive_file_id is set (see app/domain/branches.py); a real
+          // MIME type/bytes come back from the drive_fetch_evidence call.
+          sourceUri: `drive://${driveFileId}`,
+          mimeType: "application/pdf",
+          contentBase64: "",
+          driveFileId,
         },
       });
       return NextResponse.json(record, { status: 201 });
