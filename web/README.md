@@ -62,10 +62,13 @@ Open a case with **"Run on the deployed Agent Runtime"** checked on `/open`.
   hold and resumes the parked invocation; the desk then picks up the new
   events on its next poll. Deploy the case Runtime with
   `--sterility-hold-seconds` to compress the wait for a demo run.
-- Evidence is a **placeholder 1×1 PNG**, not a real BMR page. It satisfies
-  `app/domain/ingest.py`'s MIME allow-list and hashing so the manufacturing
-  branch runs the real extractor, but there is no file-upload UI yet and no
-  Drive-backed BMR (that is `final_reseach/10` P1).
+- Evidence for manufacturing is a **real Google Drive file**, not a
+  placeholder. Opening a live case requires a Drive file id (shown on
+  `/open` once "Run on the deployed Agent Runtime" is checked); the
+  manufacturing branch pulls the actual bytes over the
+  `drive_fetch_evidence` MCP tool. There is no file-upload UI yet — the
+  file must already exist in Drive, shared read-only with the department
+  MCP service account.
 - The live session pointer lives in this Node process. The Runtime session
   itself is durable (Vertex-managed); restarting `next dev` loses the desk's
   pointer to it, not the case.

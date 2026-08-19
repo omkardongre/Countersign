@@ -103,6 +103,7 @@ So Countersign is built on one non-negotiable rule:
 | Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `4625084117367652352`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
 | Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; indexes `READY`; MCP Cloud Run `countersign-department-mcp` serves `prior_art_*` (`verify_mcp_case_memory.py`, embedded KNN). Runtime prior-art on a live case and Gateway 403 are not claimed |
 | UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; architecture diagram and demo film not started |
+| Manufacturing evidence over Drive | Done live (2026-08-19) — `drive_fetch_evidence` MCP tool reads a real scanned BMR page from Google Drive; `collect_manufacturing` pulls it by file id instead of trusting pushed bytes. No placeholder evidence remains on the live path |
 
 ### Domain workflow — deterministic intake and classification
 
@@ -185,6 +186,29 @@ Design points that are load-bearing rather than stylistic:
 provenance stamping, validation and routing are all verified without an API key or network.
 Whether Gemini reads a particular smudged digit correctly is a separate model-level evaluation
 question, not settled by these tests.
+
+### Real external system: manufacturing evidence over Google Drive
+
+Proven live (2026-08-19), not a synthetic catalog row like the QC/supply connectors below:
+
+- `drive_fetch_evidence` MCP tool (`app/mcp/department_server.py`) reads one file by id
+  through the Drive API v3, base64-encoded, ready for `decode_and_verify_payload`/
+  `ingest_evidence_artifact` unchanged. Runs inside the MCP process, which holds the Drive
+  credential — an Agent Identity principal cannot itself be a Drive OAuth/service-account
+  principal, the same constraint that put the sterility clock and Case Memory behind MCP.
+- `collect_manufacturing` (`app/domain/branches.py`) pulls the real page by `drive_file_id`
+  before ingest instead of trusting bytes pushed in at case-open time — the same pull pattern
+  QC and supply already use for LIMS/EM/CoA, rather than a special case for manufacturing.
+- Same MIME allow-list and size ceiling as the ingest boundary
+  (`app/domain/evidence_models.py`); Google-native formats (Docs/Sheets/Slides) are rejected
+  rather than silently exported to PDF, since an exported copy is not the artifact the case
+  would be citing.
+- The web open-intake form requires a real Drive file id for a live case — there is no
+  placeholder evidence on the live path; `POST /api/cases` returns `400` if it is missing.
+- Verified live end to end: a synthetic labelled scanned BMR page, uploaded to a Drive folder
+  shared read-only with the department MCP service account, was fetched by a real case run on
+  the deployed Agent Runtime, and the extractor read its actual field values off it (batch
+  number, product code, etc., all ≥0.99 confidence) before the case reached the sterility hold.
 
 ### Domain workflow — deterministic GMP compliance engine
 
