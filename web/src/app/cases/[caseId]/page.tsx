@@ -47,7 +47,9 @@ export default async function CasePage({
           )}
         </div>
       </div>
-      {shouldPoll && <LivePoller caseId={classified.case_id} />}
+      {shouldPoll && (
+        <LivePoller caseId={classified.case_id} initialStage={record.desk_stage} />
+      )}
       <Pipeline stage={record.desk_stage} lifecycle={classified.lifecycle_state} />
       <div className="mt-5 space-y-4">
         <QpPanel record={record} />
