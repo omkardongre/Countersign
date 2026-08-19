@@ -43,6 +43,24 @@ The resource name is in `case_deployment_metadata.json` (`case_agent_runtime_id`
 
 Open a case with **"Run on the deployed Agent Runtime"** checked on `/open`.
 
+### Drive Picker (manufacturing evidence)
+
+Instead of pasting a Drive file id, `/open` shows a **"Choose from Drive"** button
+that opens the real Google Drive file picker. Requires two more vars in
+`web/.env.local`:
+
+```bash
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=<OAuth 2.0 Web application client id>
+NEXT_PUBLIC_GOOGLE_API_KEY=<browser API key restricted to Drive API + Picker API>
+```
+
+The operator signs in with their own Google account (browser OAuth,
+`drive.readonly` scope) and picks a file from their Drive. The picked file's id
+is set into the same `drive_file_id` field the manual input used — no change
+elsewhere in the live path. See `checklist.md` for the exact Console steps used
+to create these credentials and what to update before deploying past
+`localhost:3000`.
+
 ## How the live path works
 
 | Concern | Implementation |

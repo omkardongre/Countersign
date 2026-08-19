@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { classifySeverity } from "@/lib/classify";
+import { openDrivePicker } from "@/lib/drive-picker";
 import type { CaseIntake, DocType, ProductQualityImpact } from "@/lib/types";
 
 const DOCS: { value: DocType; label: string }[] = [
@@ -19,6 +20,25 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
   const [pending, setPending] = useState(false);
   const [useLive, setUseLive] = useState(liveEngine);
   const [driveFileId, setDriveFileId] = useState("");
+  const [driveFileName, setDriveFileName] = useState("");
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [pickerBusy, setPickerBusy] = useState(false);
+
+  async function onPickDriveFile() {
+    setPickerError(null);
+    setPickerBusy(true);
+    try {
+      const picked = await openDrivePicker();
+      if (picked) {
+        setDriveFileId(picked.id);
+        setDriveFileName(picked.name);
+      }
+    } catch (err) {
+      setPickerError(err instanceof Error ? err.message : "Could not open Drive picker.");
+    } finally {
+      setPickerBusy(false);
+    }
+  }
   const [form, setForm] = useState({
     tenant_id: "aurex",
     batch_id: "",
@@ -98,20 +118,42 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
         </label>
         {useLive && (
           <div className="mt-3">
-            <label
-              htmlFor="drive_file_id"
-              className="block text-[12px] uppercase text-ink-muted"
-            >
-              Google Drive file id (scanned BMR page)
-            </label>
+            <span className="block text-[12px] uppercase text-ink-muted">
+              Google Drive file (scanned BMR page)
+            </span>
+            <div className="mt-1 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onPickDriveFile}
+                disabled={pickerBusy}
+                className="border border-line bg-paper px-3 py-2 text-sm disabled:opacity-50"
+              >
+                {pickerBusy
+                  ? "Opening picker…"
+                  : driveFileId
+                    ? "Choose a different file"
+                    : "Choose from Drive"}
+              </button>
+              {driveFileName && (
+                <span className="truncate text-sm text-ink-muted" title={driveFileName}>
+                  {driveFileName}
+                </span>
+              )}
+            </div>
+            {/* Hidden required field so native form validation still blocks
+                submit until a file is picked, without a visible text input. */}
             <input
               id="drive_file_id"
               required
               value={driveFileId}
-              onChange={(e) => setDriveFileId(e.target.value)}
-              className="mt-1 w-full border border-line bg-paper px-3 py-2 text-sm"
-              placeholder="e.g. 111o4PUsXxcID6iDxvrwyuMHkydfH5T9j"
+              onChange={() => {}}
+              className="sr-only"
+              tabIndex={-1}
+              aria-hidden="true"
             />
+            {pickerError && (
+              <p className="mt-1 text-[12px] text-critical">{pickerError}</p>
+            )}
             <p className="mt-1 text-[12px] text-ink-muted">
               Required. There is no placeholder evidence — the manufacturing
               branch pulls this exact file from Drive. The file must be

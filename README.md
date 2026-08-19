@@ -209,6 +209,23 @@ Proven live (2026-08-19), not a synthetic catalog row like the QC/supply connect
   shared read-only with the department MCP service account, was fetched by a real case run on
   the deployed Agent Runtime, and the extractor read its actual field values off it (batch
   number, product code, etc., all ≥0.99 confidence) before the case reached the sterility hold.
+- The Drive folder is organized as a QMS-style tree (`Countersign QMS/01 Batch Manufacturing
+  Records/`, `02 Standard Operating Procedures/`, `03 Deviation Reports/`, `04 Certificates of
+  Analysis (CoA)/`, `05 Environmental Monitoring Logs/`, `06 Sterility Assurance Records/`),
+  shared read-only at the top folder only — new files placed anywhere under it are covered
+  without re-sharing.
+- The manual "paste a Drive file id" input on `/open` was replaced with the real Google Drive
+  Picker (`web/src/lib/drive-picker.ts`): the operator clicks "Choose from Drive," signs in
+  with their own Google account (browser-side OAuth, `drive.readonly` scope), and picks a file
+  from a native Drive browser instead of copying an id. The picked file's id flows into the
+  same `drive_file_id` field the manual input used, so no change was needed downstream
+  (`live-store.ts`, `POST /api/cases`, `drive_fetch_evidence`). Requires
+  `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (OAuth 2.0 Web application client) and
+  `NEXT_PUBLIC_GOOGLE_API_KEY` (browser key restricted to the Drive API + Picker API) in
+  `web/.env.local`. Verified live: picked the same BMR page from the new folder structure
+  through the picker UI and reproduced the identical result (manufacturing `OK`, real Drive
+  `webViewLink` cited in compliance findings, case reached the sterility hold) — see
+  `web/test-data/2.case-aurex-drive-test-01.md`.
 
 ### Domain workflow — deterministic GMP compliance engine
 
