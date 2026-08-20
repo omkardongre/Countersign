@@ -23,6 +23,7 @@ from google.adk.runners import InMemoryRunner
 from google.adk.workflow import node
 from google.genai import types
 
+from app.domain import branches as branches_mod
 from app.domain import challenger as challenger_mod
 from app.domain import department_tools as department_tools_mod
 from app.domain import extraction
@@ -119,6 +120,35 @@ def _stub_challenger():
         return ChallengerReport(attacks=[], decision_authority="none")
 
     return stub_challenger
+
+
+@pytest.fixture
+def stub_department_agents(monkeypatch):
+    """Replaces the real Gemini calls in the QC/supply agents with a stub
+    that still calls the real tool closures, so real MCP/catalog data flows
+    through the same deterministic checks as production — only the LLM turn
+    itself is skipped, matching the existing extractor/investigation stubs.
+    """
+
+    def _stub_get_qc_agent(lims_tool, em_tool):
+        @node(name="stub_qc_agent")
+        async def stub_qc_agent(node_input):
+            await lims_tool()
+            await em_tool()
+            return branches_mod.QcAgentSummary(lims_reviewed=True, em_reviewed=True)
+
+        return stub_qc_agent
+
+    def _stub_get_supply_agent(coa_tool):
+        @node(name="stub_supply_agent")
+        async def stub_supply_agent(node_input):
+            await coa_tool()
+            return branches_mod.SupplyAgentSummary(coa_reviewed=True)
+
+        return stub_supply_agent
+
+    monkeypatch.setattr(branches_mod, "get_qc_agent", _stub_get_qc_agent)
+    monkeypatch.setattr(branches_mod, "get_supply_agent", _stub_get_supply_agent)
 
 
 @pytest.fixture
@@ -275,6 +305,7 @@ def test_platform_entrypoint_serves_the_case_workflow() -> None:
 async def test_classified_case_and_compliance_share_scope(
     stub_ground_truth,
     stub_investigation_agents,
+    stub_department_agents,
     sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())
@@ -330,6 +361,7 @@ async def test_intake_schema_failure_stops_before_extraction(
 async def test_disallowed_mime_type_fails_manufacturing_without_stalling_join(
     stub_ground_truth,
     stub_investigation_agents,
+    stub_department_agents,
     sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())
@@ -362,6 +394,7 @@ async def test_disallowed_mime_type_fails_manufacturing_without_stalling_join(
 async def test_qc_oos_still_runs_investigation(
     stub_ground_truth,
     stub_investigation_agents,
+    stub_department_agents,
     monkeypatch,
     sterility_released,
 ) -> None:
@@ -404,6 +437,7 @@ async def test_qc_oos_still_runs_investigation(
 async def test_qp_decline_resumes_and_records_confirmation(
     stub_ground_truth,
     stub_investigation_agents,
+    stub_department_agents,
     sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())
@@ -433,6 +467,7 @@ async def test_qp_decline_resumes_and_records_confirmation(
 async def test_qp_confirm_on_not_ready_is_rejected(
     stub_ground_truth,
     stub_investigation_agents,
+    stub_department_agents,
     sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())

@@ -30,6 +30,7 @@ from app.app_utils.reasoning_engine_adapter import (
     attach_reasoning_engine_routes,
 )
 from app.app_utils.typing import Feedback
+from app.scheduler.fleet_routes import attach_fleet_routes
 from app.scheduler.routes import attach_scheduler_routes
 
 load_dotenv()
@@ -93,6 +94,10 @@ attach_reasoning_engine_routes(app)
 # Cloud Scheduler wake-up for cases parked on the sterility hold. OIDC-guarded
 # in app/scheduler/auth.py; it can complete a GMP hold, so it is not open.
 attach_scheduler_routes(app)
+
+# Read-only fleet manifest: the real agents in the deviation-case graph.
+# No tenant/case data, so it is not OIDC-guarded the way the scheduler route is.
+attach_fleet_routes(app)
 
 
 @app.post("/feedback")
