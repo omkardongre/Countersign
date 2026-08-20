@@ -32,6 +32,7 @@ from app.domain.evidence_models import EvidenceIngestRequest
 class Department(StrEnum):
     MANUFACTURING = "manufacturing"
     QC = "qc"
+    ENVIRONMENTAL_MONITORING = "environmental_monitoring"
     SUPPLY = "supply"
 
 

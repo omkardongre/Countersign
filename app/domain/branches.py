@@ -81,6 +81,8 @@ MANUFACTURING_AGENT_NAME = "manufacturing_evidence_agent"
 MANUFACTURING_MODEL = "gemini-3.6-flash"
 QC_AGENT_NAME = "qc_lab_agent"
 QC_MODEL = "gemini-3.6-flash"
+EM_AGENT_NAME = "environmental_monitoring_agent"
+EM_MODEL = "gemini-3.6-flash"
 SUPPLY_AGENT_NAME = "supply_assurance_agent"
 SUPPLY_MODEL = "gemini-3.6-flash"
 
@@ -97,12 +99,22 @@ confirm that the fetch happened.
 _QC_INSTRUCTION = """\
 You are the QC lab department agent for one GMP deviation case.
 
-Call `query_lims_results` and `query_environmental_monitoring`, in either
-order, exactly once each. You have no other tools and no other data source.
-Do not guess, estimate, or state a result value yourself — the tools return
-the only real data. After both calls, summarize which systems you reviewed.
-You do not decide whether a result is out of specification; that is a
-downstream deterministic check.
+Call `query_lims_results` exactly once. You have no other tool and no other
+data source. Do not guess, estimate, or state a result value yourself — the
+tool returns the only real data. After the call, summarize what you
+reviewed. You do not decide whether a result is out of specification; that
+is a downstream deterministic check.
+"""
+
+_EM_INSTRUCTION = """\
+You are the environmental-monitoring department agent for one GMP deviation
+case, a separate department from QC lab with its own data system.
+
+Call `query_environmental_monitoring` exactly once. You have no other tool
+and no other data source. Do not guess, estimate, or state a reading
+yourself — the tool returns the only real data. After the call, summarize
+what you reviewed. You do not decide whether a reading is at or above an
+action limit; that is a downstream deterministic check.
 """
 
 _SUPPLY_INSTRUCTION = """\
@@ -131,6 +143,12 @@ class QcAgentSummary(BaseModel):
     """The QC agent's own account of what it reviewed. Not used for findings."""
 
     lims_reviewed: bool = False
+    notes: str = Field(default="")
+
+
+class EmAgentSummary(BaseModel):
+    """The EM agent's own account of what it reviewed. Not used for findings."""
+
     em_reviewed: bool = False
     notes: str = Field(default="")
 
@@ -183,12 +201,10 @@ def get_manufacturing_agent(drive_tool: Any) -> Agent:
     )
 
 
-def _make_qc_tools(
-    bundle: CaseEvidenceBundle, captured: dict[str, Any]
-) -> tuple[Any, Any]:
-    """Builds tenant/batch-locked closures. The model supplies no arguments,
-    so it cannot query a different tenant or batch than this case's own —
-    the same scope discipline the deterministic collectors already had.
+def _make_qc_tool(bundle: CaseEvidenceBundle, captured: dict[str, Any]) -> Any:
+    """Tenant/batch-locked closure. The model supplies no arguments, so it
+    cannot query a different tenant or batch than this case's own — the
+    same scope discipline the deterministic collectors already had.
     """
 
     async def query_lims_results() -> dict[str, Any]:
@@ -205,6 +221,17 @@ def _make_qc_tools(
         captured["lims"] = snapshot
         return {"source_uri": snapshot.source_uri, "row_count": len(snapshot.rows)}
 
+    return query_lims_results
+
+
+def _make_em_tool(bundle: CaseEvidenceBundle, captured: dict[str, Any]) -> Any:
+    """Tenant/batch-locked closure, same discipline as ``_make_qc_tool``.
+    Separate from QC's closure because environmental monitoring is its own
+    department with its own data system (BigQuery, not the LIMS Cloud SQL
+    connector), per the target architecture in
+    ``final_reseach/10_gap_analysis_and_win_plan.md`` section 4.1.
+    """
+
     async def query_environmental_monitoring() -> dict[str, Any]:
         """Retrieve environmental-monitoring readings for this batch's window."""
         snapshot = EmSnapshot.model_validate(
@@ -219,7 +246,7 @@ def _make_qc_tools(
         captured["em"] = snapshot
         return {"source_uri": snapshot.source_uri, "row_count": len(snapshot.rows)}
 
-    return query_lims_results, query_environmental_monitoring
+    return query_environmental_monitoring
 
 
 def _make_supply_tool(bundle: CaseEvidenceBundle, captured: dict[str, Any]) -> Any:
@@ -246,8 +273,8 @@ def _make_supply_tool(bundle: CaseEvidenceBundle, captured: dict[str, Any]) -> A
     return fetch_supplier_coa
 
 
-def get_qc_agent(lims_tool: Any, em_tool: Any) -> Agent:
-    """Built per call, per case: the tools are tenant/batch-locked closures."""
+def get_qc_agent(lims_tool: Any) -> Agent:
+    """Built per call, per case: the tool is a tenant/batch-locked closure."""
     return Agent(
         name=QC_AGENT_NAME,
         model=Gemini(
@@ -257,8 +284,24 @@ def get_qc_agent(lims_tool: Any, em_tool: Any) -> Agent:
         mode="single_turn",
         include_contents="none",
         instruction=_QC_INSTRUCTION,
-        tools=[FunctionTool(lims_tool), FunctionTool(em_tool)],
+        tools=[FunctionTool(lims_tool)],
         output_schema=QcAgentSummary,
+    )
+
+
+def get_em_agent(em_tool: Any) -> Agent:
+    """Built per call, per case: the tool is a tenant/batch-locked closure."""
+    return Agent(
+        name=EM_AGENT_NAME,
+        model=Gemini(
+            model=EM_MODEL,
+            retry_options=types.HttpRetryOptions(attempts=3),
+        ),
+        mode="single_turn",
+        include_contents="none",
+        instruction=_EM_INSTRUCTION,
+        tools=[FunctionTool(em_tool)],
+        output_schema=EmAgentSummary,
     )
 
 
@@ -378,44 +421,84 @@ async def collect_manufacturing(
 
 @node(name="collect_qc", rerun_on_resume=True)
 async def collect_qc(ctx: Context, node_input: CaseEvidenceBundle) -> Event:
-    """QC lab agent decides to call its two tools; checks run on the tools'
-    captured snapshots, never on the agent's own text.
+    """QC lab agent decides to call its LIMS tool; the check runs on the
+    tool's captured snapshot, never on the agent's own text.
     """
     try:
         bundle = _bundle(node_input)
         captured: dict[str, Any] = {}
-        lims_tool, em_tool = _make_qc_tools(bundle, captured)
+        lims_tool = _make_qc_tool(bundle, captured)
         content = types.Content(
             role="user",
             parts=[
                 types.Part(
                     text=(
                         f"Review batch {bundle.batch_id} for tenant "
-                        f"{bundle.tenant_id}. Call both tools."
+                        f"{bundle.tenant_id}. Call your tool."
                     )
                 )
             ],
         )
-        await ctx.run_node(get_qc_agent(lims_tool, em_tool), node_input=content)
-        if "lims" not in captured or "em" not in captured:
+        await ctx.run_node(get_qc_agent(lims_tool), node_input=content)
+        if "lims" not in captured:
             return _failed(
-                Department.QC,
-                "QC agent did not call every required tool "
-                f"(lims={'lims' in captured}, em={'em' in captured}).",
+                Department.QC, "QC agent did not call its required tool."
             )
         lims = captured["lims"]
-        em = captured["em"]
-        findings = check_lims(lims) + check_em(em)
+        findings = check_lims(lims)
         return Event(
             output=BranchOutcome(
                 department=Department.QC,
                 status=BranchStatus.OK,
-                source_uris=[lims.source_uri, em.source_uri],
+                source_uris=[lims.source_uri],
                 findings=findings,
             ).model_dump(mode="json")
         )
     except Exception as exc:
         return _failed(Department.QC, _exc_message(exc))
+
+
+@node(name="collect_environmental_monitoring", rerun_on_resume=True)
+async def collect_environmental_monitoring(
+    ctx: Context, node_input: CaseEvidenceBundle
+) -> Event:
+    """EM agent decides to call its own tool; the check runs on the tool's
+    captured snapshot, never on the agent's own text. Separate department
+    from QC lab, per the target architecture.
+    """
+    try:
+        bundle = _bundle(node_input)
+        captured: dict[str, Any] = {}
+        em_tool = _make_em_tool(bundle, captured)
+        content = types.Content(
+            role="user",
+            parts=[
+                types.Part(
+                    text=(
+                        f"Review batch {bundle.batch_id} for tenant "
+                        f"{bundle.tenant_id}. Call your tool."
+                    )
+                )
+            ],
+        )
+        await ctx.run_node(get_em_agent(em_tool), node_input=content)
+        if "em" not in captured:
+            return _failed(
+                Department.ENVIRONMENTAL_MONITORING,
+                "Environmental monitoring agent did not call its required tool.",
+            )
+        em = captured["em"]
+        findings = check_em(em)
+        return Event(
+            output=BranchOutcome(
+                department=Department.ENVIRONMENTAL_MONITORING,
+                status=BranchStatus.OK,
+                source_uris=[em.source_uri],
+                findings=findings,
+            ).model_dump(mode="json")
+        )
+    except Exception as exc:
+        return _failed(Department.ENVIRONMENTAL_MONITORING, _exc_message(exc))
 
 
 @node(name="collect_supply", rerun_on_resume=True)

@@ -14,13 +14,14 @@
 
 """Deviation case graph: intake → departments → investigation → sterility hold → Annex 16 → QP.
 
-ADK fan-out/fan-in (``workflows/fan_out_fan_in``): after classify, three
+ADK fan-out/fan-in (``workflows/fan_out_fan_in``): after classify, four
 department collectors run in parallel and a ``JoinNode`` waits for all of
 them. Each collector always emits ``Event.output`` so a failed branch cannot
 stall the join (ADK JoinNode caution).
 
     START -> intake_and_bind_evidence
-          -> (collect_manufacturing, collect_qc, collect_supply)
+          -> (collect_manufacturing, collect_qc,
+              collect_environmental_monitoring, collect_supply)
           -> join_departments
           -> reconcile_departments
           -> retrieve_prior_art
@@ -32,10 +33,16 @@ stall the join (ADK JoinNode caution).
           -> confirm_qp
           -> record_case_memory
 
-Manufacturing still runs the BMR transcriber. QC and supply are deterministic
-lookups over connector-shaped LIMS / EM / CoA records. Investigation and
-challenger are single-turn LLMs with no tools; citation and Annex 16 gates
-are code. Sterility incubation is external store state plus a
+Manufacturing, QC lab, environmental monitoring, and supply are each a real
+single-turn ``Agent`` bound to its own MCP-backed tool(s)
+(``app/domain/branches.py``), per the target architecture in
+``final_reseach/10_gap_analysis_and_win_plan.md`` section 4.1. Each agent
+decides to call its own tool; deterministic checks
+(``resolve_compliance_result``/``check_lims``/``check_em``/``check_coa``) run
+only on the tool's captured typed snapshot, never on the agent's own text.
+Investigation is a single-turn LLM with a real prior-art tool; challenger is
+single-turn with no tools by design (clean context). Citation and Annex 16
+gates are code. Sterility incubation is external store state plus a
 ``RequestInput`` checkpoint (``rerun_on_resume=True``); a scheduler tick
 marks the store complete and ADK resume continues. QP sign-off is a
 ``RequestInput`` pause on ``confirm_qp`` (``rerun_on_resume=True``).
@@ -50,6 +57,7 @@ from google.adk.events.event import Event
 from google.adk.workflow import START, JoinNode, Workflow, node
 
 from app.domain.branches import (
+    collect_environmental_monitoring,
     collect_manufacturing,
     collect_qc,
     collect_supply,
@@ -85,6 +93,7 @@ CLASSIFIED_CASE_STATE_KEY = "classified_case"
 _BRANCH_KEYS = (
     "collect_manufacturing",
     "collect_qc",
+    "collect_environmental_monitoring",
     "collect_supply",
 )
 
@@ -125,6 +134,7 @@ def _parse_branch(key: str, raw: Any) -> BranchOutcome:
         department = {
             "collect_manufacturing": Department.MANUFACTURING,
             "collect_qc": Department.QC,
+            "collect_environmental_monitoring": Department.ENVIRONMENTAL_MONITORING,
             "collect_supply": Department.SUPPLY,
         }[key]
         return BranchOutcome(
@@ -196,7 +206,12 @@ def build_deviation_case_workflow() -> Workflow:
             (START, intake_and_bind_evidence),
             (
                 intake_and_bind_evidence,
-                (collect_manufacturing, collect_qc, collect_supply),
+                (
+                    collect_manufacturing,
+                    collect_qc,
+                    collect_environmental_monitoring,
+                    collect_supply,
+                ),
                 join_departments,
                 reconcile_departments,
                 retrieve_prior_art,

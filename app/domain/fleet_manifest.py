@@ -38,6 +38,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from app.domain.branches import (
+    EM_AGENT_NAME,
     MANUFACTURING_AGENT_NAME,
     QC_AGENT_NAME,
     SUPPLY_AGENT_NAME,
@@ -117,13 +118,28 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             kind=AgentKind.LLM_AGENT_SINGLE_TURN,
             department="qc",
             model="gemini-3.6-flash",
-            allowed_tools=["lims_query", "em_query"],
+            allowed_tools=["lims_query"],
             reasoning_authority=False,
             description=(
-                "Real single-turn Agent bound to its own two tools. "
-                "Decides to call both; deterministic checks "
-                "(check_lims/check_em) run only on the tools' captured "
-                "typed snapshots, never on the agent's own text."
+                "Real single-turn Agent bound to its own LIMS tool. "
+                "Decides to call it; the deterministic check_lims runs "
+                "only on the tool's captured typed snapshot, never on the "
+                "agent's own text."
+            ),
+        ),
+        FleetAgentEntry(
+            name=EM_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
+            department="environmental_monitoring",
+            model="gemini-3.6-flash",
+            allowed_tools=["em_query"],
+            reasoning_authority=False,
+            description=(
+                "Real single-turn Agent bound to its own environmental-"
+                "monitoring tool, a separate department and data system "
+                "(BigQuery) from QC lab. Decides to call it; the "
+                "deterministic check_em runs only on the tool's captured "
+                "typed snapshot, never on the agent's own text."
             ),
         ),
         FleetAgentEntry(
