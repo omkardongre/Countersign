@@ -38,6 +38,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from app.domain.branches import (
+    MANUFACTURING_AGENT_NAME,
     QC_AGENT_NAME,
     SUPPLY_AGENT_NAME,
 )
@@ -95,18 +96,20 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             ),
         ),
         FleetAgentEntry(
-            name="manufacturing_evidence_collector",
-            kind=AgentKind.DETERMINISTIC_NODE,
+            name=MANUFACTURING_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
             department="manufacturing",
             model="gemini-3.6-flash",
             allowed_tools=["drive_fetch_evidence"],
             reasoning_authority=False,
             description=(
-                "Deterministic Drive fetch and verification ahead of the "
-                "single-turn BMR page extractor. Kept deterministic rather "
-                "than tool-bound because the extractor must see the "
-                "document bytes attached directly, not returned by a tool "
-                "call inside its own turn."
+                "Real single-turn Agent bound to its own Drive fetch tool. "
+                "Decides to call it; the fetched bytes are captured from "
+                "the real tool call and handed unchanged to the "
+                "deterministic ingest -> extract -> validate -> compliance "
+                "chain. The agent does not read or judge the fetched page "
+                "itself, that is the separate document-vision extractor "
+                "downstream."
             ),
         ),
         FleetAgentEntry(

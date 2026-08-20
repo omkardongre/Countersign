@@ -24,11 +24,15 @@ snapshot object, never on the agent's own text — an agent output is never
 treated as a finding. If the agent does not call every required tool, the
 branch fails closed rather than trusting a summary that skipped evidence.
 
-Manufacturing keeps a deterministic Drive fetch ahead of its own agent (the
-existing single-turn extractor in ``extraction.py``): fetching a file by id
-is an I/O call with no judgment in it, and the extractor already needs the
-document bytes attached directly to see them — handing it a fetch tool
-instead would not let it inspect a tool-returned image in the same turn.
+Manufacturing is a real agent too (``manufacturing_evidence_agent``): a
+single-turn ``Agent`` bound to the ``drive_fetch_evidence`` tool decides to
+fetch the batch's Drive file. Its output is never trusted as evidence —
+the fetched bytes are captured from the real tool call, then handed
+unchanged to the existing deterministic ingest → extract → validate →
+compliance chain. The document-vision extractor in ``extraction.py`` stays
+a separate, later single-turn agent: it needs the document bytes attached
+directly in its own turn to see them, which a fetch tool call in a *prior*
+agent's turn cannot provide.
 """
 
 from __future__ import annotations
@@ -73,10 +77,22 @@ from app.domain.extraction import extract_page_evidence
 from app.domain.ingest import decode_and_verify_payload, ingest_evidence_artifact
 from app.mcp.client import call_department_tool, call_drive_tool
 
+MANUFACTURING_AGENT_NAME = "manufacturing_evidence_agent"
+MANUFACTURING_MODEL = "gemini-3.6-flash"
 QC_AGENT_NAME = "qc_lab_agent"
 QC_MODEL = "gemini-3.6-flash"
 SUPPLY_AGENT_NAME = "supply_assurance_agent"
 SUPPLY_MODEL = "gemini-3.6-flash"
+
+_MANUFACTURING_INSTRUCTION = """\
+You are the manufacturing-evidence department agent for one GMP deviation
+case.
+
+Call `fetch_manufacturing_evidence` exactly once. You have no other tool.
+You do not read, summarize, or judge the fetched page's content — a
+separate downstream process transcribes and validates it. After the call,
+confirm that the fetch happened.
+"""
 
 _QC_INSTRUCTION = """\
 You are the QC lab department agent for one GMP deviation case.
@@ -102,6 +118,15 @@ deterministic check.
 """
 
 
+class ManufacturingAgentSummary(BaseModel):
+    """The manufacturing agent's own account of what it fetched. Not used
+    as evidence — the captured DriveEvidencePayload is.
+    """
+
+    evidence_fetched: bool = False
+    notes: str = Field(default="")
+
+
 class QcAgentSummary(BaseModel):
     """The QC agent's own account of what it reviewed. Not used for findings."""
 
@@ -115,6 +140,47 @@ class SupplyAgentSummary(BaseModel):
 
     coa_reviewed: bool = False
     notes: str = Field(default="")
+
+
+def _make_manufacturing_tool(
+    bundle: CaseEvidenceBundle, captured: dict[str, Any]
+) -> Any:
+    """Tenant/file-locked closure: the model supplies no arguments, so it
+    cannot fetch a different tenant or file than this case's own bound
+    ``drive_file_id``.
+    """
+
+    async def fetch_manufacturing_evidence() -> dict[str, Any]:
+        """Retrieve the scanned batch-manufacturing-record page for this case."""
+        payload = DriveEvidencePayload.model_validate(
+            await call_drive_tool(
+                DRIVE_FETCH_EVIDENCE,
+                {"tenant_id": bundle.tenant_id, "file_id": bundle.drive_file_id},
+            )
+        )
+        captured["drive_payload"] = payload
+        # Never the document bytes back to the model — only that the fetch
+        # happened. The bytes flow to the deterministic ingest chain, not
+        # through this agent's own context.
+        return {"source_uri": payload.source_uri, "mime_type": payload.mime_type}
+
+    return fetch_manufacturing_evidence
+
+
+def get_manufacturing_agent(drive_tool: Any) -> Agent:
+    """Built per call, per case: the tool is a tenant/file-locked closure."""
+    return Agent(
+        name=MANUFACTURING_AGENT_NAME,
+        model=Gemini(
+            model=MANUFACTURING_MODEL,
+            retry_options=types.HttpRetryOptions(attempts=3),
+        ),
+        mode="single_turn",
+        include_contents="none",
+        instruction=_MANUFACTURING_INSTRUCTION,
+        tools=[FunctionTool(drive_tool)],
+        output_schema=ManufacturingAgentSummary,
+    )
 
 
 def _make_qc_tools(
@@ -248,16 +314,32 @@ async def collect_manufacturing(
         bundle = _bundle(node_input)
         bmr = bundle.bmr
         if bundle.drive_file_id:
-            # Pull the real page from Drive instead of trusting whatever
-            # placeholder is in bundle.bmr — same pull pattern as
-            # collect_qc/collect_supply, for the same reason: the Drive
-            # credential lives in the MCP process, not the Agent Identity.
-            drive_payload = DriveEvidencePayload.model_validate(
-                await call_drive_tool(
-                    DRIVE_FETCH_EVIDENCE,
-                    {"tenant_id": bundle.tenant_id, "file_id": bundle.drive_file_id},
-                )
+            # Real agent decides to fetch; the fetched bytes are captured
+            # from the actual tool call, never trusted from the agent's own
+            # text, then handed unchanged to the deterministic ingest chain
+            # below — same discipline as collect_qc/collect_supply.
+            captured: dict[str, Any] = {}
+            drive_tool = _make_manufacturing_tool(bundle, captured)
+            content = types.Content(
+                role="user",
+                parts=[
+                    types.Part(
+                        text=(
+                            f"Fetch the manufacturing evidence for batch "
+                            f"{bundle.batch_id}, tenant {bundle.tenant_id}."
+                        )
+                    )
+                ],
             )
+            await ctx.run_node(
+                get_manufacturing_agent(drive_tool), node_input=content
+            )
+            if "drive_payload" not in captured:
+                return _failed(
+                    Department.MANUFACTURING,
+                    "Manufacturing agent did not call its required tool.",
+                )
+            drive_payload: DriveEvidencePayload = captured["drive_payload"]
             bmr = EvidenceIngestRequest(
                 tenant_id=bundle.tenant_id,
                 case_id=bundle.case_id,
