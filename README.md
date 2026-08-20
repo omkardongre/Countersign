@@ -8,9 +8,15 @@ disposition.
 Google's Agent Gateway answers *who* and *what*. Countersign answers *whether the Quality
 Agreement permits this party to assess this thing, at this lifecycle stage, for this sponsor*.
 
-> **Status: control plane proven, domain fleet in progress.** See
+> **Status: control plane proven, real agent fleet in progress.** See
 > [Build status](#build-status). Nothing in this README describes behaviour that is not
 > currently running — where something is unbuilt it is marked as such.
+>
+> **2026-08-20 — fleet conversion (P-A).** The five department/reasoning nodes that used to be
+> plain Python functions and no-tool LLM calls are now real `google.adk.agents.Agent(mode=
+> "single_turn")` nodes, each bound to its own MCP-backed tool(s), placed directly in the
+> `Workflow` graph. Deterministic checks still run only on each tool's captured typed
+> snapshot, never on an agent's own text. See [Real agent fleet](#real-agent-fleet).
 
 ---
 
@@ -48,9 +54,10 @@ So Countersign is built on one non-negotiable rule:
                                         │
                      ┌──────────────────▼──────────────────────────┐
                      │  Agent Runtime — ADK Workflow graph          │
-                     │  intake → evidence extraction → compliance   │
-                     │  engine → investigation → challenger →       │
-                     │  release gate → RequestInput (QP)            │
+                     │  intake → 4 parallel dept. agents (real,     │
+                     │  tool-bound) → compliance engine →           │
+                     │  investigation agent → challenger agent →    │
+                     │  release gate → RequestInput (QP)             │
                      └──────────────────┬──────────────────────────┘
                                         │  every egress, Agent Identity (SPIFFE)
                      ┌──────────────────▼──────────────────────────┐
@@ -104,6 +111,40 @@ So Countersign is built on one non-negotiable rule:
 | Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; indexes `READY`; MCP Cloud Run `countersign-department-mcp` serves `prior_art_*` (`verify_mcp_case_memory.py`, embedded KNN). Runtime prior-art on a live case and Gateway 403 are not claimed |
 | UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; architecture diagram and demo film not started |
 | Manufacturing evidence over Drive | Done live (2026-08-19) — `drive_fetch_evidence` MCP tool reads a real scanned BMR page from Google Drive; `collect_manufacturing` pulls it by file id instead of trusting pushed bytes. No placeholder evidence remains on the live path |
+| **P-L: real multi-day sterility hold (uncompressed)** | **Done live (2026-08-20)** — a disposable case (`aurex`/`LONGHOLD-PL-01`) opened on the deployed Runtime with no `COUNTERSIGN_STERILITY_HOLD_SECONDS` set. Confirmed from the live session event: `compressed_for_demo: false`, `hold_seconds: 1209600` (14 days exactly), `started_at: 2026-08-20T17:58:11Z`, `due_at: 2026-09-03T17:58:11Z`. Not to be ticked/resumed before `due_at` — it is the real wall-clock resume proof for the demo film. Details in `checklist.md` |
+| **P-A: real agent fleet conversion** | **In progress (2026-08-20)** — see [Real agent fleet](#real-agent-fleet). Manufacturing, QC lab, environmental monitoring, supply, and investigation are now real `Agent(mode="single_turn")` nodes with their own bound tools; deterministic checks run only on each tool's captured snapshot. Challenger stays tool-less by design. Fleet manifest live at `GET /fleet/manifest`. Sponsor A2A peer (agent 8 of 8) not started |
+
+### Real agent fleet
+
+Per `final_reseach/10_gap_analysis_and_win_plan.md` §4.1 ("the fleet must be real agents"),
+verified against ADK 2.6.3 and the official
+[graph-based workflow docs](https://google.github.io/adk-docs/graphs/): an ADK `Agent` is a
+`BaseNode`, so a real, tool-bound `Agent(mode="single_turn")` can sit directly inside the
+`Workflow` graph alongside deterministic function nodes — no rewrite, no lost durability.
+
+`GET /fleet/manifest` (`app/domain/fleet_manifest.py`) reports every real agent node live:
+
+| Agent | Tools | What decides the outcome |
+|---|---|---|
+| `manufacturing_evidence_agent` | `drive_fetch_evidence` | Agent decides to fetch; fetched bytes are captured from the real tool call and handed to the deterministic ingest → extract → validate → compliance chain unchanged |
+| `qc_lab_agent` | `lims_query` | Agent decides to call it; `check_lims` runs on the tool's captured `LimsSnapshot`, never on the agent's text |
+| `environmental_monitoring_agent` | `em_query` | Agent decides to call it; `check_em` runs on the tool's captured `EmSnapshot`. Split from `qc_lab_agent` into its own agent/department — separate data system (BigQuery vs LIMS Cloud SQL) |
+| `supply_assurance_agent` | `coa_fetch` (untrusted channel) | Agent decides to call it; only certificate metadata (never certificate text) reaches the model as tool output; `check_coa` runs on the captured `CoaSnapshot` |
+| `deviation_investigator` | `prior_art_query` | May re-query prior deviations at most once; any fact it surfaces becomes citeable only because it was captured from the real tool call, never by the agent's assertion. Citations are checked afterwards by the deterministic `investigation_gate` |
+| `investigation_challenger` | none, by design | Runs with a clean context (no shared history with the investigator) so it cannot rubber-stamp its own prior wording. Attacks are recorded for the QP; they do not themselves fail the gate |
+
+Every agent's tool calls run against tenant/batch-locked closures — the model supplies no
+scope arguments, so it cannot query another tenant's or batch's data. A branch fails closed if
+its agent skips a required tool call, so a `JoinNode` waiting on all four department branches
+can never stall on a silently-incomplete agent turn.
+
+Not yet built: the sponsor-liaison agent (an A2A peer on its own service, not a graph node —
+`RemoteA2aAgent` does not exist in ADK 2.6.3, so this will use `A2aRemoteAgentConfig` or the
+raw `a2a-sdk` pattern) and the QMS write-back agent (`final_reseach/12_integration_expansion_plan.md`
+T1-1). The investigation↔challenger revision loop (a back-edge, per the official
+[graph routes doc](https://google.github.io/adk-docs/graphs/routes/)) is a deliberate open
+decision, not an oversight — it would change the current, documented rule that challenger
+attacks are recorded but never auto-fail the gate.
 
 ### Domain workflow — deterministic intake and classification
 
