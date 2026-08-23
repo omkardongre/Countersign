@@ -963,3 +963,38 @@ The existing endpoint-only `countersign-department-mcp` Registry service was pre
 Registry does not permit changing a service's spec oneof. The graph agents are not claimed as
 eight separately deployed Registry resources: they run inside the one case Runtime and are
 represented by the live fleet manifest; the sponsor liaison is the separately deployed A2A peer.
+
+## P4 — Agent Observability on a live case (2026-08-23)
+
+`infra/geap/verify_observability.py` proves Agent Observability tracing on the deployed case
+Runtime, not just its configuration:
+
+```bash
+uv run python infra/geap/verify_observability.py
+```
+
+It sends one bounded canary through `:streamQuery`, captures only the returned invocation id
+and timestamps, then queries Cloud Trace for exactly one matching `invoke_workflow` span for
+that exact Runtime resource inside a narrow time window, failing closed on zero or ambiguous
+matches. While building it, Cloud Trace v1's `traces.list` pagination was found to return a
+near-empty first page even when the canary's own trace exists later in the result set; the
+verifier now follows pagination fully rather than reading page one.
+
+**Stated honestly:** the exported span for `invoke_workflow deviation_case` carries Runtime,
+workflow, and service metadata but no `invocation_id` attribute, so correlation is by exact
+Runtime resource plus a bounded time window, not by invocation id. The verifier's own output
+says this rather than claiming a correlation the platform does not currently expose.
+
+A real live case (`aurex`/`P4-OBS-01`, reusing the same real Google Drive BMR page already
+proven live for P1) was run end to end on the deployed Runtime and reached the sterility hold.
+Its Cloud Trace export (saved at `infra/geap/evidence/p4_live_case_trace.json`) contains 67
+spans: one `invoke_node` span per graph node that actually ran — intake, all department
+collectors, the join, reconcile, prior-art retrieval, investigation draft, challenger, citation
+gate, and the sterility-hold checkpoint — plus 26 MCP tool-call spans and Model Armor
+`apply_guardrail` spans on the same request. This is the real fleet topology as Agent
+Observability recorded it for one live invocation.
+
+**Stated honestly:** that trace has no `collect_environmental_monitoring` span. The currently
+deployed case Runtime predates the environmental-monitoring agent split (`ba21dc0`) in its
+deployed image; it has not been redeployed since. A redeploy is separate infra work and is not
+performed or claimed here.
