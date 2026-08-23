@@ -8,9 +8,10 @@ disposition.
 Google's Agent Gateway answers *who* and *what*. Countersign answers *whether the Quality
 Agreement permits this party to assess this thing, at this lifecycle stage, for this sponsor*.
 
-> **Status: control plane proven, agent fleet real (7 of 8), real systems wired but not yet
-> switched on live.** See [Build status](#build-status). Nothing in this README describes
-> behaviour that is not currently running — where something is unbuilt it is marked as such.
+> **Status: control plane proven, agent fleet real (8 of 8), real systems wired but not yet
+> switched on live or deployed.** See [Build status](#build-status). Nothing in this README
+> describes behaviour that is not currently running — where something is unbuilt it is marked
+> as such.
 >
 > **2026-08-20 — fleet conversion (P-A).** The five department/reasoning nodes that used to be
 > plain Python functions and no-tool LLM calls are now real `google.adk.agents.Agent(mode=
@@ -114,6 +115,7 @@ So Countersign is built on one non-negotiable rule:
 | **P-L: real multi-day sterility hold (uncompressed)** | **Done live (2026-08-20)** — a disposable case (`aurex`/`LONGHOLD-PL-01`) opened on the deployed Runtime with no `COUNTERSIGN_STERILITY_HOLD_SECONDS` set. Confirmed from the live session event: `compressed_for_demo: false`, `hold_seconds: 1209600` (14 days exactly), `started_at: 2026-08-20T17:58:11Z`, `due_at: 2026-09-03T17:58:11Z`. Not to be ticked/resumed before `due_at` — it is the real wall-clock resume proof for the demo film. Details in `checklist.md` |
 | **P-A: real agent fleet conversion** | **Done except sponsor peer (2026-08-20)** — see [Real agent fleet](#real-agent-fleet). Manufacturing, QC lab, environmental monitoring, supply, and investigation are now real `Agent(mode="single_turn")` nodes with their own bound tools; deterministic checks run only on each tool's captured snapshot. Challenger stays tool-less by design. Fleet manifest live at `GET /fleet/manifest`. Sponsor A2A peer (agent 8 of 8) not started |
 | **P1: real Cloud SQL LIMS / BigQuery EM** | **Code done, not yet deployed (2026-08-21)** — `app/domain/department_source.py` lets `qc_lab_agent`/`environmental_monitoring_agent` read a real Cloud SQL table / BigQuery table instead of the synthetic catalog, behind the same `lims_query`/`em_query` tool contract. Opt-in per department (`COUNTERSIGN_LIMS_BACKEND=cloud_sql`, `COUNTERSIGN_EM_BACKEND=bigquery`); unset keeps the catalog. Read-only grants only. Provisioning scripts written (`infra/geap/provision_department_systems.sh`); not yet run against the live project, so both departments are still reading the catalog in the deployed Runtime. Supplier CoA (untrusted channel) and QMS write-back are not started |
+| **P-A: sponsor liaison A2A peer (agent 8 of 8)** | **Code done, not yet deployed (2026-08-21)** — `app/sponsor_liaison/` is a real, separate service (not a graph node): a tool-bound `Agent` answering exactly one scoped batch-status question, authenticated by a per-sponsor API key, denied at the tool boundary for any tenant outside that sponsor's Quality Agreement. New Cloud SQL `case_status` table and `sponsor_batch_status`/`case_status_upsert` MCP tools with their own Gateway policy (`mcp-sponsor-liaison-status-only.yaml`). Verified in-process (agent-card serves, auth 401s, scope denies, real Gemini call reached); not yet deployed to Cloud Run |
 
 ### Real agent fleet
 
@@ -161,13 +163,46 @@ contract or the deterministic `check_lims`/`check_em` that runs on the result:
   is still reading the catalog for both departments. Supplier CoA (the untrusted channel) and
   QMS write-back are separate, unstarted P1 items.
 
-Not yet built: the sponsor-liaison agent (an A2A peer on its own service, not a graph node —
-`RemoteA2aAgent` does not exist in ADK 2.6.3, so this will use `A2aRemoteAgentConfig` or the
-raw `a2a-sdk` pattern) and the QMS write-back agent (`final_reseach/12_integration_expansion_plan.md`
-T1-1). The investigation↔challenger revision loop (a back-edge, per the official
+All 8 agents in the target table are now real. Not yet built: the QMS write-back agent
+(`final_reseach/12_integration_expansion_plan.md` T1-1), out of scope until P0–P6 land per that
+doc's own §0. The investigation↔challenger revision loop (a back-edge, per the official
 [graph routes doc](https://google.github.io/adk-docs/graphs/routes/)) is a deliberate open
 decision, not an oversight — it would change the current, documented rule that challenger
 attacks are recorded but never auto-fail the gate.
+
+### P3 — sponsor liaison A2A peer (agent 8 of 8)
+
+`app/sponsor_liaison/` — a real, separate FastAPI/A2A service, not a `Workflow` node, per doc
+10 §4.1's "A2A peer, separate service." Answers a sponsor's own QA agent one scoped question:
+the coarse status of one of their own batches.
+
+- Real agent with one tool (`get_batch_status`), bound as a closure locked to the
+  already-authenticated caller's `sponsor_id` — the model supplies only `batch_id`, never
+  `sponsor_id`, so a prompt-injected instruction can change which batch is asked about but
+  never which company is asking.
+- Authentication is a per-sponsor bearer API key
+  (`COUNTERSIGN_SPONSOR_API_KEYS=key:sponsor_id,...`), issued out of band at Quality Agreement
+  onboarding — sponsor identity mechanisms (Agent Identity SPIFFE, OIDC audience allow-lists)
+  assume the caller is provisioned inside this project's IAM, which a different company's
+  agent is not.
+- The scope check (`COUNTERSIGN_SPONSOR_TENANT_MAP=sponsor_id:tenant_id,...`) runs inside the
+  `sponsor_batch_status` MCP tool itself, before the store is touched, so a denied request and
+  a not-found batch are not distinguishable by response shape or latency. No default map —
+  unset means no sponsor is authorized for anything.
+- New Cloud SQL `case_status` table (same instance as sessions/sterility), written by
+  `sterility_wait.py`/`qp_confirmation.py` at the two points the case workflow already knows the
+  real lifecycle fact, read only by the sponsor liaison. `SponsorBatchLifecycleView` only has
+  values this slice can actually prove (`on_sterility_hold`, `qp_confirmed`, `qp_declined`,
+  `qp_could_not_confirm`, `not_found`) — no invented "under investigation" stage the store
+  cannot observe.
+- New Gateway policy (`infra/geap/mcp-sponsor-liaison-status-only.yaml`): the `sponsor_liaison`
+  identity may call `sponsor_batch_status` only, with explicit `forbidden_bindings` in both
+  directions against every other identity.
+- Verified in-process, not deployed: agent-card serves publicly, missing/wrong API key returns
+  401, a correct key routes through the executor to a real `Agent`/`Runner` that reaches the
+  real Gemini API (fails only on this shell's expired ADC — the same wall every live Gemini
+  call in this session has hit). `infra/geap/deploy_sponsor_liaison.sh` exists; not yet run
+  against `countersign-505107`.
 
 ### Domain workflow — deterministic intake and classification
 
