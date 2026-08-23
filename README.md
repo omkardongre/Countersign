@@ -8,9 +8,9 @@ disposition.
 Google's Agent Gateway answers *who* and *what*. Countersign answers *whether the Quality
 Agreement permits this party to assess this thing, at this lifecycle stage, for this sponsor*.
 
-> **Status: control plane proven, real agent fleet in progress.** See
-> [Build status](#build-status). Nothing in this README describes behaviour that is not
-> currently running — where something is unbuilt it is marked as such.
+> **Status: control plane proven, agent fleet real (7 of 8), real systems wired but not yet
+> switched on live.** See [Build status](#build-status). Nothing in this README describes
+> behaviour that is not currently running — where something is unbuilt it is marked as such.
 >
 > **2026-08-20 — fleet conversion (P-A).** The five department/reasoning nodes that used to be
 > plain Python functions and no-tool LLM calls are now real `google.adk.agents.Agent(mode=
@@ -112,7 +112,8 @@ So Countersign is built on one non-negotiable rule:
 | UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; architecture diagram and demo film not started |
 | Manufacturing evidence over Drive | Done live (2026-08-19) — `drive_fetch_evidence` MCP tool reads a real scanned BMR page from Google Drive; `collect_manufacturing` pulls it by file id instead of trusting pushed bytes. No placeholder evidence remains on the live path |
 | **P-L: real multi-day sterility hold (uncompressed)** | **Done live (2026-08-20)** — a disposable case (`aurex`/`LONGHOLD-PL-01`) opened on the deployed Runtime with no `COUNTERSIGN_STERILITY_HOLD_SECONDS` set. Confirmed from the live session event: `compressed_for_demo: false`, `hold_seconds: 1209600` (14 days exactly), `started_at: 2026-08-20T17:58:11Z`, `due_at: 2026-09-03T17:58:11Z`. Not to be ticked/resumed before `due_at` — it is the real wall-clock resume proof for the demo film. Details in `checklist.md` |
-| **P-A: real agent fleet conversion** | **In progress (2026-08-20)** — see [Real agent fleet](#real-agent-fleet). Manufacturing, QC lab, environmental monitoring, supply, and investigation are now real `Agent(mode="single_turn")` nodes with their own bound tools; deterministic checks run only on each tool's captured snapshot. Challenger stays tool-less by design. Fleet manifest live at `GET /fleet/manifest`. Sponsor A2A peer (agent 8 of 8) not started |
+| **P-A: real agent fleet conversion** | **Done except sponsor peer (2026-08-20)** — see [Real agent fleet](#real-agent-fleet). Manufacturing, QC lab, environmental monitoring, supply, and investigation are now real `Agent(mode="single_turn")` nodes with their own bound tools; deterministic checks run only on each tool's captured snapshot. Challenger stays tool-less by design. Fleet manifest live at `GET /fleet/manifest`. Sponsor A2A peer (agent 8 of 8) not started |
+| **P1: real Cloud SQL LIMS / BigQuery EM** | **Code done, not yet deployed (2026-08-21)** — `app/domain/department_source.py` lets `qc_lab_agent`/`environmental_monitoring_agent` read a real Cloud SQL table / BigQuery table instead of the synthetic catalog, behind the same `lims_query`/`em_query` tool contract. Opt-in per department (`COUNTERSIGN_LIMS_BACKEND=cloud_sql`, `COUNTERSIGN_EM_BACKEND=bigquery`); unset keeps the catalog. Read-only grants only. Provisioning scripts written (`infra/geap/provision_department_systems.sh`); not yet run against the live project, so both departments are still reading the catalog in the deployed Runtime. Supplier CoA (untrusted channel) and QMS write-back are not started |
 
 ### Real agent fleet
 
@@ -137,6 +138,28 @@ Every agent's tool calls run against tenant/batch-locked closures — the model 
 scope arguments, so it cannot query another tenant's or batch's data. A branch fails closed if
 its agent skips a required tool call, so a `JoinNode` waiting on all four department branches
 can never stall on a silently-incomplete agent turn.
+
+### P1 — real department systems (opt-in, code done)
+
+QC lab and environmental monitoring can each read from a real system instead of the pinned
+synthetic catalog, without changing `qc_lab_agent`/`environmental_monitoring_agent`'s tool
+contract or the deterministic `check_lims`/`check_em` that runs on the result:
+
+- `COUNTERSIGN_LIMS_BACKEND=cloud_sql` — QC lab reads a real Cloud SQL Postgres table
+  (`department_source_postgres.py`), `SELECT`-only, credential held by the department MCP
+  process, never by the agent or the Runtime.
+- `COUNTERSIGN_EM_BACKEND=bigquery` — environmental monitoring reads a real BigQuery table
+  (`department_source_bigquery.py`), `bigquery.dataViewer` only, same process boundary.
+- Either unset (default) keeps that department on the synthetic catalog. This is an explicit
+  opt-in, not credential-detection, so a half-provisioned deployment keeps working instead of
+  silently failing every QC or EM branch.
+- `GET /fleet/manifest`'s `backing_system` field is resolved live from this switch, not
+  hardcoded — a fix for a real prior overclaim (the manifest used to say "BigQuery" regardless
+  of whether the code was reading it).
+- **Not yet run against the live project.** `infra/geap/provision_department_systems.sh` and
+  `bootstrap_department_systems.py` exist but have not been executed, so the deployed Runtime
+  is still reading the catalog for both departments. Supplier CoA (the untrusted channel) and
+  QMS write-back are separate, unstarted P1 items.
 
 Not yet built: the sponsor-liaison agent (an A2A peer on its own service, not a graph node —
 `RemoteA2aAgent` does not exist in ADK 2.6.3, so this will use `A2aRemoteAgentConfig` or the
