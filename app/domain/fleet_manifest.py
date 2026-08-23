@@ -51,6 +51,7 @@ from app.domain.department_source import (
 )
 from app.domain.investigation import INVESTIGATION_AGENT_NAME
 from app.domain.workflow_meta import CASE_WORKFLOW_NAME
+from app.sponsor_liaison.agent import SPONSOR_LIAISON_AGENT_NAME, SPONSOR_LIAISON_MODEL
 
 
 class AgentKind(StrEnum):
@@ -60,6 +61,7 @@ class AgentKind(StrEnum):
 
     WORKFLOW = "workflow"
     LLM_AGENT_SINGLE_TURN = "llm_agent_single_turn"
+    LLM_AGENT_CHAT_A2A_PEER = "llm_agent_chat_a2a_peer"
     DETERMINISTIC_NODE = "deterministic_node"
 
 
@@ -189,6 +191,27 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
                 "investigation_gate, and any prior-art fact it surfaces "
                 "becomes citeable only by being captured from the real "
                 "tool call, never by the agent's own assertion."
+            ),
+        ),
+        FleetAgentEntry(
+            name=SPONSOR_LIAISON_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_CHAT_A2A_PEER,
+            department="sponsor_liaison",
+            model=SPONSOR_LIAISON_MODEL,
+            allowed_tools=["sponsor_batch_status"],
+            backing_system="cloud_sql_case_status",
+            reasoning_authority=False,
+            description=(
+                "Agent 8 of 8: a real A2A peer running as its own, separate "
+                "Cloud Run service (app/sponsor_liaison/), not a node in "
+                "this graph. Answers a sponsor company's own QA agent one "
+                "scoped question about one of their own batches, "
+                "authenticated by a per-sponsor API key issued at Quality "
+                "Agreement onboarding. Its one tool is locked to the "
+                "already-authenticated sponsor identity, never to a "
+                "model-supplied scope argument; every other tenant's data "
+                "is denied at that boundary, not merely hidden from the "
+                "prompt."
             ),
         ),
         FleetAgentEntry(
