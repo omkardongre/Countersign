@@ -998,3 +998,41 @@ Observability recorded it for one live invocation.
 deployed case Runtime predates the environmental-monitoring agent split (`ba21dc0`) in its
 deployed image; it has not been redeployed since. A redeploy is separate infra work and is not
 performed or claimed here.
+
+## P5 — Durability on the deployed engine (2026-08-23)
+
+`10_gap_analysis_and_win_plan.md`'s P5 wording ("delete the running revision; cold start;
+re-invoke the same invocation_id") assumes Cloud Run, which has a deletable revision resource.
+The case workflow is deployed on Vertex AI Agent Runtime, a managed `reasoningEngine` with no
+user-facing revision or restart API — that literal action does not exist for this compute type.
+
+`infra/geap/verify_kill_resume.py` proves the same underlying property the way this
+architecture actually allows:
+
+```bash
+uv run python infra/geap/verify_kill_resume.py
+```
+
+1. Opens a real case on the deployed Runtime; it runs the full graph and parks on the sterility
+   hold (durable Cloud SQL state, not a held connection).
+2. Independently confirms the persisted incubation row and its resume handle over a read-only
+   Cloud SQL connection this script owns — proof the record exists outside the process that
+   wrote it.
+3. Resumes the invocation through `POST /scheduler/sterility-tick` on the deployed tick Cloud
+   Run service — a separate process, machine, and memory space from both this script and the
+   original case Runtime request — using a real, short-lived OIDC token minted for the actual
+   Cloud Scheduler invoker identity (temporary `iam.serviceAccountTokenCreator` grant, revoked
+   immediately after this proof ran).
+4. Confirms the same `invocation_id` the case parked on resumed, and that the sterility-hold
+   node in the session's own event history shows completed, not still interrupted.
+
+Live run confirmed all of this, with one real finding along the way: the verifier's own tick
+call and the live Cloud Scheduler job (`*/15 * * * *`) can race once the hold's `due_at` passes
+— production infrastructure resuming the case before the script's explicit call does. This is
+correct scheduler behavior, not a bug, so the verifier accepts either outcome and always
+independently confirms the persisted row's `invocation_id` afterward rather than only trusting
+whichever call happened to win.
+
+A temporary `COUNTERSIGN_STERILITY_HOLD_SECONDS=20` was set on `countersign-department-mcp` for
+this run only (same reversible pattern as the 2026-08-18 kill/resume proof) and removed
+immediately after; the deployed service is back to the uncompressed default.
