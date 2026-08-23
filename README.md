@@ -936,3 +936,30 @@ SSE stream. Live Agent Runtime `streamQuery` is not proxied yet (`501` if
 - [Authenticate using an agent's own authority](https://docs.cloud.google.com/iam/docs/auth-agent-own-identity)
 - [EU GMP Annex 22 draft (EC consultation)](https://health.ec.europa.eu/document/download/5f38a92d-bb8e-4264-8898-ea076e926db6_en)
 - [FDA Warning Letter 320-26-58](https://www.fda.gov/inspections-compliance-enforcement-and-criminal-investigations/warning-letters/purolea-cosmetics-lab-722591-04022026)
+
+## P2 — Agent Registry catalog publication and read-back proof (2026-08-23)
+
+The live catalog is published and verified with `infra/geap/verify_agent_registry.py`:
+
+```bash
+COUNTERSIGN_MCP_INVOKER_SERVICE_ACCOUNT=countersign-case-invoker@countersign-505107.iam.gserviceaccount.com \
+  uv run python infra/geap/verify_agent_registry.py
+```
+
+The read-only verifier fails closed unless all of these match the live systems:
+
+- The case Workflow Runtime reasoning engine `4826409094459949056` is present as the
+  auto-registered `countersign-case` Agent Registry agent.
+- `countersign-sponsor-liaison` is registered from its real A2A agent card, with
+  `sponsor_liaison_agent`, skill `sponsor_batch_status`, and the public Cloud Run A2A URL.
+  The verifier fetches the public card again rather than trusting only Registry output.
+- `countersign-department-mcp-tools` is registered as an MCP `TOOL_SPEC` using the live
+  department MCP URL and its tool names exactly match a fresh authenticated `tools/list`
+  response. The current catalog contains 12 tools.
+- `app/domain/fleet_manifest.py` builds exactly 8 real fleet entries, including the separate
+  `sponsor_liaison_agent` A2A peer.
+
+The existing endpoint-only `countersign-department-mcp` Registry service was preserved because
+Registry does not permit changing a service's spec oneof. The graph agents are not claimed as
+eight separately deployed Registry resources: they run inside the one case Runtime and are
+represented by the live fleet manifest; the sponsor liaison is the separately deployed A2A peer.
