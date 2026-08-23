@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""Grant read-only IAM access and create the LIMS table. Password from Secret Manager.
+"""Provision Cloud SQL LIMS and sponsor case-status tables with least privilege.
 
-Mirrors bootstrap_sessions_sql.py's pattern (same instance, same IAM/password
-split) but for the department-systems database rather than adk_sessions, and
-grants SELECT only, not ALL PRIVILEGES: the QC lab agent's tool boundary is
-also meant to be the database's own privilege boundary, not just an
-application-level convention. Also seeds one row matching the existing
-synthetic catalog (tenant aurex, batch AX-2291) so a demo case behaves
-identically whether COUNTERSIGN_LIMS_BACKEND is on or off.
+The LIMS table receives SELECT-only access; the separate batch-keyed
+``case_status`` table receives the read/write access its workflow updates need.
+Both are provisioned by the same trusted bootstrap path, never by an agent.
 """
 
 from __future__ import annotations
@@ -24,6 +20,7 @@ INSTANCE = os.environ.get(
 )
 DB_NAME = os.environ.get("LIMS_DB_NAME", "countersign_lims")
 TABLE_NAME = os.environ.get("LIMS_TABLE_NAME", "lims_results")
+SESSIONS_DB_NAME = os.environ.get("SESSIONS_DB_NAME", "adk_sessions")
 # The department MCP service's own IAM database user (its Cloud Run service
 # account), not the human admin account — the MCP process is what actually
 # opens this connection at runtime (department_source_postgres.py), so it is
@@ -94,10 +91,13 @@ INSERT INTO {TABLE_NAME} (
         ip_type=IPTypes.PUBLIC,
     )
     try:
+        # CREATE DATABASE cannot run inside a transaction block; autocommit
+        # must be on before the very first statement on this connection, not
+        # just before the CREATE DATABASE call itself.
+        conn.autocommit = True
         cursor = conn.cursor()
         cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (DB_NAME,))
         if cursor.fetchone() is None:
-            conn.autocommit = True
             cursor.execute(f'CREATE DATABASE "{DB_NAME}"')
     finally:
         conn.close()
@@ -119,10 +119,40 @@ INSERT INTO {TABLE_NAME} (
         conn.commit()
     finally:
         conn.close()
+
+    conn = connector.connect(
+        INSTANCE,
+        "pg8000",
+        user="postgres",
+        db=SESSIONS_DB_NAME,
+        password=password,
+        ip_type=IPTypes.PUBLIC,
+    )
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS case_status (
+                tenant_id TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                sterility_due_at TIMESTAMPTZ,
+                qp_confirmed_at TIMESTAMPTZ,
+                updated_at TIMESTAMPTZ NOT NULL,
+                PRIMARY KEY (tenant_id, batch_id)
+            )
+            """
+        )
+        cursor.execute(f'GRANT SELECT, INSERT, UPDATE, DELETE ON case_status TO "{quoted}"')
+        conn.commit()
+    finally:
+        conn.close()
         connector.close()
     print(
         f"Created {DB_NAME}.{TABLE_NAME}, seeded aurex/AX-2291, "
-        f"granted SELECT-only to {IAM_USER}."
+        f"granted SELECT-only to {IAM_USER}; ensured {SESSIONS_DB_NAME}.case_status "
+        "with status read/write access."
     )
     return 0
 

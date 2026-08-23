@@ -8,10 +8,9 @@ disposition.
 Google's Agent Gateway answers *who* and *what*. Countersign answers *whether the Quality
 Agreement permits this party to assess this thing, at this lifecycle stage, for this sponsor*.
 
-> **Status: control plane proven, agent fleet real (8 of 8), real systems wired but not yet
-> switched on live or deployed.** See [Build status](#build-status). Nothing in this README
-> describes behaviour that is not currently running — where something is unbuilt it is marked
-> as such.
+> **Status: control plane proven, eight real agents live, real department systems and sponsor
+> liaison deployed.** See [Build status](#build-status). Nothing in this README describes
+> behaviour that is not currently running — where something is unbuilt it is marked as such.
 >
 > **2026-08-20 — fleet conversion (P-A).** The five department/reasoning nodes that used to be
 > plain Python functions and no-tool LLM calls are now real `google.adk.agents.Agent(mode=
@@ -113,9 +112,9 @@ So Countersign is built on one non-negotiable rule:
 | UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; architecture diagram and demo film not started |
 | Manufacturing evidence over Drive | Done live (2026-08-19) — `drive_fetch_evidence` MCP tool reads a real scanned BMR page from Google Drive; `collect_manufacturing` pulls it by file id instead of trusting pushed bytes. No placeholder evidence remains on the live path |
 | **P-L: real multi-day sterility hold (uncompressed)** | **Done live (2026-08-20)** — a disposable case (`aurex`/`LONGHOLD-PL-01`) opened on the deployed Runtime with no `COUNTERSIGN_STERILITY_HOLD_SECONDS` set. Confirmed from the live session event: `compressed_for_demo: false`, `hold_seconds: 1209600` (14 days exactly), `started_at: 2026-08-20T17:58:11Z`, `due_at: 2026-09-03T17:58:11Z`. Not to be ticked/resumed before `due_at` — it is the real wall-clock resume proof for the demo film. Details in `checklist.md` |
-| **P-A: real agent fleet conversion** | **Done except sponsor peer (2026-08-20)** — see [Real agent fleet](#real-agent-fleet). Manufacturing, QC lab, environmental monitoring, supply, and investigation are now real `Agent(mode="single_turn")` nodes with their own bound tools; deterministic checks run only on each tool's captured snapshot. Challenger stays tool-less by design. Fleet manifest live at `GET /fleet/manifest`. Sponsor A2A peer (agent 8 of 8) not started |
-| **P1: real Cloud SQL LIMS / BigQuery EM** | **Code done, not yet deployed (2026-08-21)** — `app/domain/department_source.py` lets `qc_lab_agent`/`environmental_monitoring_agent` read a real Cloud SQL table / BigQuery table instead of the synthetic catalog, behind the same `lims_query`/`em_query` tool contract. Opt-in per department (`COUNTERSIGN_LIMS_BACKEND=cloud_sql`, `COUNTERSIGN_EM_BACKEND=bigquery`); unset keeps the catalog. Read-only grants only. Provisioning scripts written (`infra/geap/provision_department_systems.sh`); not yet run against the live project, so both departments are still reading the catalog in the deployed Runtime. Supplier CoA (untrusted channel) and QMS write-back are not started |
-| **P-A: sponsor liaison A2A peer (agent 8 of 8)** | **Code done, not yet deployed (2026-08-21)** — `app/sponsor_liaison/` is a real, separate service (not a graph node): a tool-bound `Agent` answering exactly one scoped batch-status question, authenticated by a per-sponsor API key, denied at the tool boundary for any tenant outside that sponsor's Quality Agreement. New Cloud SQL `case_status` table and `sponsor_batch_status`/`case_status_upsert` MCP tools with their own Gateway policy (`mcp-sponsor-liaison-status-only.yaml`). Verified in-process (agent-card serves, auth 401s, scope denies, real Gemini call reached); not yet deployed to Cloud Run |
+| **P-A: real agent fleet conversion** | **Done live (8 of 8, 2026-08-23)** — all target agents are real: six tool-bound/structured ADK graph agents plus the separate sponsor A2A peer. Fleet manifest available at `GET /fleet/manifest` |
+| **P1: real Cloud SQL LIMS / BigQuery EM** | **Done live (2026-08-23)** — provisioned `countersign_lims.lims_results` and `countersign_em.em_readings`; deployed department MCP with `COUNTERSIGN_LIMS_BACKEND=cloud_sql` and `COUNTERSIGN_EM_BACKEND=bigquery`. Authenticated live MCP calls for `aurex`/`AX-2291` returned `system=cloud_sql` and `system=bigquery`. LIMS remains SELECT-only and EM has Data Viewer/Job User only. Supplier CoA (untrusted channel) and QMS write-back remain separate work |
+| **P3: sponsor liaison A2A peer (agent 8 of 8)** | **Done live (2026-08-23)** — separate Cloud Run A2A service with per-sponsor API-key auth, a real tool-bound agent, `case_status` Cloud SQL store, department MCP scope enforcement, and a dedicated Gateway tool policy. Live proof: authorized sponsor returns the real hold status; cross-tenant query is denied; unknown batch returns `not_found`; missing/wrong key returns 401 |
 
 ### Real agent fleet
 
@@ -141,27 +140,26 @@ scope arguments, so it cannot query another tenant's or batch's data. A branch f
 its agent skips a required tool call, so a `JoinNode` waiting on all four department branches
 can never stall on a silently-incomplete agent turn.
 
-### P1 — real department systems (opt-in, code done)
+### P1 — real department systems (live)
 
-QC lab and environmental monitoring can each read from a real system instead of the pinned
-synthetic catalog, without changing `qc_lab_agent`/`environmental_monitoring_agent`'s tool
-contract or the deterministic `check_lims`/`check_em` that runs on the result:
+QC lab and environmental monitoring are now served by real, independently provisioned systems
+without changing `qc_lab_agent`/`environmental_monitoring_agent`'s tool contract or the
+deterministic `check_lims`/`check_em` that evaluates their results:
 
-- `COUNTERSIGN_LIMS_BACKEND=cloud_sql` — QC lab reads a real Cloud SQL Postgres table
-  (`department_source_postgres.py`), `SELECT`-only, credential held by the department MCP
-  process, never by the agent or the Runtime.
-- `COUNTERSIGN_EM_BACKEND=bigquery` — environmental monitoring reads a real BigQuery table
-  (`department_source_bigquery.py`), `bigquery.dataViewer` only, same process boundary.
-- Either unset (default) keeps that department on the synthetic catalog. This is an explicit
-  opt-in, not credential-detection, so a half-provisioned deployment keeps working instead of
-  silently failing every QC or EM branch.
-- `GET /fleet/manifest`'s `backing_system` field is resolved live from this switch, not
-  hardcoded — a fix for a real prior overclaim (the manifest used to say "BigQuery" regardless
-  of whether the code was reading it).
-- **Not yet run against the live project.** `infra/geap/provision_department_systems.sh` and
-  `bootstrap_department_systems.py` exist but have not been executed, so the deployed Runtime
-  is still reading the catalog for both departments. Supplier CoA (the untrusted channel) and
-  QMS write-back are separate, unstarted P1 items.
+- `countersign_lims.lims_results` is live on Cloud SQL. The department MCP service account has
+  `SELECT` only; `lims_query` for `aurex`/`AX-2291` returned `system=cloud_sql` and the seeded
+  assay result through an authenticated live MCP call.
+- `countersign_em.em_readings` is live on BigQuery. The MCP account has `Data Viewer` and
+  `Job User` only; `em_query` for the same batch returned `system=bigquery` and the real stored
+  environmental-monitoring reading.
+- Deployment remains explicit: `COUNTERSIGN_LIMS_BACKEND=cloud_sql` and
+  `COUNTERSIGN_EM_BACKEND=bigquery` are set on the live department MCP service. Unset keeps a
+  department on the synthetic catalog, so a partially provisioned environment fails safely.
+- `infra/geap/provision_department_systems.sh` creates both source systems and the required
+  `adk_sessions.case_status` table. The latter is a narrow, structured sponsor-status index;
+  it is not an inference over free-text Case Memory.
+- Supplier CoA remains an untrusted source handled through the existing evidence path; QMS
+  write-back is the next integration work, not implied by this deployment.
 
 All 8 agents in the target table are now real. Not yet built: the QMS write-back agent
 (`final_reseach/12_integration_expansion_plan.md` T1-1), out of scope until P0–P6 land per that
@@ -198,11 +196,12 @@ the coarse status of one of their own batches.
 - New Gateway policy (`infra/geap/mcp-sponsor-liaison-status-only.yaml`): the `sponsor_liaison`
   identity may call `sponsor_batch_status` only, with explicit `forbidden_bindings` in both
   directions against every other identity.
-- Verified in-process, not deployed: agent-card serves publicly, missing/wrong API key returns
-  401, a correct key routes through the executor to a real `Agent`/`Runner` that reaches the
-  real Gemini API (fails only on this shell's expired ADC — the same wall every live Gemini
-  call in this session has hit). `infra/geap/deploy_sponsor_liaison.sh` exists; not yet run
-  against `countersign-505107`.
+- **Live proof (2026-08-23):** deployed as
+  `countersign-sponsor-liaison` on Cloud Run; its agent card is public while every request is
+  authenticated in-app with a per-sponsor API key. An authorized `aurex` call for `AX-2291`
+  returned `on_sterility_hold` and the real due date; an `othercompany` tenant request was
+  denied; an absent batch returned `not_found`; no key or a wrong key returned HTTP 401.
+  The live department MCP call was separately verified to return the same structured status.
 
 ### Domain workflow — deterministic intake and classification
 

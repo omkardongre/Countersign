@@ -29,8 +29,8 @@ echo "--- QC lab: Cloud SQL ${SESSIONS_SQL_INSTANCE:-countersign-sessions}/${LIM
 if ! gcloud sql users list \
     --instance="${SESSIONS_SQL_INSTANCE:-countersign-sessions}" \
     --project="${PROJECT_ID}" --format='value(name)' \
-    | grep -qx "${SQL_DB_IAM_USER%.iam}.iam.gserviceaccount.com"; then
-  gcloud sql users create "${SQL_DB_IAM_USER%.iam}.iam.gserviceaccount.com" \
+    | grep -qx "${SQL_DB_IAM_USER}"; then
+  gcloud sql users create "${SQL_DB_IAM_USER}" \
     --instance="${SESSIONS_SQL_INSTANCE:-countersign-sessions}" \
     --project="${PROJECT_ID}" \
     --type=cloud_iam_service_account
@@ -69,6 +69,7 @@ bq --project_id="${PROJECT_ID}" query --use_legacy_sql=false --nouse_cache <<SQL
 INSERT INTO \`${PROJECT_ID}.${EM_DATASET}.${EM_TABLE}\`
   (tenant_id, batch_id, location_id, parameter, label, value, unit, alert_limit, action_limit, recorded_at)
 SELECT 'aurex', 'AX-2291', 'FILL-R1', 'viable_air_cfu', 'Viable air count', 2.0, 'cfu/m3', 5.0, 10.0, TIMESTAMP('2026-08-01T10:00:00Z')
+FROM (SELECT 1)
 WHERE NOT EXISTS (
   SELECT 1 FROM \`${PROJECT_ID}.${EM_DATASET}.${EM_TABLE}\`
   WHERE tenant_id = 'aurex' AND batch_id = 'AX-2291' AND location_id = 'FILL-R1'
