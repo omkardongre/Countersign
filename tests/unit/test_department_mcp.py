@@ -22,10 +22,12 @@ from app.domain.department_models import CoaSnapshot, EmSnapshot, LimsSnapshot
 from app.domain.department_tools import (
     ALLOWED_DEPARTMENT_TOOLS,
     CASE_MEMORY_TOOLS,
+    CASE_STATUS_TOOLS,
     COA_FETCH,
     DRIVE_TOOLS,
     EM_QUERY,
     LIMS_QUERY,
+    SPONSOR_TOOLS,
     STERILITY_TOOLS,
 )
 from app.mcp.client import (
@@ -43,7 +45,7 @@ from app.mcp.department_server import (
 
 @pytest.mark.asyncio
 async def test_department_mcp_exposes_exactly_the_named_tools() -> None:
-    """Department reads plus sterility clock access. No other surface."""
+    """Department reads, sterility clock, case status, sponsor read. No other surface."""
     mcp = build_department_mcp()
     async with create_connected_server_and_client_session(mcp) as session:
         listed = await session.list_tools()
@@ -54,6 +56,8 @@ async def test_department_mcp_exposes_exactly_the_named_tools() -> None:
         | DRIVE_TOOLS
         | STERILITY_TOOLS
         | CASE_MEMORY_TOOLS
+        | CASE_STATUS_TOOLS
+        | SPONSOR_TOOLS
     )
     assert "postgres-execute-sql" not in names
 

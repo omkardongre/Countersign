@@ -21,11 +21,16 @@ Uses ``rerun_on_resume=True`` so the Annex 16 pack is recovered as
 from __future__ import annotations
 
 import datetime
+import logging
 
 from google.adk.agents.context import Context
 from google.adk.events.request_input import RequestInput
 from google.adk.workflow import node
+from google.api_core.exceptions import GoogleAPICallError, RetryError
+from mcp.shared.exceptions import McpError
 
+from app.domain.case_status_mcp import McpCaseStatusStore
+from app.domain.case_status_models import CaseStatus, CaseStatusRecord
 from app.domain.qp_models import (
     QpConfirmationAction,
     QpConfirmationOutcome,
@@ -35,8 +40,33 @@ from app.domain.qp_models import (
     QpReviewedPackage,
 )
 from app.domain.release_models import CaseReleasePackage, ReleaseGateStatus
+from app.mcp.client import DepartmentToolCallError
+
+logger = logging.getLogger(__name__)
 
 QP_INTERRUPT_PREFIX = "qp_confirmation"
+
+# Same narrow set case_memory_node.py catches for its own side-channel
+# writes: a real outage of the status store, not a bug in this code path.
+_STATUS_STORE_OUTAGE_ERRORS = (
+    DepartmentToolCallError,
+    McpError,
+    GoogleAPICallError,
+    RetryError,
+    ConnectionError,
+    TimeoutError,
+)
+
+_OUTCOME_TO_STATUS = {
+    QpConfirmationOutcome.CONFIRMED: CaseStatus.QP_CONFIRMED,
+    QpConfirmationOutcome.DECLINED: CaseStatus.QP_DECLINED,
+    QpConfirmationOutcome.CANNOT_CONFIRM: CaseStatus.QP_COULD_NOT_CONFIRM,
+    # REJECTED (confirm attempted while not_ready) is not a settled outcome
+    # a sponsor should see as terminal — the case is still, from the
+    # sponsor's point of view, on hold pending a real QP decision. No
+    # status write happens for this outcome; case_status simply keeps
+    # whatever value sterility_wait.py last wrote.
+}
 
 
 def _package(node_input: CaseReleasePackage | dict) -> CaseReleasePackage:
@@ -110,7 +140,7 @@ def record_qp_decision(
 
 
 @node(name="confirm_qp", rerun_on_resume=True)
-def confirm_qp(node_input: CaseReleasePackage, ctx: Context):
+async def confirm_qp(node_input: CaseReleasePackage, ctx: Context):
     """Pause for CDMO QP confirmation, then record it against the recovered pack."""
     package = _package(node_input)
     classified = package.investigation.case.classified
@@ -135,8 +165,30 @@ def confirm_qp(node_input: CaseReleasePackage, ctx: Context):
         )
         return
     request = _request(resume_input)
+    confirmation = record_qp_decision(package, request)
+    status = _OUTCOME_TO_STATUS.get(confirmation.outcome)
+    if status is not None:
+        # Batch-keyed status for the sponsor liaison's read boundary
+        # (sponsor_tools.py). A store-outage here must not stall the QP's
+        # own recorded decision, same fail-open posture case_memory_node.py
+        # already uses for its own side-channel write.
+        try:
+            await McpCaseStatusStore().upsert_async(
+                CaseStatusRecord(
+                    tenant_id=classified.tenant_id,
+                    batch_id=classified.batch_id,
+                    case_id=classified.case_id,
+                    status=status,
+                    qp_confirmed_at=confirmation.recorded_at,
+                    updated_at=confirmation.recorded_at,
+                )
+            )
+        except _STATUS_STORE_OUTAGE_ERRORS as exc:
+            logger.warning(
+                "Case status upsert failed after QP decision, continuing: %s", exc
+            )
     yield QpReviewedPackage(
         release_package=package,
-        qp_confirmation=record_qp_decision(package, request),
+        qp_confirmation=confirmation,
         decision_authority="none",
     )

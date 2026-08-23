@@ -1,0 +1,42 @@
+# Sponsor-liaison Agent Identity for the cross-company batch-status read.
+# Allows tools/call sponsor_batch_status only. Every other department/
+# sterility/Case Memory/case-status tool stays denied to this identity —
+# this is the enforcement point that makes agent 8 of 8
+# (sponsor_liaison_agent, per final_reseach/10_gap_analysis_and_win_plan.md
+# section 4.1) a real cross-company boundary rather than a second copy of
+# the case workflow's own credentials.
+#
+# The sponsor-to-tenant Quality Agreement check itself lives in
+# app/domain/sponsor_tools.py::authorize_sponsor_query and runs *inside*
+# sponsor_batch_status on every call, before this identity's Gateway
+# allow-list is ever reached. This policy is the second, independent gate
+# ("what tool can this identity call at all"), not a substitute for it.
+#
+# bind_to: sponsor_liaison
+# do_not_bind_to: case_workflow, qc_probe, hello_runtime
+#
+# MATCH_BASE_PROTOCOL_METHODS is required or initialize/ping are denied
+# and no MCP session can be established (07_geap_platform_notes.md §10.5).
+#
+# `hosts` scopes this rule to the department MCP service only, for the same
+# reason as mcp-case-workflow-tools-allow.yaml: an unscoped ALLOW policy on
+# the whole gateway denies any non-matching request, including this
+# identity's own session/runtime traffic.
+name: countersign-mcp-sponsor-liaison-status-only
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: REQUEST_AUTHZ
+action: ALLOW
+httpRules:
+  - to:
+      operations:
+        - hosts:
+            - exact: "countersign-department-mcp-777448403573.us-central1.run.app"
+          mcp:
+            baseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+            methods:
+              - name: "tools/list"
+              - name: "tools/call"
+                params:
+                  - exact: "sponsor_batch_status"

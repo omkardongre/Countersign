@@ -42,6 +42,8 @@ from app.domain.department_source import (
 __all__ = [
     "ALLOWED_DEPARTMENT_TOOLS",
     "CASE_MEMORY_TOOLS",
+    "CASE_STATUS_TOOLS",
+    "CASE_STATUS_UPSERT",
     "COA_FETCH",
     "DRIVE_FETCH_EVIDENCE",
     "DRIVE_TOOLS",
@@ -56,10 +58,14 @@ __all__ = [
     "STERILITY_GET",
     "STERILITY_START",
     "STERILITY_TOOLS",
+    "SPONSOR_BATCH_STATUS",
+    "SPONSOR_TOOLS",
+    "case_status_upsert",
     "coa_fetch",
     "drive_fetch_evidence",
     "em_query",
     "lims_query",
+    "sponsor_batch_status",
 ]
 
 LIMS_QUERY = "lims_query"
@@ -68,6 +74,20 @@ COA_FETCH = "coa_fetch"
 DRIVE_FETCH_EVIDENCE = "drive_fetch_evidence"
 STERILITY_START = "sterility_start"
 STERILITY_GET = "sterility_get"
+
+# Batch-keyed case status. case_status_upsert is written by the case
+# workflow (sterility_wait.py, qp_confirmation.py) through this same MCP
+# process (Cloud SQL credential boundary, same reasoning as the sterility
+# clock). sponsor_batch_status is the one, separately scoped read the
+# sponsor liaison service may perform — a different process, on the
+# cross-company trust boundary, never called by the case workflow itself.
+# Kept as two different tool names, not one tool with a role flag, so the
+# case-workflow and sponsor-liaison Gateway allow-lists can never overlap
+# by accident.
+CASE_STATUS_UPSERT = "case_status_upsert"
+SPONSOR_BATCH_STATUS = "sponsor_batch_status"
+CASE_STATUS_TOOLS = frozenset({CASE_STATUS_UPSERT})
+SPONSOR_TOOLS = frozenset({SPONSOR_BATCH_STATUS})
 
 # Read/write on a per-batch clock, not a department read. Kept out of
 # ALLOWED_DEPARTMENT_TOOLS (the QC/supply collector allow-list) so it needs
@@ -203,6 +223,88 @@ def drive_fetch_evidence(*, tenant_id: str, file_id: str) -> DriveEvidencePayloa
         file_id=file_id,
         mime_type=mime_type,
         content_base64=base64.b64encode(payload).decode("ascii"),
+    )
+
+
+class CaseStatusTenantMismatch(Exception):
+    """The calling case is not the tenant that owns this batch's status."""
+
+
+def _check_case_status_tenant(tenant_id: str, case_tenant_id: str) -> None:
+    """Same discipline as ``_check_case_tenant``: the case workflow's own
+    writes are tenant-checked here too, even though its caller is trusted
+    infrastructure, not an external party. The sponsor liaison's own,
+    separate cross-company check lives in ``sponsor_tools.py`` and is not
+    this function — a sponsor never calls this tool.
+    """
+    if tenant_id != case_tenant_id:
+        raise CaseStatusTenantMismatch(
+            f"case_tenant_id {case_tenant_id!r} does not match "
+            f"tenant_id {tenant_id!r}."
+        )
+
+
+def case_status_upsert(
+    *,
+    tenant_id: str,
+    batch_id: str,
+    case_id: str,
+    status: str,
+    updated_at: str,
+    case_tenant_id: str,
+    sterility_due_at: str | None = None,
+    qp_confirmed_at: str | None = None,
+):
+    """Upsert one batch's status row. Called by the case workflow only.
+
+    Runs inside the MCP process, which holds a real Cloud SQL IAM
+    credential — same reasoning as ``sterility_start``.
+    """
+    _check_case_status_tenant(tenant_id, case_tenant_id)
+    import datetime as _datetime
+
+    from app.domain.case_status_models import CaseStatus, CaseStatusRecord
+    from app.domain.case_status_store import get_case_status_store
+
+    return get_case_status_store().upsert(
+        CaseStatusRecord(
+            tenant_id=tenant_id,
+            batch_id=batch_id,
+            case_id=case_id,
+            status=CaseStatus(status),
+            sterility_due_at=(
+                _datetime.datetime.fromisoformat(sterility_due_at)
+                if sterility_due_at
+                else None
+            ),
+            qp_confirmed_at=(
+                _datetime.datetime.fromisoformat(qp_confirmed_at)
+                if qp_confirmed_at
+                else None
+            ),
+            updated_at=_datetime.datetime.fromisoformat(updated_at),
+        )
+    )
+
+
+def sponsor_batch_status(*, sponsor_id: str, tenant_id: str, batch_id: str):
+    """The one read the sponsor liaison may perform. Not a bare status
+    lookup: ``sponsor_tools.sponsor_batch_status`` enforces the
+    sponsor-to-tenant Quality Agreement check *inside* this call, before
+    touching the store — the same place every other tool in this module
+    enforces its own scope check (``_check_case_tenant``,
+    ``_check_memory_tenant``), rather than trusting a caller elsewhere to
+    have checked first. A caller reaching this tool name with an
+    unauthorized ``sponsor_id``/``tenant_id`` pair is denied here, not just
+    upstream in the sponsor liaison service's own code.
+    """
+    from app.domain.sponsor_models import SponsorBatchStatusQuery
+    from app.domain.sponsor_tools import sponsor_batch_status as run
+
+    return run(
+        SponsorBatchStatusQuery(
+            sponsor_id=sponsor_id, tenant_id=tenant_id, batch_id=batch_id
+        )
     )
 
 

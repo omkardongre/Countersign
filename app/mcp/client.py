@@ -41,7 +41,9 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from app.domain.department_tools import (
     ALLOWED_DEPARTMENT_TOOLS,
     CASE_MEMORY_TOOLS,
+    CASE_STATUS_TOOLS,
     DRIVE_TOOLS,
+    SPONSOR_TOOLS,
     STERILITY_TOOLS,
 )
 from app.mcp.department_server import get_department_mcp
@@ -308,6 +310,45 @@ async def call_case_memory_tool(
             f"Callers may not call {name!r}; allowed={sorted(CASE_MEMORY_TOOLS)}"
         )
     return await call_mcp_tool(name, arguments)
+
+
+async def call_case_status_tool(
+    name: str, arguments: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Call ``case_status_upsert`` over MCP. Case-workflow side only.
+
+    Same reason as ``call_sterility_tool``: an Agent Identity principal
+    cannot hold the Cloud SQL IAM credential this write needs.
+    """
+    if name not in CASE_STATUS_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(CASE_STATUS_TOOLS)}"
+        )
+    payload = await call_mcp_tool(name, arguments)
+    if not payload:
+        raise DepartmentToolCallError(f"{name} returned no structured content.")
+    return payload
+
+
+async def call_sponsor_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Call ``sponsor_batch_status`` over MCP. Sponsor-liaison side only.
+
+    The sponsor liaison service is a separate process from the case
+    workflow (per ``final_reseach/10_gap_analysis_and_win_plan.md`` section
+    4.1, agent 8 is "A2A peer, separate service"), so it goes through the
+    same public entry point (``resolve_department_mcp_target``) rather than
+    a private import of ``sponsor_tools`` — the Gateway's own tool-name
+    allow-list is what actually enforces that this service can reach
+    ``sponsor_batch_status`` and nothing else on this MCP surface.
+    """
+    if name not in SPONSOR_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(SPONSOR_TOOLS)}"
+        )
+    payload = await call_mcp_tool(name, arguments)
+    if not payload:
+        raise DepartmentToolCallError(f"{name} returned no structured content.")
+    return payload
 
 
 async def call_mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:

@@ -106,6 +106,10 @@ class CaseMemoryStore(Protocol):
         self, *, tenant_id: str, fact_id: str, reason: str
     ) -> CaseMemoryFact: ...
 
+    async def latest_fact_for_batch(
+        self, *, tenant_id: str, batch_id: str
+    ) -> CaseMemoryFact | None: ...
+
 
 class FirestoreCaseMemoryStore:
     """Firestore-backed store. Tenant filter applied before retrieval."""
@@ -251,6 +255,32 @@ class FirestoreCaseMemoryStore:
         data["redacted_reason"] = reason
         return self._to_fact(data)
 
+    async def latest_fact_for_batch(
+        self, *, tenant_id: str, batch_id: str
+    ) -> CaseMemoryFact | None:
+        """Most recent non-redacted fact for this batch, tenant-scoped.
+
+        Backs the sponsor liaison's QP-outcome lookup
+        (``sponsor_tools.py``): ``record_case_memory`` writes exactly one
+        fact per case at ``qp_outcome:{tenant_id}:{case_id}``, so the most
+        recent fact for a batch *is* its latest QP outcome. No vector search
+        here — this is an exact tenant+batch filter, not a similarity query.
+        """
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        docs = await (
+            self._collection()
+            .where(filter=FieldFilter("tenant_id", "==", tenant_id))
+            .where(filter=FieldFilter("batch_id", "==", batch_id))
+            .where(filter=FieldFilter("redacted", "==", False))
+            .order_by("observed_at", direction="DESCENDING")
+            .limit(1)
+            .get()
+        )
+        for doc in docs:
+            return self._fact_from_doc(doc)
+        return None
+
 
 class InMemoryCaseMemoryStore:
     """Local/test store: no Firestore, no embedding calls, tenant-filtered."""
@@ -304,6 +334,18 @@ class InMemoryCaseMemoryStore:
         updated = record.model_copy(update={"redacted": True, "redacted_reason": reason})
         self._facts[fact_id] = updated
         return updated
+
+    async def latest_fact_for_batch(
+        self, *, tenant_id: str, batch_id: str
+    ) -> CaseMemoryFact | None:
+        matches = [
+            f
+            for f in self._facts.values()
+            if f.tenant_id == tenant_id and f.batch_id == batch_id and not f.redacted
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda f: f.observed_at)
 
     def reset(self) -> None:
         self._facts.clear()

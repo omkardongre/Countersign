@@ -49,6 +49,7 @@ from app.domain.department_models import (
     LimsSnapshot,
 )
 from app.domain.department_tools import (
+    CASE_STATUS_UPSERT,
     COA_FETCH,
     DRIVE_FETCH_EVIDENCE,
     EM_QUERY,
@@ -56,10 +57,12 @@ from app.domain.department_tools import (
     PRIOR_ART_QUERY,
     PRIOR_ART_REDACT,
     PRIOR_ART_WRITE,
+    SPONSOR_BATCH_STATUS,
     STERILITY_BIND_RESUME_HANDLE,
     STERILITY_GET,
     STERILITY_START,
     CaseMemoryTenantMismatch,
+    CaseStatusTenantMismatch,
     DepartmentRecordMissing,
     DriveFetchError,
     SterilityTenantMismatch,
@@ -86,6 +89,12 @@ from app.domain.department_tools import (
     prior_art_write as run_prior_art_write,
 )
 from app.domain.department_tools import (
+    case_status_upsert as run_case_status_upsert,
+)
+from app.domain.department_tools import (
+    sponsor_batch_status as run_sponsor_batch_status,
+)
+from app.domain.department_tools import (
     sterility_bind_resume_handle as run_sterility_bind_resume_handle,
 )
 from app.domain.department_tools import (
@@ -94,6 +103,8 @@ from app.domain.department_tools import (
 from app.domain.department_tools import (
     sterility_start as run_sterility_start,
 )
+from app.domain.case_status_models import CaseStatusRecord
+from app.domain.sponsor_models import SponsorBatchStatusResult, SponsorScopeDenied
 from app.domain.sterility_models import SterilityIncubationRecord
 
 _READ_ONLY = ToolAnnotations(
@@ -291,6 +302,62 @@ def build_department_mcp(
                 case_tenant_id=case_tenant_id,
             )
         except (KeyError, SterilityTenantMismatch) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CASE_STATUS_UPSERT,
+        title="Case status upsert",
+        description=(
+            "Upsert one batch's status row (on_sterility_hold / qp_confirmed "
+            "/ qp_declined / qp_could_not_confirm). Called by the case "
+            "workflow only; not a batch release."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def case_status_upsert(
+        tenant_id: str,
+        batch_id: str,
+        case_id: str,
+        status: str,
+        updated_at: str,
+        case_tenant_id: str,
+        sterility_due_at: str | None = None,
+        qp_confirmed_at: str | None = None,
+    ) -> CaseStatusRecord:
+        try:
+            return run_case_status_upsert(
+                tenant_id=tenant_id,
+                batch_id=batch_id,
+                case_id=case_id,
+                status=status,
+                updated_at=updated_at,
+                case_tenant_id=case_tenant_id,
+                sterility_due_at=sterility_due_at,
+                qp_confirmed_at=qp_confirmed_at,
+            )
+        except CaseStatusTenantMismatch as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=SPONSOR_BATCH_STATUS,
+        title="Sponsor batch status",
+        description=(
+            "The one cross-company read a sponsor's agent may perform: "
+            "coarse lifecycle status for one batch, if and only if that "
+            "sponsor's Quality Agreement covers this tenant. Read-only. Not "
+            "a batch release, and never returns investigation findings, "
+            "citations, or internal case identifiers."
+        ),
+        annotations=_READ_ONLY,
+    )
+    def sponsor_batch_status(
+        sponsor_id: str, tenant_id: str, batch_id: str
+    ) -> SponsorBatchStatusResult:
+        try:
+            return run_sponsor_batch_status(
+                sponsor_id=sponsor_id, tenant_id=tenant_id, batch_id=batch_id
+            )
+        except SponsorScopeDenied as exc:
             raise ToolError(str(exc)) from exc
 
     @mcp.tool(

@@ -26,6 +26,10 @@ bindings:
     identity: qc_probe
     tools:
       - lims_query
+  - policy: mcp-sponsor-liaison-status-only.yaml
+    identity: sponsor_liaison
+    tools:
+      - sponsor_batch_status
 forbidden_bindings:
   - policy: mcp-qc-probe-lims-only.yaml
     identity: case_workflow
@@ -35,3 +39,13 @@ forbidden_bindings:
     identity: hello_runtime
   - policy: mcp-qc-probe-lims-only.yaml
     identity: hello_runtime
+  - policy: mcp-sponsor-liaison-status-only.yaml
+    identity: case_workflow
+  - policy: mcp-sponsor-liaison-status-only.yaml
+    identity: qc_probe
+  - policy: mcp-sponsor-liaison-status-only.yaml
+    identity: hello_runtime
+  - policy: mcp-case-workflow-tools-allow.yaml
+    identity: sponsor_liaison
+  - policy: mcp-qc-probe-lims-only.yaml
+    identity: sponsor_liaison

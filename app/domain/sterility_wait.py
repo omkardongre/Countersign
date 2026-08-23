@@ -20,10 +20,17 @@ A scheduler tick writes completion, then ADK resume re-runs this node.
 
 from __future__ import annotations
 
+import datetime
+import logging
+
 from google.adk.agents.context import Context
 from google.adk.events.request_input import RequestInput
 from google.adk.workflow import node
+from google.api_core.exceptions import GoogleAPICallError, RetryError
+from mcp.shared.exceptions import McpError
 
+from app.domain.case_status_mcp import McpCaseStatusStore
+from app.domain.case_status_models import CaseStatus, CaseStatusRecord
 from app.domain.investigation_models import InvestigationCaseResult
 from app.domain.sterility_models import (
     SterilityHoldBrief,
@@ -33,8 +40,22 @@ from app.domain.sterility_models import (
 )
 from app.domain.sterility_store_mcp import McpSterilityStore
 from app.domain.workflow_meta import CASE_WORKFLOW_VERSION
+from app.mcp.client import DepartmentToolCallError
+
+logger = logging.getLogger(__name__)
 
 STERILITY_INTERRUPT_PREFIX = "sterility_incubation"
+
+# Same narrow set case_memory_node.py catches for its own side-channel
+# writes: a real outage of the status store, not a bug in this code path.
+_STATUS_STORE_OUTAGE_ERRORS = (
+    DepartmentToolCallError,
+    McpError,
+    GoogleAPICallError,
+    RetryError,
+    ConnectionError,
+    TimeoutError,
+)
 
 
 def _investigation(
@@ -132,6 +153,26 @@ async def await_sterility_incubation(
             interrupt_id=interrupt_id,
         ),
     )
+    # Batch-keyed status for the sponsor liaison's read boundary
+    # (sponsor_tools.py). A store-outage here must not stall the hold the
+    # same way a Case Memory outage must not stall the case
+    # (case_memory_node.py) — it is a side channel for an external reader,
+    # not part of this node's own gate.
+    try:
+        await McpCaseStatusStore().upsert_async(
+            CaseStatusRecord(
+                tenant_id=classified.tenant_id,
+                batch_id=classified.batch_id,
+                case_id=classified.case_id,
+                status=CaseStatus.ON_STERILITY_HOLD,
+                sterility_due_at=brief.due_at,
+                updated_at=datetime.datetime.now(datetime.UTC),
+            )
+        )
+    except _STATUS_STORE_OUTAGE_ERRORS as exc:
+        logger.warning(
+            "Case status upsert failed on sterility park, continuing: %s", exc
+        )
     yield RequestInput(
         interrupt_id=interrupt_id,
         message=(

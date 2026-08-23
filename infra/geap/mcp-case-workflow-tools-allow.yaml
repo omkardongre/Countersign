@@ -75,3 +75,6 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "prior_art_write"
+              - name: "tools/call"
+                params:
+                  - exact: "case_status_upsert"

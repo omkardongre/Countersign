@@ -78,11 +78,13 @@ def test_case_workflow_policy_allows_all_named_tools() -> None:
         "lims_query",
         "em_query",
         "coa_fetch",
+        "drive_fetch_evidence",
         "sterility_get",
         "sterility_start",
         "sterility_bind_resume_handle",
         "prior_art_query",
         "prior_art_write",
+        "case_status_upsert",
     }
 
 
@@ -92,6 +94,17 @@ def test_qc_probe_allows_lims_only_for_wrong_department_deny() -> None:
     assert "bind_to: qc_probe" in text
     assert "do_not_bind_to: case_workflow" in text
     assert _exact_tools(text) == {"lims_query"}
+
+
+def test_sponsor_liaison_policy_allows_batch_status_only() -> None:
+    """Cross-company boundary: sponsor liaison may call sponsor_batch_status
+    only, never a department, sterility, Case Memory, or case-status tool.
+    """
+    text = _read("mcp-sponsor-liaison-status-only.yaml")
+    assert "MATCH_BASE_PROTOCOL_METHODS" in text
+    assert "bind_to: sponsor_liaison" in text
+    assert "do_not_bind_to: case_workflow" in text
+    assert _exact_tools(text) == {"sponsor_batch_status"}
 
 
 def test_mcp_tool_policies_are_scoped_to_the_mcp_host() -> None:
@@ -106,7 +119,11 @@ def test_mcp_tool_policies_are_scoped_to_the_mcp_host() -> None:
     detail ``denied_as_no_allow_policies_matched_request``). Scoping by host
     keeps this file's blast radius on the MCP service.
     """
-    for name in ("mcp-case-workflow-tools-allow.yaml", "mcp-qc-probe-lims-only.yaml"):
+    for name in (
+        "mcp-case-workflow-tools-allow.yaml",
+        "mcp-qc-probe-lims-only.yaml",
+        "mcp-sponsor-liaison-status-only.yaml",
+    ):
         text = _read(name)
         assert _hosts(text) == {_MCP_HOST}, name
         for op in _operations(text):
@@ -137,16 +154,10 @@ def test_aiplatform_sessions_policy_allows_the_mtls_hosts() -> None:
     assert _exact_tools(text) == set()
 
 
-def test_policy_bindings_forbid_probe_on_case_workflow() -> None:
-    text = _read("mcp-tool-policy-bindings.yaml")
-    assert "identity: case_workflow" in text
-    assert "identity: qc_probe" in text
-    assert "mcp-qc-probe-lims-only.yaml" in text
-    assert "forbidden_bindings:" in text
-    case_probe = False
+def _forbidden_pairs(text: str) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
     in_forbidden = False
     policy = ""
-    identity = ""
     for line in text.splitlines():
         stripped = line.strip()
         if stripped == "forbidden_bindings:":
@@ -156,15 +167,34 @@ def test_policy_bindings_forbid_probe_on_case_workflow() -> None:
             continue
         if stripped.startswith("- policy:"):
             policy = stripped.split(":", 1)[1].strip()
-            identity = ""
         elif stripped.startswith("identity:"):
             identity = stripped.split(":", 1)[1].strip()
-            if (
-                policy == "mcp-qc-probe-lims-only.yaml"
-                and identity == "case_workflow"
-            ):
-                case_probe = True
-    assert case_probe
+            pairs.add((policy, identity))
+    return pairs
+
+
+def test_policy_bindings_forbid_probe_on_case_workflow() -> None:
+    text = _read("mcp-tool-policy-bindings.yaml")
+    assert "identity: case_workflow" in text
+    assert "identity: qc_probe" in text
+    assert "mcp-qc-probe-lims-only.yaml" in text
+    assert "forbidden_bindings:" in text
+    assert ("mcp-qc-probe-lims-only.yaml", "case_workflow") in _forbidden_pairs(text)
+
+
+def test_policy_bindings_forbid_sponsor_liaison_on_every_other_surface() -> None:
+    """The cross-company identity must be forbidden every internal policy,
+    and no internal identity may be bound the sponsor-only policy.
+    """
+    text = _read("mcp-tool-policy-bindings.yaml")
+    assert "identity: sponsor_liaison" in text
+    assert "mcp-sponsor-liaison-status-only.yaml" in text
+    forbidden = _forbidden_pairs(text)
+    assert ("mcp-sponsor-liaison-status-only.yaml", "case_workflow") in forbidden
+    assert ("mcp-sponsor-liaison-status-only.yaml", "qc_probe") in forbidden
+    assert ("mcp-sponsor-liaison-status-only.yaml", "hello_runtime") in forbidden
+    assert ("mcp-case-workflow-tools-allow.yaml", "sponsor_liaison") in forbidden
+    assert ("mcp-qc-probe-lims-only.yaml", "sponsor_liaison") in forbidden
 
 
 def test_split_collector_identity_policies_are_not_in_tree() -> None:
