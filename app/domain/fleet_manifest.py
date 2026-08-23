@@ -44,6 +44,11 @@ from app.domain.branches import (
     SUPPLY_AGENT_NAME,
 )
 from app.domain.challenger import CHALLENGER_AGENT_NAME
+from app.domain.department_source import (
+    coa_backend_name,
+    em_backend_name,
+    lims_backend_name,
+)
 from app.domain.investigation import INVESTIGATION_AGENT_NAME
 from app.domain.workflow_meta import CASE_WORKFLOW_NAME
 
@@ -59,11 +64,17 @@ class AgentKind(StrEnum):
 
 
 class FleetAgentEntry(BaseModel):
-    """One agent's identity, mode, and allowed tools.
+    """One agent's identity, mode, allowed tools, and backing system.
 
     ``reasoning_authority`` is deliberately always ``False``: no entry in
     this manifest is a decision-maker. That is the manifest's own honesty
     line, not just narration for the desk.
+
+    ``backing_system`` is resolved at call time from
+    ``app/domain/department_source.py`` rather than written here as prose.
+    A hardcoded connector name is an overclaim the moment a department is
+    still reading the synthetic catalog, and this manifest is rendered on
+    screen, so it reports what the code is actually doing instead.
     """
 
     name: str
@@ -71,6 +82,7 @@ class FleetAgentEntry(BaseModel):
     department: str
     model: str | None = None
     allowed_tools: list[str] = Field(default_factory=list)
+    backing_system: str | None = None
     reasoning_authority: bool = False
     description: str
 
@@ -102,6 +114,7 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             department="manufacturing",
             model="gemini-3.6-flash",
             allowed_tools=["drive_fetch_evidence"],
+            backing_system="google_drive",
             reasoning_authority=False,
             description=(
                 "Real single-turn Agent bound to its own Drive fetch tool. "
@@ -119,12 +132,14 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             department="qc",
             model="gemini-3.6-flash",
             allowed_tools=["lims_query"],
+            backing_system=lims_backend_name(),
             reasoning_authority=False,
             description=(
                 "Real single-turn Agent bound to its own LIMS tool. "
                 "Decides to call it; the deterministic check_lims runs "
                 "only on the tool's captured typed snapshot, never on the "
-                "agent's own text."
+                "agent's own text. Holds no database credential itself: "
+                "the tool boundary is the credential boundary."
             ),
         ),
         FleetAgentEntry(
@@ -133,13 +148,15 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             department="environmental_monitoring",
             model="gemini-3.6-flash",
             allowed_tools=["em_query"],
+            backing_system=em_backend_name(),
             reasoning_authority=False,
             description=(
                 "Real single-turn Agent bound to its own environmental-"
-                "monitoring tool, a separate department and data system "
-                "(BigQuery) from QC lab. Decides to call it; the "
-                "deterministic check_em runs only on the tool's captured "
-                "typed snapshot, never on the agent's own text."
+                "monitoring tool, a separate department on a separate "
+                "system from QC lab. Decides to call it; the deterministic "
+                "check_em runs only on the tool's captured typed snapshot, "
+                "never on the agent's own text. Holds no QC lab credential, "
+                "and the QC lab agent holds none of its."
             ),
         ),
         FleetAgentEntry(
@@ -148,6 +165,7 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             department="supply",
             model="gemini-3.6-flash",
             allowed_tools=["coa_fetch"],
+            backing_system=coa_backend_name(),
             reasoning_authority=False,
             description=(
                 "Real single-turn Agent over the untrusted supplier-CoA "
@@ -162,6 +180,7 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             department="investigation",
             model="gemini-3.6-flash",
             allowed_tools=["prior_art_query"],
+            backing_system="firestore_case_memory",
             reasoning_authority=False,
             description=(
                 "Real single-turn Agent that may re-query prior deviations "

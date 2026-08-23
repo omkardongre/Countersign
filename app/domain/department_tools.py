@@ -12,20 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Named department-system tools. Catalog-backed; MCP wraps these functions.
+"""Named department-system tools. MCP wraps these functions.
+
+Each read is delegated to ``app/domain/department_source.py``, which decides
+whether the row comes from a real system (Cloud SQL for QC lab, BigQuery for
+environmental monitoring) or the pinned synthetic catalog. The tool names,
+signatures, and Gateway allow-list entries are unchanged by that choice: the
+agent calling ``lims_query`` cannot tell, and must not be able to tell, which
+backend answered it.
 
 MES and QMS are not in this slice. Investigation must not call these tools.
 """
 
 from __future__ import annotations
 
-from app.domain.department_catalog import lookup_department_snapshot
 from app.domain.department_models import (
     CoaSnapshot,
     DriveEvidencePayload,
     EmSnapshot,
     LimsSnapshot,
 )
+from app.domain.department_source import (
+    DepartmentRecordMissing,
+    get_coa_source,
+    get_em_source,
+    get_lims_source,
+)
+
+__all__ = [
+    "ALLOWED_DEPARTMENT_TOOLS",
+    "CASE_MEMORY_TOOLS",
+    "COA_FETCH",
+    "DRIVE_FETCH_EVIDENCE",
+    "DRIVE_TOOLS",
+    "DepartmentRecordMissing",
+    "DriveFetchError",
+    "EM_QUERY",
+    "LIMS_QUERY",
+    "PRIOR_ART_QUERY",
+    "PRIOR_ART_REDACT",
+    "PRIOR_ART_WRITE",
+    "STERILITY_BIND_RESUME_HANDLE",
+    "STERILITY_GET",
+    "STERILITY_START",
+    "STERILITY_TOOLS",
+    "coa_fetch",
+    "drive_fetch_evidence",
+    "em_query",
+    "lims_query",
+]
 
 LIMS_QUERY = "lims_query"
 EM_QUERY = "em_query"
@@ -62,36 +97,36 @@ ALLOWED_DEPARTMENT_TOOLS = frozenset({LIMS_QUERY, EM_QUERY, COA_FETCH})
 DRIVE_TOOLS = frozenset({DRIVE_FETCH_EVIDENCE})
 
 
-class DepartmentRecordMissing(Exception):
-    """No catalog row for the requested tenant/batch."""
-
-
 class DriveFetchError(Exception):
     """The Drive API call failed, or returned a file this ingest path rejects."""
 
 
-def _snapshot(*, tenant_id: str, batch_id: str):
-    snapshot = lookup_department_snapshot(tenant_id=tenant_id, batch_id=batch_id)
-    if snapshot is None:
-        raise DepartmentRecordMissing(
-            f"No department records for {tenant_id}/{batch_id}."
-        )
-    return snapshot
-
-
 def lims_query(*, tenant_id: str, batch_id: str) -> LimsSnapshot:
-    """LIMS assay rows in Cloud SQL connector shape."""
-    return _snapshot(tenant_id=tenant_id, batch_id=batch_id).lims
+    """QC lab assay results for one tenant's batch. Read-only.
+
+    Backed by a real Cloud SQL table when ``COUNTERSIGN_LIMS_BACKEND=cloud_sql``,
+    otherwise by the pinned synthetic catalog. The returned ``system`` and
+    ``source_uri`` name whichever one actually answered, so a citation always
+    points at the system the value was read from.
+    """
+    return get_lims_source().lims(tenant_id=tenant_id, batch_id=batch_id)
 
 
 def em_query(*, tenant_id: str, batch_id: str) -> EmSnapshot:
-    """Environmental-monitoring rows in BigQuery connector shape."""
-    return _snapshot(tenant_id=tenant_id, batch_id=batch_id).em
+    """Environmental-monitoring readings for one tenant's batch. Read-only.
+
+    Backed by a real BigQuery table when ``COUNTERSIGN_EM_BACKEND=bigquery``,
+    otherwise by the pinned synthetic catalog.
+    """
+    return get_em_source().em(tenant_id=tenant_id, batch_id=batch_id)
 
 
 def coa_fetch(*, tenant_id: str, batch_id: str) -> CoaSnapshot:
-    """Supplier CoA in Drive-normalized connector shape."""
-    return _snapshot(tenant_id=tenant_id, batch_id=batch_id).coa
+    """Supplier CoA in Drive-normalized connector shape.
+
+    Still catalog-backed: the untrusted supplier channel is its own P1 item.
+    """
+    return get_coa_source().coa(tenant_id=tenant_id, batch_id=batch_id)
 
 
 # MIME types the Drive API may return that ingest.py's allow-list also
