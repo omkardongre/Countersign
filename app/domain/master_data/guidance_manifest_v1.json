@@ -1,0 +1,58 @@
+{
+  "manifest_id": "controlled_guidance_manifest",
+  "manifest_version": "1.0.0",
+  "effective_date": "2026-08-24",
+  "approved_by": "QA-Head (synthetic)",
+  "change_control_ref": "CC-2026-0161 (synthetic)",
+  "description": "Doc 12 T1-5 document-control ledger for controlled SOP and public-guidance RAG citations. Every entry names the corpus, version, approval state, and exact source_uri Vertex AI RAG Engine reports for that file at import time. This file does not authorise batch certification and does not itself grant citation authority; the deterministic investigation gate re-checks approved/superseded/tenant scope against this ledger for every retrieved chunk.",
+  "documents": [
+    {
+      "doc_id": "SOP-QA-014",
+      "corpus": "controlled_sop",
+      "title": "Deviation Investigation and Root Cause Analysis (synthetic SOP)",
+      "version": "4.0",
+      "effective_date": "2026-06-01",
+      "approved": true,
+      "superseded": false,
+      "jurisdiction": null,
+      "tenant_id": "aurex",
+      "source_uri": "https://drive.google.com/synthetic/qms/sop-qa-014"
+    },
+    {
+      "doc_id": "EU-GMP-ANNEX-1-2022",
+      "corpus": "public_guidance",
+      "title": "EU GMP Annex 1: Manufacture of Sterile Medicinal Products",
+      "version": "2022-08-25",
+      "effective_date": "2023-08-25",
+      "approved": true,
+      "superseded": false,
+      "jurisdiction": "EU",
+      "tenant_id": null,
+      "source_uri": "https://health.ec.europa.eu/system/files/2022-08/20220825_gmp-an1_en_0.pdf"
+    },
+    {
+      "doc_id": "ICH-Q9-R1-2023",
+      "corpus": "public_guidance",
+      "title": "ICH Q9(R1): Quality Risk Management",
+      "version": "R1",
+      "effective_date": "2023-01-01",
+      "approved": true,
+      "superseded": false,
+      "jurisdiction": "ICH",
+      "tenant_id": null,
+      "source_uri": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/q9r1-quality-risk-management"
+    },
+    {
+      "doc_id": "FDA-OOS-GUIDANCE-2022",
+      "corpus": "public_guidance",
+      "title": "FDA Guidance for Industry: Investigating Out-of-Specification (OOS) Test Results",
+      "version": "2022-05",
+      "effective_date": "2022-05-01",
+      "approved": true,
+      "superseded": false,
+      "jurisdiction": "US",
+      "tenant_id": null,
+      "source_uri": "https://www.fda.gov/media/158416/download"
+    }
+  ]
+}
