@@ -81,6 +81,7 @@ So Countersign is built on one non-negotiable rule:
 | Runtime | Agent Runtime, `gemini-3.6-flash` via Vertex AI |
 | Durable state | Cloud SQL Postgres via ADK `DatabaseSessionService` |
 | Case memory | Firestore + embeddings (provenance and tenant filtering that Memory Bank cannot round-trip), or BigQuery `VECTOR_SEARCH` (doc `12` T1-4) behind the same interface — explicit opt-in per deployment, unset keeps Firestore |
+| Controlled guidance | Vertex AI RAG Engine via department MCP: separate tenant-scoped SOP and public-guidance corpora, manifest-verified citations, deterministic SOP gate |
 | Observability | Agent Observability, Cloud Trace, Cloud Logging |
 
 ---
@@ -109,6 +110,7 @@ So Countersign is built on one non-negotiable rule:
 | Scheduler wake-up (`POST /scheduler/sterility-tick`) | Done live — Cloud Scheduler job `countersign-sterility-tick` (OIDC, `*/15 * * * *`) hits the deployed tick Cloud Run service; manual trigger returns `200` |
 | Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `4625084117367652352`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
 | Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; indexes `READY`; MCP Cloud Run `countersign-department-mcp` serves `prior_art_*` (`verify_mcp_case_memory.py`, embedded KNN). Runtime prior-art on a live case and Gateway 403 are not claimed |
+| Controlled SOP/public guidance RAG | Implemented, not live — Vertex RAG Engine retrieval, separate corpora, manifest verification, tenant CEL filtering, MCP isolation, and deterministic controlled-SOP citation gate. Manual corpus creation/import, Drive IAM, manifest population, MCP env configuration, redeploy, and live verification remain required |
 | UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; architecture diagram and demo film not started |
 | Manufacturing evidence over Drive | Done live (2026-08-19) — `drive_fetch_evidence` MCP tool reads a real scanned BMR page from Google Drive; `collect_manufacturing` pulls it by file id instead of trusting pushed bytes. No placeholder evidence remains on the live path |
 | **P-L: real multi-day sterility hold (uncompressed)** | **Done live (2026-08-20)** — a disposable case (`aurex`/`LONGHOLD-PL-01`) opened on the deployed Runtime with no `COUNTERSIGN_STERILITY_HOLD_SECONDS` set. Confirmed from the live session event: `compressed_for_demo: false`, `hold_seconds: 1209600` (14 days exactly), `started_at: 2026-08-20T17:58:11Z`, `due_at: 2026-09-03T17:58:11Z`. Not to be ticked/resumed before `due_at` — it is the real wall-clock resume proof for the demo film. Details in `checklist.md` |
@@ -206,6 +208,47 @@ citation flow do not change). `app/domain/case_memory_store_bigquery.py`:
   hardcoded string.
 - Not yet done: provisioning the vector index in a live project and flipping the backend flag
   on a deployed MCP service — the scripts exist, the switch has not been made live.
+
+### T1-5 — controlled SOP and public regulatory-guidance RAG
+
+T1-5 is implemented with Vertex AI RAG Engine behind the existing department MCP credential
+boundary. It deliberately uses two corpora: a tenant-scoped controlled-SOP corpus and a
+separate public regulatory-guidance corpus for Annex 1, ICH Q9(R1), and OOS material. Public
+guidance is advisory and can never satisfy the controlled-SOP citation requirement or become
+batch evidence.
+
+`controlled_guidance_query` is the only Runtime retrieval path. Vertex results are checked
+against the change-controlled `app/domain/master_data/guidance_manifest_v1.json` before they
+are returned. The manifest is authoritative for exact `source_uri`, version, approval state,
+effective date, supersession state, and tenant scope. Controlled-SOP retrieval applies a
+Vertex CEL `tenant_id` filter. The deterministic investigation gate requires at least one
+in-force controlled-SOP citation whenever the SOP corpus is configured. Transport outages may
+produce an empty advisory result; implementation errors are not swallowed, and production has
+no dummy, stale, or silent fallback.
+
+**Manual live provisioning — not performed here.** Before this can be called live, an operator
+must:
+
+1. Run `infra/geap/provision_guidance_rag.sh` to create both Vertex RAG corpora and grant
+   `roles/aiplatform.user` to the department MCP service account.
+2. Grant the Google-provided Agent Platform RAG Data Service Agent Viewer access to the
+   controlled SOP Drive folder.
+3. Import approved tenant SOPs from the tenant Drive QMS folder into the controlled-SOP corpus.
+4. Import the real Annex 1 / ICH Q9(R1) / OOS PDFs into the public-guidance corpus, normally
+   from approved Cloud Storage.
+5. Add the correct `tenant_id` metadata to every controlled-SOP import for CEL filtering.
+6. Set `COUNTERSIGN_GUIDANCE_SOP_CORPUS` and `COUNTERSIGN_GUIDANCE_PUBLIC_CORPUS` on the
+   department MCP Cloud Run service; never set `COUNTERSIGN_GUIDANCE_INMEMORY` in production.
+7. Add every imported file's exact Vertex-reported `source_uri`, version, approval state,
+   effective date, supersession state, and tenant scope to the guidance manifest under change
+   control.
+8. Redeploy the department MCP service, update/verify the Gateway allow-list, and run an
+   authenticated live verification of tenant filtering, source verification, and citation
+   gating. No deployment or live verification is claimed yet.
+
+Local validation: `uv run pytest tests/unit/test_guidance_rag.py -q` passed 17 tests;
+`uv run pytest tests/unit -q` passed 229 tests with 3 pre-existing `GEMINI_API_KEY` failures
+in unrelated case-graph paths; Ruff and `ty check` passed on the touched/new guidance code.
 
 The investigation↔challenger revision loop (a back-edge, per the official
 [graph routes doc](https://google.github.io/adk-docs/graphs/routes/)) is a deliberate open
@@ -815,6 +858,12 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     case_memory_mcp.py                  async client the case Runtime uses (no direct Firestore)
     case_memory_node.py                 retrieve_prior_art / record_case_memory graph nodes
     case_memory_redact.py               redact one poisoned fact (operator CLI)
+    guidance_models.py                  controlled SOP/public guidance models and citations
+    guidance_manifest.py                change-controlled source and document-control validation
+    guidance_source.py                  Vertex AI RAG Engine retrieval adapter
+    guidance_mcp.py                     async MCP client for controlled guidance retrieval
+    guidance_node.py                    retrieve controlled guidance graph node
+    master_data/guidance_manifest_v1.json  controlled guidance source ledger
     workflow_meta.py                    workflow name + version stamped into session state
     challenger.py                       clean-context verifier (no tools)
     release_models.py                   Annex 16 checklist result types
@@ -827,8 +876,9 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     department_server.py                FastMCP Streamable HTTP: `lims_query` / `em_query` /
                                            `coa_fetch` / `sterility_start` / `sterility_get` /
                                            `sterility_bind_resume_handle` / `prior_art_query` /
-                                           `prior_art_write` / `prior_art_redact`
-    client.py                           collector MCP client (https URL or explicit in-process)
+                                           `prior_art_write` / `prior_art_redact` /
+                                           `controlled_guidance_query`
+    client.py                           collector and guidance MCP clients
   scheduler/
     auth.py                              OIDC verify for Cloud Scheduler (fails closed)
     resume.py                            deliver a tick; Runner or Agent Runtime :streamQuery
@@ -858,6 +908,7 @@ infra/geap/
   provision_sessions_sql.sh           Cloud SQL Postgres + IAM user + Secret Manager
   provision_case_memory.sh            Firestore Native + vector/recency indexes + MCP IAM
   provision_case_memory_bigquery.sh   BigQuery Case Memory dataset/table/IAM (doc 12 T1-4)
+  provision_guidance_rag.sh             Vertex RAG corpora + department MCP IAM for T1-5
   verify_case_memory.py               live KNN + tenant filter + redact probe
   verify_case_memory_bigquery.py      live VECTOR_SEARCH + tenant isolation + redact probe
   verify_mcp_case_memory.py           authenticated Streamable HTTP prior_art_* on Cloud Run
