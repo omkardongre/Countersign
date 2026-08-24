@@ -167,7 +167,7 @@ def stub_ground_truth(monkeypatch):
 @pytest.fixture
 def stub_investigation_agents(monkeypatch):
     monkeypatch.setattr(
-        investigation_mod, "get_investigation_agent", lambda: _stub_investigator()
+        investigation_mod, "get_investigation_agent", lambda *_args: _stub_investigator()
     )
     monkeypatch.setattr(
         challenger_mod, "get_challenger_agent", lambda: _stub_challenger()
@@ -537,11 +537,11 @@ def test_extractor_seam_is_unchanged() -> None:
     agent = get_page_extractor()
     assert agent.mode == "single_turn"
     assert agent.include_contents == "none"
-    investigator = get_investigation_agent()
+    investigator = get_investigation_agent(lambda: None, lambda: None)
     assert investigator.name == "deviation_investigator"
     assert investigator.mode == "single_turn"
     assert investigator.include_contents == "none"
-    assert investigator.tools == []
+    assert len(investigator.tools) == 2
     challenger = get_challenger_agent()
     assert challenger.name == "investigation_challenger"
     assert challenger.mode == "single_turn"

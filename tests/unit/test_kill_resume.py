@@ -108,7 +108,7 @@ def stub_ground_truth(monkeypatch):
 @pytest.fixture
 def stub_investigation_agents(monkeypatch):
     monkeypatch.setattr(
-        investigation_mod, "get_investigation_agent", lambda: _stub_investigator()
+        investigation_mod, "get_investigation_agent", lambda *_args: _stub_investigator()
     )
     monkeypatch.setattr(
         challenger_mod, "get_challenger_agent", lambda: _stub_challenger()

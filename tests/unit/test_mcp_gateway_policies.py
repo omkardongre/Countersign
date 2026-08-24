@@ -84,6 +84,7 @@ def test_case_workflow_policy_allows_all_named_tools() -> None:
         "sterility_bind_resume_handle",
         "prior_art_query",
         "prior_art_write",
+        "controlled_guidance_query",
         "case_status_upsert",
         "qms_report_write",
     }
