@@ -80,7 +80,7 @@ So Countersign is built on one non-negotiable rule:
 | **Domain policy** | **Countersign TQA `ext_proc` extension — ours** |
 | Runtime | Agent Runtime, `gemini-3.6-flash` via Vertex AI |
 | Durable state | Cloud SQL Postgres via ADK `DatabaseSessionService` |
-| Case memory | Firestore + embeddings (provenance and tenant filtering that Memory Bank cannot round-trip); code done, not yet live |
+| Case memory | Firestore + embeddings (provenance and tenant filtering that Memory Bank cannot round-trip), or BigQuery `VECTOR_SEARCH` (doc `12` T1-4) behind the same interface — explicit opt-in per deployment, unset keeps Firestore |
 | Observability | Agent Observability, Cloud Trace, Cloud Logging |
 
 ---
@@ -168,7 +168,46 @@ Annex 16 package as a real Google Doc via its own `qms_report_write` MCP tool, o
 Gateway allow-list entry disjoint from every read-only tool set. Requires
 `COUNTERSIGN_QMS_REPORTS_FOLDER_ID` (the `03 Deviation Reports` folder id) on the department MCP
 deployment, and Editor (not read-only) access on that folder for the MCP service account — the
-one Drive grant in this system that is a write, not a read. The investigation↔challenger revision loop (a back-edge, per the official
+one Drive grant in this system that is a write, not a read.
+
+**Prior-deviation similarity on real BigQuery `VECTOR_SEARCH` (doc `12` T1-4).** The
+`deviation_investigator` agent's `prior_art_query` tool can now be backed by a real BigQuery
+table instead of Firestore, selected by `COUNTERSIGN_CASE_MEMORY_BACKEND=bigquery` on the
+department MCP deployment (unset keeps Firestore; both implement the same `CaseMemoryStore`
+protocol, so the MCP tool signatures, the Runtime client, and the Investigation agent's
+citation flow do not change). `app/domain/case_memory_store_bigquery.py`:
+
+- Tenant and redaction predicates are placed **inside** the `VECTOR_SEARCH` base-table
+  subquery (a pre-filter), never appended as a `WHERE` clause around the function call (a
+  post-filter) — per BigQuery's own filtering guidance, a post-filter can silently return
+  fewer than `top_k` rows or let a different tenant's closer vectors starve the requested
+  tenant's own results out of the candidate set entirely. `tenant_id` and `redacted` are
+  declared `STORING` columns on the vector index so this pre-filter can use the index.
+- Writes are an idempotent `MERGE` keyed by `fact_id`; redaction is a targeted `UPDATE`, never
+  a physical delete — the same rerun-safe, audit-preserving contract the Firestore store
+  already has.
+- Embeddings use Vertex's task-type parameter (`RETRIEVAL_DOCUMENT` for stored facts,
+  `RETRIEVAL_QUERY` for incoming queries, per
+  [Vertex's own asymmetric-retrieval guidance](https://cloud.google.com/vertex-ai/generative-ai/docs/embeddings/task-types))
+  and a dimension check on every embedding call, applied to the Firestore path too. An
+  embedding failure fails the write outright rather than storing a fact with no vector,
+  which would be permanently unreachable by similarity with no visible symptom.
+- `similarity_score` (real `1 - cosine_distance` from the query result) and
+  `root_cause_category` (the investigation draft's actual leading hypothesis category, if one
+  was drafted) now flow through `CaseMemoryFact` into the investigation brief — never
+  fabricated; a case with no drafted hypothesis reports `None`, not a guessed category.
+  `similarity_score` is explicitly documented to the investigation agent as a ranking signal
+  only, never evidence of shared root cause.
+- `infra/geap/provision_case_memory_bigquery.sh` provisions the dataset/table/IAM;
+  `infra/geap/verify_case_memory_bigquery.py` is a live probe proving real cross-tenant
+  isolation (a foreign-tenant row with near-identical wording must never leak into the
+  requesting tenant's results) and redaction. Fleet manifest reports whichever backend is
+  actually configured (`firestore_case_memory` / `bigquery` / `in_memory_fixture`) instead of a
+  hardcoded string.
+- Not yet done: provisioning the vector index in a live project and flipping the backend flag
+  on a deployed MCP service — the scripts exist, the switch has not been made live.
+
+The investigation↔challenger revision loop (a back-edge, per the official
 [graph routes doc](https://google.github.io/adk-docs/graphs/routes/)) is a deliberate open
 decision, not an oversight — it would change the current, documented rule that challenger
 attacks are recorded but never auto-fail the gate.
@@ -772,6 +811,7 @@ app/                              agents-cli scaffold (FastAPI, A2A, Runtime ada
     sterility_tick.py                   mark due incubations complete (operator CLI)
     case_memory_models.py               CaseMemoryFact / query result types
     case_memory_store.py                Firestore (find_nearest) or in-memory Case Memory store
+    case_memory_store_bigquery.py       BigQuery VECTOR_SEARCH Case Memory store (doc 12 T1-4)
     case_memory_mcp.py                  async client the case Runtime uses (no direct Firestore)
     case_memory_node.py                 retrieve_prior_art / record_case_memory graph nodes
     case_memory_redact.py               redact one poisoned fact (operator CLI)
@@ -817,7 +857,9 @@ infra/geap/
   verify_tqa_policy.sh                allow/deny probe + gateway networkConfig
   provision_sessions_sql.sh           Cloud SQL Postgres + IAM user + Secret Manager
   provision_case_memory.sh            Firestore Native + vector/recency indexes + MCP IAM
+  provision_case_memory_bigquery.sh   BigQuery Case Memory dataset/table/IAM (doc 12 T1-4)
   verify_case_memory.py               live KNN + tenant filter + redact probe
+  verify_case_memory_bigquery.py      live VECTOR_SEARCH + tenant isolation + redact probe
   verify_mcp_case_memory.py           authenticated Streamable HTTP prior_art_* on Cloud Run
   bootstrap_sessions_sql.py           GRANT IAM user; create sterility_incubation
   verify_sessions_sql.py              live IAM write + ADK session round-trip
