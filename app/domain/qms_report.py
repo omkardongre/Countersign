@@ -55,7 +55,22 @@ def _branch_section(branch: BranchOutcome) -> list[str]:
             f"  Finding [{finding.finding_type.value}] {finding.label}: "
             f"{finding.description}"
         )
-    if not branch.error and not branch.findings and branch.status.value == "ok":
+    for advisory in branch.advisory_findings:
+        lines.append(
+            f"  Advisory-only [{advisory.source.value}] {advisory.title}: "
+            f"{advisory.description} (does not affect release gating)"
+        )
+    if branch.regulatory_screening is not None:
+        lines.append(
+            "  Regulatory screening is public advisory context only; "
+            "it is not supplier clearance and is not used by the release gate."
+        )
+    if (
+        not branch.error
+        and not branch.findings
+        and not branch.advisory_findings
+        and branch.status.value == "ok"
+    ):
         lines.append("  No findings on this branch.")
     return lines
 

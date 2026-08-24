@@ -140,11 +140,17 @@ def stub_department_agents(monkeypatch):
 
         return stub_qc_agent
 
-    def _stub_get_supply_agent(coa_tool):
+    def _stub_get_supply_agent(coa_tool, eudragmdp_tool, openfda_tool):
         @node(name="stub_supply_agent")
         async def stub_supply_agent(node_input):
             await coa_tool()
-            return branches_mod.SupplyAgentSummary(coa_reviewed=True)
+            await eudragmdp_tool()
+            await openfda_tool()
+            return branches_mod.SupplyAgentSummary(
+                coa_reviewed=True,
+                eudragmdp_screened=True,
+                openfda_screened=True,
+            )
 
         return stub_supply_agent
 

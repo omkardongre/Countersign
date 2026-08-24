@@ -111,6 +111,7 @@ So Countersign is built on one non-negotiable rule:
 | Case-workflow Agent Runtime deploy | Done live — `infra/geap/deploy_case_runtime.py` run against `countersign-505107`; reasoningEngine `4625084117367652352`. Uses Vertex-managed sessions (Agent Identity cannot hold Cloud SQL IAM credentials) |
 | Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; indexes `READY`; MCP Cloud Run `countersign-department-mcp` serves `prior_art_*` (`verify_mcp_case_memory.py`, embedded KNN). Runtime prior-art on a live case and Gateway 403 are not claimed |
 | Controlled SOP/public guidance RAG | Implemented, not live — Vertex RAG Engine retrieval, separate corpora, manifest verification, tenant CEL filtering, MCP isolation, and deterministic controlled-SOP citation gate. Manual corpus creation/import, Drive IAM, manifest population, MCP env configuration, redeploy, and live verification remain required |
+| **T1-7 public EudraGMDP/openFDA screening** | **Implemented, not live** — official EudraGMDP non-compliance HTML and openFDA drug-enforcement clients, strict parsing/provenance/bounded cache, dedicated read-only MCP boundary, typed `screening_unavailable`, advisory-only case/report fields, and private Cloud Run/Gateway artifacts. No deployment or Gateway application was performed; public CoA identity population and runtime IAM/URL configuration remain manual |
 | UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; architecture diagram and demo film not started |
 | Manufacturing evidence over Drive | Done live (2026-08-19) — `drive_fetch_evidence` MCP tool reads a real scanned BMR page from Google Drive; `collect_manufacturing` pulls it by file id instead of trusting pushed bytes. No placeholder evidence remains on the live path |
 | **P-L: real multi-day sterility hold (uncompressed)** | **Done live (2026-08-20)** — a disposable case (`aurex`/`LONGHOLD-PL-01`) opened on the deployed Runtime with no `COUNTERSIGN_STERILITY_HOLD_SECONDS` set. Confirmed from the live session event: `compressed_for_demo: false`, `hold_seconds: 1209600` (14 days exactly), `started_at: 2026-08-20T17:58:11Z`, `due_at: 2026-09-03T17:58:11Z`. Not to be ticked/resumed before `due_at` — it is the real wall-clock resume proof for the demo film. Details in `checklist.md` |
@@ -133,14 +134,14 @@ verified against ADK 2.6.3 and the official
 | `manufacturing_evidence_agent` | `drive_fetch_evidence` | Agent decides to fetch; fetched bytes are captured from the real tool call and handed to the deterministic ingest → extract → validate → compliance chain unchanged |
 | `qc_lab_agent` | `lims_query` | Agent decides to call it; `check_lims` runs on the tool's captured `LimsSnapshot`, never on the agent's text |
 | `environmental_monitoring_agent` | `em_query` | Agent decides to call it; `check_em` runs on the tool's captured `EmSnapshot`. Split from `qc_lab_agent` into its own agent/department — separate data system (BigQuery vs LIMS Cloud SQL) |
-| `supply_assurance_agent` | `coa_fetch` (untrusted channel) | Agent decides to call it; only certificate metadata (never certificate text) reaches the model as tool output; `check_coa` runs on the captured `CoaSnapshot` |
+| `supply_assurance_agent` | `coa_fetch`, `eudragmdp_screen`, `openfda_enforcement_screen` (public read-only screening) | Agent decides to call the tenant-locked CoA tool first and the two dedicated public screens once each; only safe screening status metadata reaches the model; `check_coa` runs on the captured `CoaSnapshot`, while regulator results remain typed advisory context outside compliance findings |
 | `deviation_investigator` | `prior_art_query` | May re-query prior deviations at most once; any fact it surfaces becomes citeable only because it was captured from the real tool call, never by the agent's assertion. Citations are checked afterwards by the deterministic `investigation_gate` |
 | `investigation_challenger` | none, by design | Runs with a clean context (no shared history with the investigator) so it cannot rubber-stamp its own prior wording. Attacks are recorded for the QP; they do not themselves fail the gate |
 
 Every agent's tool calls run against tenant/batch-locked closures — the model supplies no
 scope arguments, so it cannot query another tenant's or batch's data. A branch fails closed if
-its agent skips a required tool call, so a `JoinNode` waiting on all four department branches
-can never stall on a silently-incomplete agent turn.
+its required CoA/evidence tool is not captured; an unavailable public screening result remains
+explicit advisory context and does not by itself gate the case.
 
 ### P1 — real department systems (live)
 
@@ -254,6 +255,70 @@ The investigation↔challenger revision loop (a back-edge, per the official
 [graph routes doc](https://google.github.io/adk-docs/graphs/routes/)) is a deliberate open
 decision, not an oversight — it would change the current, documented rule that challenger
 attacks are recorded but never auto-fail the gate.
+
+### T1-7 — public EudraGMDP and openFDA supplier/defect screening
+
+T1-7 is implemented but deliberately **not deployed or claimed live**. The supply-assurance
+agent has three exact zero-argument closures: `fetch_supplier_coa`, `eudragmdp_screen`, and
+`openfda_enforcement_screen`. The CoA closure captures the typed source record first; each
+regulator closure maps only explicitly public manufacturer/site/product/active-ingredient/
+defect fields into the dedicated MCP boundary. Tenant, case, batch, internal supplier, lot,
+and confidential deviation identifiers never enter a public request.
+
+The regulator clients use only the official EudraGMDP non-compliance portal and official openFDA
+drug-enforcement API. Responses are schema-validated and provenance-stamped with the request,
+HTTP status, retrieval time, source update time where available, cache state, response hash,
+and parser/schema versions. The cache is bounded and TTL-limited; expired entries and
+unavailable results are never returned as fallback data. Missing public identity, MCP errors,
+upstream transport/HTTP/rate-limit/size/schema failures, and incomplete agent tool calls become
+explicit `screening_unavailable` results. Current catalog CoA rows do not contain public
+manufacturer/product/defect identity, so current catalog cases produce unavailable results
+rather than fabricated queries or broad searches.
+
+`RegulatoryScreeningBundle` and `ScreeningAdvisoryFinding` remain separate from
+`ComplianceFinding`. A hit, no-hit, or unavailable result is visible in the case/QMS report as
+advisory context only; the Annex 16/release-gate path evaluates CoA compliance findings, not
+public-regulator results. Upstream record identifiers remain in typed/report data and are not
+returned to the supply model as instructions or free text.
+
+The dedicated private service artifacts are `Dockerfile.regulatory-screening-mcp`,
+`infra/geap/cloudbuild-regulatory-screening-mcp.yaml`,
+`infra/geap/deploy_regulatory_screening_mcp.sh`, and
+`infra/geap/mcp-case-workflow-regulatory-screening-allow.yaml`. Manual configuration still
+requires provisioning the two least-privilege service accounts, deploying the private MCP,
+applying the Gateway policy/binding checklist and Model Armor host exclusion, granting the
+case Runtime Agent Identity token-creator access to the separate screening invoker account,
+and passing `--regulatory-mcp-url` plus
+`--regulatory-mcp-invoker-service-account` to `deploy_case_runtime.py`. This implementation
+session performed none of those deployment/IAM operations.
+
+Local validation after the T1-7 wiring included targeted Ruff and `ty` checks, strict boundary
+smokes through the in-process MCP, official live EudraGMDP/openFDA client checks, and
+`uv run pytest tests/unit -q`: 229 tests passed; three unrelated pre-existing
+`test_case_graph.py` fixture failures remain because that fixture invokes an unstubbed EM LLM
+path and patches a lookup symbol that is not exposed by `department_tools.py`.
+
+A follow-up design review (via the `semantic_reviewer` sub-agent) against the working diff
+found and fixed three implementation gaps before anything else was considered done: the supply
+agent's own instruction text named a tool (`screen_eudragmdp`) that did not match the exposed
+`eudragmdp_screen`/`openfda_enforcement_screen` tool constants; openFDA HTTP redirects were
+followed without validating the final host/path/query against the official endpoint (the
+EudraGMDP client already had this check); and the branch-side `_screening_result_contract`
+accepted any result sharing the expected URL's scheme/host/path rather than checking the exact
+EudraGMDP request parameters, exact openFDA request URL/parameters, parser/schema version, and
+cache state. All three are fixed: the instruction now interpolates the real tool-name constants,
+an `_OpenFdaRedirectHandler`/`_validated_openfda_url` pair pins openFDA redirects the same way
+Eudra redirects are pinned, and the contract check now compares the complete request contract.
+`deploy_regulatory_screening_mcp.sh` is also now executable. Re-run after these fixes: Ruff and
+`ty` clean on every touched file, `uv run pytest tests/unit -q` unchanged at 229 passed / the
+same three pre-existing failures, and both a live EudraGMDP no-hit and a live openFDA hit (plus
+its cached replay) pass the tightened contract check.
+
+Findings from that same review left unchanged, because they describe known, already-documented
+limitations rather than defects: the synthetic catalog CoA carries no public manufacturer/
+product/defect identity, so current catalog cases correctly resolve to `screening_unavailable`
+rather than a fabricated query; and the private Cloud Run deployment, Gateway policy
+application, and Runtime IAM grants remain manual, unapplied steps, exactly as stated below.
 
 ### P3 — sponsor liaison A2A peer (agent 8 of 8)
 
