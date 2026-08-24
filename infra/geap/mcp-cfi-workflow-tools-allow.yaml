@@ -1,0 +1,41 @@
+# Native MCP tool-name ALLOW for the separate CFI Workflow Agent Identity.
+#
+# Phase 1 is deliberately limited to the durable CFI store and tenant-locked
+# sibling-batch scope expansion. The case Workflow identity is not granted
+# these tools, and this CFI identity is not granted the case workflow's
+# department, QMS, regulatory, or sponsor tools (see
+# mcp-tool-policy-bindings.yaml).
+#
+# The CFI Runtime reaches the department MCP over the Agent Gateway. The
+# department MCP service remains private Cloud Run; its own run.invoker check
+# is an additional boundary, not a replacement for this Gateway policy.
+#
+# MATCH_BASE_PROTOCOL_METHODS is required or initialize/ping are denied and
+# no MCP session can be established.
+name: countersign-mcp-cfi-workflow-tools
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: REQUEST_AUTHZ
+action: ALLOW
+httpRules:
+  - to:
+      operations:
+        - hosts:
+            - exact: "countersign-department-mcp-777448403573.us-central1.run.app"
+          mcp:
+            baseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+            methods:
+              - name: "tools/list"
+              - name: "tools/call"
+                params:
+                  - exact: "sibling_batch_query"
+              - name: "tools/call"
+                params:
+                  - exact: "cfi_open"
+              - name: "tools/call"
+                params:
+                  - exact: "cfi_get"
+              - name: "tools/call"
+                params:
+                  - exact: "cfi_save"

@@ -37,6 +37,13 @@ bindings:
     identity: sponsor_liaison
     tools:
       - sponsor_batch_status
+  - policy: mcp-cfi-workflow-tools-allow.yaml
+    identity: cfi_workflow
+    tools:
+      - sibling_batch_query
+      - cfi_open
+      - cfi_get
+      - cfi_save
 forbidden_bindings:
   - policy: mcp-qc-probe-lims-only.yaml
     identity: case_workflow
@@ -62,3 +69,19 @@ forbidden_bindings:
     identity: sponsor_liaison
   - policy: mcp-qc-probe-lims-only.yaml
     identity: sponsor_liaison
+  - policy: mcp-cfi-workflow-tools-allow.yaml
+    identity: case_workflow
+  - policy: mcp-case-workflow-tools-allow.yaml
+    identity: cfi_workflow
+  - policy: mcp-case-workflow-regulatory-screening-allow.yaml
+    identity: cfi_workflow
+  - policy: mcp-qc-probe-lims-only.yaml
+    identity: cfi_workflow
+  - policy: mcp-sponsor-liaison-status-only.yaml
+    identity: cfi_workflow
+  - policy: mcp-cfi-workflow-tools-allow.yaml
+    identity: qc_probe
+  - policy: mcp-cfi-workflow-tools-allow.yaml
+    identity: sponsor_liaison
+  - policy: mcp-cfi-workflow-tools-allow.yaml
+    identity: hello_runtime
