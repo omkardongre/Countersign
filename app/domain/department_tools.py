@@ -581,13 +581,16 @@ async def prior_art_write(
     confidence: float,
     case_tenant_id: str,
     fact_id: str | None = None,
+    root_cause_category: str | None = None,
 ):
     """Write one fact about a case into Case Memory for future retrieval.
 
     ``fact_id`` is optional; a caller with a natural idempotency key (see
     ``app/domain/case_memory_node.py::record_case_memory``) should pass one
     so a resume-triggered rerun overwrites the same fact instead of writing
-    a duplicate.
+    a duplicate. ``root_cause_category`` is the leading investigation
+    hypothesis's fishbone tag at write time, if one was actually drafted for
+    this case — never fabricated by this function.
     """
     _check_memory_tenant(tenant_id, case_tenant_id)
     from app.domain.case_memory_store import get_case_memory_store
@@ -600,6 +603,7 @@ async def prior_art_write(
         source_uri=source_uri,
         confidence=confidence,
         fact_id=fact_id,
+        root_cause_category=root_cause_category,
     )
 
 

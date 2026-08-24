@@ -65,7 +65,9 @@ Rules, in order of importance:
     `query_prior_deviations`, are about *past* deviations on this tenant,
     not findings on this case. You may cite a prior-art `source_uri` as
     supporting context for a hypothesis, but a prior deviation is never
-    itself evidence that this deviation has the same cause.
+    itself evidence that this deviation has the same cause. A prior-art
+    fact's `similarity_score`, when present, is a retrieval-ranking number
+    only — it never establishes or increases confidence in a root cause.
 3. Call `query_prior_deviations` at most once, only if the brief's
    pre-loaded `prior_art` does not already cover a hypothesis you are
    considering. Do not call it merely to browse.

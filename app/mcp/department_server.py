@@ -430,6 +430,7 @@ def build_department_mcp(
         confidence: float,
         case_tenant_id: str,
         fact_id: str | None = None,
+        root_cause_category: str | None = None,
     ) -> CaseMemoryFact:
         try:
             return await run_prior_art_write(
@@ -441,6 +442,7 @@ def build_department_mcp(
                 confidence=confidence,
                 case_tenant_id=case_tenant_id,
                 fact_id=fact_id,
+                root_cause_category=root_cause_category,
             )
         except CaseMemoryTenantMismatch as exc:
             raise ToolError(str(exc)) from exc

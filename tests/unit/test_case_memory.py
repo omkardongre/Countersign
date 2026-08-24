@@ -154,6 +154,25 @@ def test_get_case_memory_store_honors_inmemory_flag(
     mod.reset_case_memory_store_cache()
 
 
+def test_get_case_memory_store_honors_bigquery_backend_over_inmemory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``COUNTERSIGN_CASE_MEMORY_BACKEND=bigquery`` wins even if the
+    in-memory test flag is also set, matching ``get_lims_source``/
+    ``get_em_source``'s explicit-opt-in-per-backend precedence.
+    """
+    from app.domain import case_memory_store as mod
+    from app.domain.case_memory_store_bigquery import BigQueryCaseMemoryStore
+
+    monkeypatch.setenv("COUNTERSIGN_CASE_MEMORY_INMEMORY", "1")
+    monkeypatch.setenv("COUNTERSIGN_CASE_MEMORY_BACKEND", "bigquery")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "countersign-505107")
+    mod.reset_case_memory_store_cache()
+    store = get_case_memory_store()
+    assert isinstance(store, BigQueryCaseMemoryStore)
+    mod.reset_case_memory_store_cache()
+
+
 # --- department_tools.py cross-tenant guard ------------------------------
 
 

@@ -63,6 +63,12 @@ def build_investigation_brief(case: CaseComplianceResult) -> dict:
             "fact": fact.fact,
             "source_uri": fact.source_uri,
             "confidence": fact.confidence,
+            "root_cause_category": (
+                fact.root_cause_category.value
+                if fact.root_cause_category is not None
+                else None
+            ),
+            "similarity_score": fact.similarity_score,
         }
         for fact in case.prior_art
         if not fact.redacted

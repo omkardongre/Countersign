@@ -43,6 +43,7 @@ from app.domain.branches import (
     QC_AGENT_NAME,
     SUPPLY_AGENT_NAME,
 )
+from app.domain.case_memory_store import get_case_memory_store
 from app.domain.challenger import CHALLENGER_AGENT_NAME
 from app.domain.department_source import (
     coa_backend_name,
@@ -53,6 +54,16 @@ from app.domain.investigation import INVESTIGATION_AGENT_NAME
 from app.domain.qms_report_agent import QA_QMS_WRITE_AGENT_NAME, QA_QMS_WRITE_MODEL
 from app.domain.workflow_meta import CASE_WORKFLOW_NAME
 from app.sponsor_liaison.agent import SPONSOR_LIAISON_AGENT_NAME, SPONSOR_LIAISON_MODEL
+
+
+def _case_memory_backend_name() -> str:
+    """Reports the Case Memory backend the Investigation agent's
+    ``prior_art_query`` tool actually reaches right now — Firestore KNN or
+    real BigQuery ``VECTOR_SEARCH`` — the same "report what the code is
+    actually doing" discipline as ``lims_backend_name``/``em_backend_name``
+    in ``app/domain/department_source.py``.
+    """
+    return getattr(get_case_memory_store(), "backend_name", "firestore_case_memory")
 
 
 class AgentKind(StrEnum):
@@ -183,7 +194,7 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             department="investigation",
             model="gemini-3.6-flash",
             allowed_tools=["prior_art_query"],
-            backing_system="firestore_case_memory",
+            backing_system=_case_memory_backend_name(),
             reasoning_authority=False,
             description=(
                 "Real single-turn Agent that may re-query prior deviations "

@@ -122,6 +122,22 @@ def build_case_memory_fact(reviewed: QpReviewedPackage) -> str | None:
     )
 
 
+def leading_root_cause_category(reviewed: QpReviewedPackage) -> str | None:
+    """The investigation draft's highest-confidence hypothesis category, if
+    any hypothesis was actually drafted for this case.
+
+    Read directly off the recorded ``InvestigationDraft`` — never inferred
+    or guessed here — so a case whose investigation was skipped (see
+    ``investigation.py::_skip``) or produced no hypotheses correctly reports
+    ``None`` rather than a fabricated category.
+    """
+    draft = reviewed.release_package.investigation.draft
+    if draft is None or not draft.hypotheses:
+        return None
+    leading = max(draft.hypotheses, key=lambda hypothesis: hypothesis.confidence)
+    return leading.category.value
+
+
 def _qp_outcome_fact_id(tenant_id: str, case_id: str) -> str:
     """Deterministic key for this case's one QP-outcome fact.
 
@@ -157,6 +173,7 @@ async def record_case_memory_impl(reviewed: QpReviewedPackage) -> QpReviewedPack
             source_uri=f"case://{classified.tenant_id}/{classified.case_id}",
             confidence=1.0,
             fact_id=_qp_outcome_fact_id(classified.tenant_id, classified.case_id),
+            root_cause_category=leading_root_cause_category(reviewed),
         )
     except _STORE_OUTAGE_ERRORS as exc:
         # Same fail-open posture as retrieval: a Case Memory outage must not

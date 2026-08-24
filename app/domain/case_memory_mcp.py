@@ -68,10 +68,13 @@ class McpCaseMemoryStore:
         source_uri: str,
         confidence: float,
         fact_id: str | None = None,
+        root_cause_category: str | None = None,
     ) -> CaseMemoryFact:
         """Pass ``fact_id`` for a natural idempotency key on a rerun-prone
         caller (``record_case_memory``), so a resume overwrites rather than
-        duplicates the same fact.
+        duplicates the same fact. ``root_cause_category`` carries the
+        leading investigation hypothesis's fishbone tag, if the case
+        actually had one drafted.
         """
         arguments = {
             "tenant_id": tenant_id,
@@ -84,5 +87,7 @@ class McpCaseMemoryStore:
         }
         if fact_id is not None:
             arguments["fact_id"] = fact_id
+        if root_cause_category is not None:
+            arguments["root_cause_category"] = root_cause_category
         payload = await call_case_memory_tool(PRIOR_ART_WRITE, arguments)
         return CaseMemoryFact.model_validate(_unwrap(payload or {}))
