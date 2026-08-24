@@ -42,9 +42,11 @@ from app.domain.department_tools import (
     ALLOWED_DEPARTMENT_TOOLS,
     CASE_MEMORY_TOOLS,
     CASE_STATUS_TOOLS,
+    CFI_TOOLS,
     DRIVE_TOOLS,
     GUIDANCE_TOOLS,
     QMS_WRITE_TOOLS,
+    SIBLING_BATCH_QUERY,
     SPONSOR_TOOLS,
     STERILITY_TOOLS,
 )
@@ -453,6 +455,35 @@ async def call_sponsor_tool(name: str, arguments: dict[str, Any]) -> dict[str, A
     payload = await call_mcp_tool(name, arguments)
     if not payload:
         raise DepartmentToolCallError(f"{name} returned no structured content.")
+    return payload
+
+
+async def call_cfi_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    """Call ``cfi_get``/``cfi_save`` over MCP. CFI Runtime side only.
+
+    Same reason as ``call_sterility_tool``: an Agent Identity principal
+    cannot hold the Cloud SQL IAM credential ``cfi_investigation`` needs.
+    """
+    if name not in CFI_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(CFI_TOOLS)}"
+        )
+    return await call_mcp_tool(name, arguments)
+
+
+async def call_sibling_batch_tool(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Call ``sibling_batch_query`` over MCP. Fail closed on errors.
+
+    Its own helper, disjoint from ``call_department_tool``'s fixed
+    ``tenant_id/batch_id/lifecycle_state/case_tenant_id`` argument shape:
+    this tool additionally takes ``shared_attribute`` and returns a list of
+    candidates rather than a single department snapshot.
+    """
+    payload = await call_mcp_tool(SIBLING_BATCH_QUERY, arguments)
+    if payload is None:
+        raise DepartmentToolCallError(
+            f"{SIBLING_BATCH_QUERY} returned no structured content."
+        )
     return payload
 
 

@@ -48,3 +48,20 @@ def lookup_department_snapshot(
         if snapshot.tenant_id == tenant_id and snapshot.batch_id == batch_id:
             return snapshot
     return None
+
+
+def list_department_snapshots_for_tenant(
+    tenant_id: str,
+) -> tuple[DepartmentSnapshot, ...]:
+    """Every catalog snapshot for one tenant, across all its batches.
+
+    Used by ``sibling_batch_query`` (``department_tools.py``) to compare the
+    CFI's own batch against every *other* batch on the same tenant — the
+    tenant filter is applied here, not left to the caller, so a cross-tenant
+    scope-expansion query is impossible at the data layer, not just at the
+    Gateway.
+    """
+    snapshots, _digest = load_department_catalog()
+    return tuple(
+        snapshot for snapshot in snapshots if snapshot.tenant_id == tenant_id
+    )

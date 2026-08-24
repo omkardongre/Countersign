@@ -43,6 +43,11 @@ from app.domain.case_memory_models import (
     CaseMemoryQueryResult,
 )
 from app.domain.case_status_models import CaseStatusRecord
+from app.domain.cfi_models import CfiInvestigation, SiblingBatchQueryResult
+from app.domain.cfi_store import (
+    CfiConcurrencyError,
+    CfiNotFoundError,
+)
 from app.domain.department_models import (
     CoaSnapshot,
     DriveEvidencePayload,
@@ -51,6 +56,9 @@ from app.domain.department_models import (
 )
 from app.domain.department_tools import (
     CASE_STATUS_UPSERT,
+    CFI_GET,
+    CFI_OPEN,
+    CFI_SAVE,
     COA_FETCH,
     CONTROLLED_GUIDANCE_QUERY,
     DRIVE_FETCH_EVIDENCE,
@@ -60,20 +68,32 @@ from app.domain.department_tools import (
     PRIOR_ART_REDACT,
     PRIOR_ART_WRITE,
     QMS_REPORT_WRITE,
+    SIBLING_BATCH_QUERY,
     SPONSOR_BATCH_STATUS,
     STERILITY_BIND_RESUME_HANDLE,
     STERILITY_GET,
     STERILITY_START,
     CaseMemoryTenantMismatch,
     CaseStatusTenantMismatch,
+    CfiTenantMismatch,
     ControlledGuidanceTenantMismatch,
     DepartmentRecordMissing,
     DriveFetchError,
     QmsReportWriteError,
+    SiblingBatchTenantMismatch,
     SterilityTenantMismatch,
 )
 from app.domain.department_tools import (
     case_status_upsert as run_case_status_upsert,
+)
+from app.domain.department_tools import (
+    cfi_get as run_cfi_get,
+)
+from app.domain.department_tools import (
+    cfi_open as run_cfi_open,
+)
+from app.domain.department_tools import (
+    cfi_save as run_cfi_save,
 )
 from app.domain.department_tools import (
     coa_fetch as load_coa,
@@ -101,6 +121,9 @@ from app.domain.department_tools import (
 )
 from app.domain.department_tools import (
     qms_report_write as run_qms_report_write,
+)
+from app.domain.department_tools import (
+    sibling_batch_query as run_sibling_batch_query,
 )
 from app.domain.department_tools import (
     sponsor_batch_status as run_sponsor_batch_status,
@@ -132,6 +155,12 @@ _READ_ONLY = ToolAnnotations(
 _IDEMPOTENT_WRITE = ToolAnnotations(
     readOnlyHint=False,
     idempotentHint=True,
+    openWorldHint=False,
+    destructiveHint=False,
+)
+_CAS_WRITE = ToolAnnotations(
+    readOnlyHint=False,
+    idempotentHint=False,
     openWorldHint=False,
     destructiveHint=False,
 )
@@ -501,6 +530,110 @@ def build_department_mcp(
         except ControlledGuidanceTenantMismatch as exc:
             raise ToolError(str(exc)) from exc
         except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=SIBLING_BATCH_QUERY,
+        title="Sibling batch query",
+        description=(
+            "Read-only, tenant-locked search for other batches on this "
+            "tenant sharing a suspect attribute (currently material_lot) "
+            "with the named batch. Returns associations only, never "
+            "causation. Scope expansion may cross batches within one "
+            "tenant; never across tenants."
+        ),
+        annotations=_READ_ONLY,
+    )
+    def sibling_batch_query(
+        tenant_id: str,
+        batch_id: str,
+        shared_attribute: str,
+        case_tenant_id: str,
+    ) -> SiblingBatchQueryResult:
+        try:
+            return run_sibling_batch_query(
+                tenant_id=tenant_id,
+                batch_id=batch_id,
+                shared_attribute=shared_attribute,
+                case_tenant_id=case_tenant_id,
+            )
+        except SiblingBatchTenantMismatch as exc:
+            raise ToolError(str(exc)) from exc
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CFI_OPEN,
+        title="Open CFI",
+        description=(
+            "Atomically open or return the existing Cross-Functional "
+            "Investigation for one tenant and source case. Idempotent by "
+            "tenant_id/source_case_id; never a batch disposition or QP record."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def cfi_open(
+        tenant_id: str, case_tenant_id: str, investigation: dict
+    ) -> CfiInvestigation:
+        try:
+            return run_cfi_open(
+                tenant_id=tenant_id,
+                case_tenant_id=case_tenant_id,
+                investigation=investigation,
+            )
+        except (
+            CfiConcurrencyError,
+            CfiTenantMismatch,
+            ValueError,
+        ) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CFI_GET,
+        title="CFI get",
+        description=(
+            "Read one tenant-bound Cross-Functional Investigation record by "
+            "id. Returns null if none exists. Read-only."
+        ),
+        annotations=_READ_ONLY,
+    )
+    def cfi_get(
+        tenant_id: str, case_tenant_id: str, cfi_id: str
+    ) -> CfiInvestigation | None:
+        try:
+            return run_cfi_get(
+                tenant_id=tenant_id,
+                case_tenant_id=case_tenant_id,
+                cfi_id=cfi_id,
+            )
+        except CfiTenantMismatch as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CFI_SAVE,
+        title="CFI compare-and-save",
+        description=(
+            "Persist one tenant-bound Cross-Functional Investigation "
+            "aggregate with optimistic revision checking. A stale revision "
+            "is rejected; never a batch disposition or QP record."
+        ),
+        annotations=_CAS_WRITE,
+    )
+    def cfi_save(
+        tenant_id: str, case_tenant_id: str, investigation: dict
+    ) -> CfiInvestigation:
+        try:
+            return run_cfi_save(
+                tenant_id=tenant_id,
+                case_tenant_id=case_tenant_id,
+                investigation=investigation,
+            )
+        except (
+            CfiConcurrencyError,
+            CfiNotFoundError,
+            CfiTenantMismatch,
+            ValueError,
+        ) as exc:
             raise ToolError(str(exc)) from exc
 
     return mcp

@@ -48,6 +48,98 @@
         "retest_date": "2027-01-15",
         "gmp_certificate_current": true
       }
+    },
+    {
+      "tenant_id": "aurex",
+      "batch_id": "AX-2292",
+      "product_code": "AXR450",
+      "lims": {
+        "system": "cloud_sql",
+        "source_uri": "sql://lims.aurex.qc_results?batch_id=AX-2292",
+        "rows": [
+          {
+            "test_code": "ASSAY",
+            "label": "Assay",
+            "result_value": 97.9,
+            "unit": "%LC",
+            "spec_min": 95.0,
+            "spec_max": 105.0,
+            "sample_id": "QC-AX-2292-01"
+          }
+        ]
+      },
+      "em": {
+        "system": "bigquery",
+        "source_uri": "bq://em.aurex.viable_air?batch_id=AX-2292",
+        "rows": [
+          {
+            "location_id": "FILL-R1",
+            "parameter": "viable_air_cfu",
+            "label": "Viable air count",
+            "value": 2.4,
+            "unit": "cfu/m3",
+            "alert_limit": 5.0,
+            "action_limit": 10.0,
+            "recorded_at": "2026-08-05T10:00:00+00:00"
+          }
+        ]
+      },
+      "coa": {
+        "system": "drive",
+        "source_uri": "drive://synthetic/coa/MAT-441-LOT-88.pdf",
+        "supplier_id": "SUP-441",
+        "material_lot": "LOT-88",
+        "dispensed_lot": "LOT-88",
+        "signed": true,
+        "retest_date": "2027-01-15",
+        "gmp_certificate_current": true
+      }
+    },
+    {
+      "tenant_id": "aurex",
+      "batch_id": "AX-2293",
+      "product_code": "AXR450",
+      "lims": {
+        "system": "cloud_sql",
+        "source_uri": "sql://lims.aurex.qc_results?batch_id=AX-2293",
+        "rows": [
+          {
+            "test_code": "ASSAY",
+            "label": "Assay",
+            "result_value": 98.1,
+            "unit": "%LC",
+            "spec_min": 95.0,
+            "spec_max": 105.0,
+            "sample_id": "QC-AX-2293-01"
+          }
+        ]
+      },
+      "em": {
+        "system": "bigquery",
+        "source_uri": "bq://em.aurex.viable_air?batch_id=AX-2293",
+        "rows": [
+          {
+            "location_id": "FILL-R1",
+            "parameter": "viable_air_cfu",
+            "label": "Viable air count",
+            "value": 1.8,
+            "unit": "cfu/m3",
+            "alert_limit": 5.0,
+            "action_limit": 10.0,
+            "recorded_at": "2026-08-10T10:00:00+00:00"
+          }
+        ]
+      },
+      "coa": {
+        "system": "drive",
+        "source_uri": "drive://synthetic/coa/MAT-441-LOT-88.pdf",
+        "supplier_id": "SUP-441",
+        "material_lot": "LOT-88",
+        "dispensed_lot": "LOT-88",
+        "signed": true,
+        "retest_date": "2027-01-15",
+        "gmp_certificate_current": true
+      }
     }
   ]
 }

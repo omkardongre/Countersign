@@ -28,6 +28,12 @@ from __future__ import annotations
 
 import os
 
+from app.domain.cfi_models import (
+    CfiInvestigation,
+    SiblingBatchCandidate,
+    SiblingBatchQueryResult,
+)
+from app.domain.department_catalog import list_department_snapshots_for_tenant
 from app.domain.department_models import (
     CoaSnapshot,
     DriveEvidencePayload,
@@ -35,7 +41,7 @@ from app.domain.department_models import (
     LimsSnapshot,
 )
 from app.domain.department_source import (
-    DepartmentRecordMissing,
+    DepartmentRecordMissing,  # noqa: F401 - re-exported via __all__
     get_coa_source,
     get_em_source,
     get_lims_source,
@@ -47,6 +53,10 @@ __all__ = [
     "CASE_MEMORY_TOOLS",
     "CASE_STATUS_TOOLS",
     "CASE_STATUS_UPSERT",
+    "CFI_GET",
+    "CFI_OPEN",
+    "CFI_SAVE",
+    "CFI_TOOLS",
     "COA_FETCH",
     "CONTROLLED_GUIDANCE_QUERY",
     "DRIVE_FETCH_EVIDENCE",
@@ -59,23 +69,30 @@ __all__ = [
     "PRIOR_ART_WRITE",
     "QMS_REPORT_WRITE",
     "QMS_WRITE_TOOLS",
+    "SIBLING_BATCH_QUERY",
     "SPONSOR_BATCH_STATUS",
     "SPONSOR_TOOLS",
     "STERILITY_BIND_RESUME_HANDLE",
     "STERILITY_GET",
     "STERILITY_START",
     "STERILITY_TOOLS",
+    "CfiTenantMismatch",
     "ControlledGuidanceTenantMismatch",
     "DepartmentRecordMissing",
     "DriveFetchError",
     "QmsReportWriteError",
+    "SiblingBatchTenantMismatch",
     "case_status_upsert",
+    "cfi_get",
+    "cfi_open",
+    "cfi_save",
     "coa_fetch",
     "controlled_guidance_query",
     "drive_fetch_evidence",
     "em_query",
     "lims_query",
     "qms_report_write",
+    "sibling_batch_query",
     "sponsor_batch_status",
 ]
 
@@ -144,6 +161,21 @@ DRIVE_TOOLS = frozenset({DRIVE_FETCH_EVIDENCE})
 # write access to Drive.
 QMS_REPORT_WRITE = "qms_report_write"
 QMS_WRITE_TOOLS = frozenset({QMS_REPORT_WRITE})
+
+# CFI (Cross-Functional Investigation): its own tool names and its own
+# Gateway allow-list, disjoint from the case workflow's — a CFI Runtime may
+# reach these; the case workflow never does (13_cfi_extended_investigation_
+# plan.md section 4.1). ``cfi_get``/``cfi_save`` reach the Cloud SQL
+# ``cfi_investigation`` table for the same credential-boundary reason as
+# every other tool in this module. ``sibling_batch_query`` is read-only,
+# tenant-locked, and reads across *batches* within one tenant only — never
+# across tenants (guardrail 7 in the CFI plan).
+CFI_GET = "cfi_get"
+CFI_OPEN = "cfi_open"
+CFI_SAVE = "cfi_save"
+CFI_TOOLS = frozenset({CFI_GET, CFI_OPEN, CFI_SAVE})
+
+SIBLING_BATCH_QUERY = "sibling_batch_query"
 
 
 class DriveFetchError(Exception):
@@ -643,6 +675,151 @@ def _check_guidance_tenant(tenant_id: str, case_tenant_id: str) -> None:
             f"case_tenant_id {case_tenant_id!r} does not match "
             f"tenant_id {tenant_id!r}."
         )
+
+
+class CfiTenantMismatch(Exception):
+    """The CFI record is not owned by the calling case tenant."""
+
+
+class SiblingBatchTenantMismatch(Exception):
+    """The calling CFI is not the tenant that owns the batches queried."""
+
+
+def _check_sibling_batch_tenant(tenant_id: str, case_tenant_id: str) -> None:
+    """Same discipline as every other tool's tenant check in this module.
+
+    Scope expansion may cross *batches* within the CFI's own tenant, never
+    across tenants (CFI plan guardrail 7). The tenant filter is applied a
+    second time, inside ``list_department_snapshots_for_tenant`` itself, so
+    this check and that filter both have to agree before any row can leave
+    this function — not merely trusting the caller checked once upstream.
+    """
+    if tenant_id != case_tenant_id:
+        raise SiblingBatchTenantMismatch(
+            f"case_tenant_id {case_tenant_id!r} does not match "
+            f"tenant_id {tenant_id!r}."
+        )
+
+
+def sibling_batch_query(
+    *,
+    tenant_id: str,
+    batch_id: str,
+    shared_attribute: str,
+    case_tenant_id: str,
+) -> SiblingBatchQueryResult:
+    """Batches on this tenant sharing ``shared_attribute`` with ``batch_id``.
+
+    Read-only, tenant-locked exactly like ``lims_query``/``em_query``: the
+    model supplies only which attribute to compare on (currently
+    ``"material_lot"``, the CoA field GMPSOP QMS-130 section 4.3 names
+    explicitly — "shared raw material lots"), never the tenant scope, which
+    is stamped by the caller and re-checked here.
+
+    Returns an **association only** — a shared lot or shared equipment
+    across batches is a lead for a human investigator, never itself a
+    determination of a common root cause (CFI plan section 10).
+
+    Raises:
+        SiblingBatchTenantMismatch: ``case_tenant_id`` does not match
+            ``tenant_id``.
+        ValueError: ``shared_attribute`` is not a supported comparison
+            attribute, or the queried batch itself is not in the catalog.
+    """
+    _check_sibling_batch_tenant(tenant_id, case_tenant_id)
+    if shared_attribute != "material_lot":
+        raise ValueError(
+            f"Unsupported shared_attribute {shared_attribute!r}; "
+            "Phase 1 supports only 'material_lot'."
+        )
+
+    snapshots = list_department_snapshots_for_tenant(tenant_id)
+    source = next((s for s in snapshots if s.batch_id == batch_id), None)
+    if source is None:
+        raise ValueError(
+            f"Batch {batch_id!r} is not in the department catalog for "
+            f"tenant {tenant_id!r}."
+        )
+
+    source_value = source.coa.material_lot
+    candidates = [
+        SiblingBatchCandidate(
+            batch_id=snapshot.batch_id,
+            shared_attribute="material_lot",
+            shared_value=snapshot.coa.material_lot,
+            source_uri=snapshot.coa.source_uri,
+        )
+        for snapshot in snapshots
+        if snapshot.batch_id != batch_id
+        and snapshot.coa.material_lot == source_value
+    ]
+    return SiblingBatchQueryResult(
+        tenant_id=tenant_id,
+        batch_id=batch_id,
+        shared_attribute=shared_attribute,
+        candidates=candidates,
+    )
+
+
+def _check_cfi_tenant(tenant_id: str, case_tenant_id: str) -> None:
+    """Bind every CFI store operation to the authenticated case tenant."""
+    if tenant_id != case_tenant_id:
+        raise CfiTenantMismatch(
+            f"case_tenant_id {case_tenant_id!r} does not match "
+            f"tenant_id {tenant_id!r}."
+        )
+
+
+def cfi_open(
+    *, tenant_id: str, case_tenant_id: str, investigation: dict
+) -> CfiInvestigation:
+    """Atomically open or reuse one CFI for a tenant/source case.
+
+    The store's unique ``(tenant_id, source_case_id)`` key is the actual
+    idempotency boundary; this function only supplies the MCP-side tenant
+    check and schema validation before the write.
+    """
+    _check_cfi_tenant(tenant_id, case_tenant_id)
+    from app.domain.cfi_store import get_cfi_store
+
+    record = CfiInvestigation.model_validate(investigation)
+    if record.tenant_id != tenant_id:
+        raise CfiTenantMismatch(
+            f"investigation tenant_id {record.tenant_id!r} does not match "
+            f"tenant_id {tenant_id!r}."
+        )
+    return get_cfi_store().open(record)
+
+
+def cfi_get(
+    *, tenant_id: str, case_tenant_id: str, cfi_id: str
+) -> CfiInvestigation | None:
+    """Read one CFI only when its stored tenant matches the caller."""
+    _check_cfi_tenant(tenant_id, case_tenant_id)
+    from app.domain.cfi_store import get_cfi_store
+
+    record = get_cfi_store().get(cfi_id)
+    if record is not None and record.tenant_id != tenant_id:
+        raise CfiTenantMismatch(
+            f"CFI {cfi_id!r} is not owned by tenant {tenant_id!r}."
+        )
+    return record
+
+
+def cfi_save(
+    *, tenant_id: str, case_tenant_id: str, investigation: dict
+) -> CfiInvestigation:
+    """Optimistically save one tenant-bound CFI aggregate by revision."""
+    _check_cfi_tenant(tenant_id, case_tenant_id)
+    from app.domain.cfi_store import get_cfi_store
+
+    record = CfiInvestigation.model_validate(investigation)
+    if record.tenant_id != tenant_id:
+        raise CfiTenantMismatch(
+            f"investigation tenant_id {record.tenant_id!r} does not match "
+            f"tenant_id {tenant_id!r}."
+        )
+    return get_cfi_store().save(record)
 
 
 async def controlled_guidance_query(
