@@ -15,6 +15,14 @@
 # NOT included here — redaction is an operator action, not something the
 # case workflow itself should be able to invoke on its own behalf.
 #
+# qms_report_write is the qa_qms_write_agent's one tool (file_qms_report,
+# the graph's last node, runs inside this same case Runtime/identity — it is
+# not a separate service like sponsor_liaison). Same Drive/Docs credential
+# boundary reasoning as drive_fetch_evidence: an Agent Identity principal
+# cannot itself hold a Docs/Drive OAuth credential, so this MCP process
+# holds it and the tool-name allow-list is what actually scopes the case
+# workflow to writing only the one report doc, never a broader Drive scope.
+#
 # The `hosts` match scopes this rule to the department MCP service only.
 # Without it, an AuthzPolicy with action: ALLOW targeting the whole gateway
 # denies every request that doesn't match one of its rules (Cloud docs:
@@ -78,3 +86,6 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "case_status_upsert"
+              - name: "tools/call"
+                params:
+                  - exact: "qms_report_write"

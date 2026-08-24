@@ -161,9 +161,14 @@ deterministic `check_lims`/`check_em` that evaluates their results:
 - Supplier CoA remains an untrusted source handled through the existing evidence path; QMS
   write-back is the next integration work, not implied by this deployment.
 
-All 8 agents in the target table are now real. Not yet built: the QMS write-back agent
-(`final_reseach/12_integration_expansion_plan.md` T1-1), out of scope until P0–P6 land per that
-doc's own §0. The investigation↔challenger revision loop (a back-edge, per the official
+All 8 agents in the target table are real, plus `qa_qms_write_agent` (doc `12` T1-1): the 9th
+fleet member and the only agent permitted to mutate an external record, running as the graph's
+last node (`file_qms_report`) after `record_case_memory`. It files the investigation report and
+Annex 16 package as a real Google Doc via its own `qms_report_write` MCP tool, on its own
+Gateway allow-list entry disjoint from every read-only tool set. Requires
+`COUNTERSIGN_QMS_REPORTS_FOLDER_ID` (the `03 Deviation Reports` folder id) on the department MCP
+deployment, and Editor (not read-only) access on that folder for the MCP service account — the
+one Drive grant in this system that is a write, not a read. The investigation↔challenger revision loop (a back-edge, per the official
 [graph routes doc](https://google.github.io/adk-docs/graphs/routes/)) is a deliberate open
 decision, not an oversight — it would change the current, documented rule that challenger
 attacks are recorded but never auto-fail the gate.

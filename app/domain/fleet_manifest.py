@@ -50,6 +50,7 @@ from app.domain.department_source import (
     lims_backend_name,
 )
 from app.domain.investigation import INVESTIGATION_AGENT_NAME
+from app.domain.qms_report_agent import QA_QMS_WRITE_AGENT_NAME, QA_QMS_WRITE_MODEL
 from app.domain.workflow_meta import CASE_WORKFLOW_NAME
 from app.sponsor_liaison.agent import SPONSOR_LIAISON_AGENT_NAME, SPONSOR_LIAISON_MODEL
 
@@ -226,6 +227,25 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
                 "history with the investigator), so it cannot rubber-stamp "
                 "its own prior wording. Attacks are carried for the QP; "
                 "they do not themselves fail the deterministic gate."
+            ),
+        ),
+        FleetAgentEntry(
+            name=QA_QMS_WRITE_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
+            department="qa_qms",
+            model=QA_QMS_WRITE_MODEL,
+            allowed_tools=["qms_report_write"],
+            backing_system="google_drive_docs",
+            reasoning_authority=False,
+            description=(
+                "The only agent in this fleet permitted to mutate an "
+                "external record, and only after the QP has acted "
+                "(runs as file_qms_report, the graph's last node). Its "
+                "one tool is a tenant/case-locked closure with no "
+                "model-controlled arguments: it files the already-built "
+                "investigation report and Annex 16 package as a Google "
+                "Doc, it never drafts report content and never alters "
+                "the QP's decision."
             ),
         ),
     ]

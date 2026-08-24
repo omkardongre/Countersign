@@ -85,6 +85,7 @@ def test_case_workflow_policy_allows_all_named_tools() -> None:
         "prior_art_query",
         "prior_art_write",
         "case_status_upsert",
+        "qms_report_write",
     }
 
 
