@@ -34,6 +34,8 @@ import uuid
 
 from pydantic import BaseModel, Field
 
+from app.domain.master_data import RootCauseCategory
+
 
 class CaseMemoryFact(BaseModel):
     """One retrievable fact about a prior deviation, with its source.
@@ -41,6 +43,23 @@ class CaseMemoryFact(BaseModel):
     ``fact`` and ``source`` are kept as separate fields (not one blob) so a
     retrieval result and its provenance can never be pasted together loosely
     the way a single string would allow.
+
+    ``root_cause_category`` is descriptive metadata carried over from the
+    investigation draft's own leading hypothesis at the time this fact was
+    written (see ``case_memory_node.build_case_memory_fact``) — the same
+    fishbone tag ``ComplianceFinding`` already carries, not a certified root
+    cause. It is ``None`` whenever no hypothesis was actually drafted for
+    that case, rather than defaulting to ``UNCLASSIFIED``, so a caller can
+    tell "no hypothesis existed" apart from "the hypothesis was
+    unclassified".
+
+    ``similarity_score`` is populated only on a result returned by an actual
+    vector search (``1 - cosine_distance`` from BigQuery's own
+    ``VECTOR_SEARCH``, or the Firestore KNN case). It is ``None`` for any
+    fact reached by the tenant-scoped recency fallback, an exact-match
+    lookup, or a plain write — never estimated or backfilled, since a
+    fabricated similarity score would be indistinguishable from a real one
+    to a caller.
     """
 
     fact_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -55,6 +74,8 @@ class CaseMemoryFact(BaseModel):
     )
     redacted: bool = False
     redacted_reason: str | None = None
+    root_cause_category: RootCauseCategory | None = None
+    similarity_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class CaseMemoryQueryResult(BaseModel):

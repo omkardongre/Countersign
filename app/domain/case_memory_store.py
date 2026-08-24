@@ -53,17 +53,34 @@ DEFAULT_COLLECTION = "case_memory_facts"
 DEFAULT_TOP_K = 5
 
 
+EMBEDDING_DIMENSION = 768
+
+# Vertex text-embeddings task types (cloud.google.com/vertex-ai/generative-ai/
+# docs/embeddings/task-types): a stored fact and a search query are not
+# semantically symmetric ("Blend-speed excursion resolved by recalibrating
+# the mixer" versus "why did fill weight drift"), so each is embedded with
+# the task type Google's own guidance recommends for that asymmetric
+# retrieval role, rather than one undifferentiated embedding call for both.
+EMBED_TASK_TYPE_DOCUMENT = "RETRIEVAL_DOCUMENT"
+EMBED_TASK_TYPE_QUERY = "RETRIEVAL_QUERY"
+
+
 class EmbeddingUnavailable(Exception):
     """The embedding call failed or returned no vector. Caller should fall back."""
 
 
-async def embed_text(text: str) -> list[float]:
+async def embed_text(text: str, *, task_type: str) -> list[float]:
     """One text embedding via the Vertex-backed ``google-genai`` client.
 
     Uses ``client.aio.models.embed_content`` (``google.genai``, already a
     transitive dependency of ``google-adk``), not a separate embeddings SDK.
+    ``task_type`` must be one of ``EMBED_TASK_TYPE_DOCUMENT``/
+    ``EMBED_TASK_TYPE_QUERY`` so a stored fact and an incoming query are
+    embedded into the retrieval-optimized asymmetric space Vertex's task-type
+    guidance describes, not the model's untyped default space.
     """
     from google import genai
+    from google.genai import types
 
     client = genai.Client(
         vertexai=True,
@@ -72,7 +89,9 @@ async def embed_text(text: str) -> list[float]:
     )
     try:
         response = await client.aio.models.embed_content(
-            model=EMBEDDING_MODEL, contents=[text]
+            model=EMBEDDING_MODEL,
+            contents=[text],
+            config=types.EmbedContentConfig(task_type=task_type),
         )
     except Exception as exc:
         raise EmbeddingUnavailable(str(exc)) from exc
@@ -82,6 +101,14 @@ async def embed_text(text: str) -> list[float]:
     values = embeddings[0].values
     if not values:
         raise EmbeddingUnavailable("Embedding response vector was empty.")
+    if len(values) != EMBEDDING_DIMENSION:
+        # A silent dimension mismatch is how a vector index query fails
+        # far away from this call site, or worse, is coerced into matching
+        # nothing. Fail here instead, at the point the vector was produced.
+        raise EmbeddingUnavailable(
+            f"Embedding model {EMBEDDING_MODEL!r} returned a "
+            f"{len(values)}-dimensional vector, expected {EMBEDDING_DIMENSION}."
+        )
     return list(values)
 
 
@@ -96,6 +123,7 @@ class CaseMemoryStore(Protocol):
         source_uri: str,
         confidence: float,
         fact_id: str | None = None,
+        root_cause_category: str | None = None,
     ) -> CaseMemoryFact: ...
 
     async def query(
@@ -113,6 +141,8 @@ class CaseMemoryStore(Protocol):
 
 class FirestoreCaseMemoryStore:
     """Firestore-backed store. Tenant filter applied before retrieval."""
+
+    backend_name = "firestore_case_memory"
 
     def __init__(
         self,
@@ -146,6 +176,7 @@ class FirestoreCaseMemoryStore:
         source_uri: str,
         confidence: float,
         fact_id: str | None = None,
+        root_cause_category: str | None = None,
     ) -> CaseMemoryFact:
         """``fact_id`` is optional so a caller with a natural idempotency
         key (e.g. ``record_case_memory`` deriving one from ``case_id`` plus
@@ -159,6 +190,7 @@ class FirestoreCaseMemoryStore:
             "fact": fact,
             "source_uri": source_uri,
             "confidence": confidence,
+            "root_cause_category": root_cause_category,
         }
         if fact_id is not None:
             kwargs["fact_id"] = fact_id
@@ -173,11 +205,18 @@ class FirestoreCaseMemoryStore:
             "observed_at": record.observed_at,
             "redacted": record.redacted,
             "redacted_reason": record.redacted_reason,
+            "root_cause_category": (
+                record.root_cause_category.value
+                if record.root_cause_category is not None
+                else None
+            ),
         }
         try:
             from google.cloud.firestore_v1.vector import Vector
 
-            doc["embedding"] = Vector(await embed_text(fact))
+            doc["embedding"] = Vector(
+                await embed_text(fact, task_type=EMBED_TASK_TYPE_DOCUMENT)
+            )
         except EmbeddingUnavailable:
             # Fact is still written without a vector; it remains reachable
             # by the recency fallback, just not by semantic search until a
@@ -200,6 +239,7 @@ class FirestoreCaseMemoryStore:
             observed_at=data["observed_at"],
             redacted=data.get("redacted", False),
             redacted_reason=data.get("redacted_reason"),
+            root_cause_category=data.get("root_cause_category"),
         )
 
     async def query(
@@ -212,7 +252,7 @@ class FirestoreCaseMemoryStore:
         ).where(filter=FieldFilter("redacted", "==", False))
 
         try:
-            vector = await embed_text(query)
+            vector = await embed_text(query, task_type=EMBED_TASK_TYPE_QUERY)
         except EmbeddingUnavailable:
             docs = await base.order_by(
                 "observed_at", direction="DESCENDING"
@@ -285,6 +325,8 @@ class FirestoreCaseMemoryStore:
 class InMemoryCaseMemoryStore:
     """Local/test store: no Firestore, no embedding calls, tenant-filtered."""
 
+    backend_name = "in_memory_fixture"
+
     def __init__(self) -> None:
         self._facts: dict[str, CaseMemoryFact] = {}
 
@@ -298,6 +340,7 @@ class InMemoryCaseMemoryStore:
         source_uri: str,
         confidence: float,
         fact_id: str | None = None,
+        root_cause_category: str | None = None,
     ) -> CaseMemoryFact:
         kwargs = {
             "tenant_id": tenant_id,
@@ -306,6 +349,7 @@ class InMemoryCaseMemoryStore:
             "fact": fact,
             "source_uri": source_uri,
             "confidence": confidence,
+            "root_cause_category": root_cause_category,
         }
         if fact_id is not None:
             kwargs["fact_id"] = fact_id
@@ -354,15 +398,29 @@ class InMemoryCaseMemoryStore:
 _INMEMORY_ENV = "COUNTERSIGN_CASE_MEMORY_INMEMORY"
 
 
+CASE_MEMORY_BACKEND_ENV = "COUNTERSIGN_CASE_MEMORY_BACKEND"
+BACKEND_BIGQUERY = "bigquery"
+
+
 @functools.cache
 def get_case_memory_store() -> CaseMemoryStore:
-    """Firestore by default; explicit opt-out for local/test runs.
+    """Firestore by default; explicit opt-in for BigQuery, opt-out for tests.
 
     Unlike the sterility store, there is no Cloud SQL connection string to
     branch on here — Firestore has no equivalent "not configured" signal
-    short of a failed client call, so the switch is an explicit env flag
-    instead, matching ``COUNTERSIGN_MCP_INPROCESS``'s opt-in shape.
+    short of a failed client call, so the Firestore/in-memory switch is an
+    explicit env flag, matching ``COUNTERSIGN_MCP_INPROCESS``'s opt-in
+    shape. ``COUNTERSIGN_CASE_MEMORY_BACKEND=bigquery`` is checked first and
+    takes priority over the in-memory flag, matching
+    ``get_lims_source``/``get_em_source``'s same explicit-opt-in-per-backend
+    pattern in ``app/domain/department_source.py`` — a half-provisioned
+    deployment must keep working on whichever backend it *did* configure,
+    not silently fail closed.
     """
+    if os.environ.get(CASE_MEMORY_BACKEND_ENV, "").strip().lower() == BACKEND_BIGQUERY:
+        from app.domain.case_memory_store_bigquery import BigQueryCaseMemoryStore
+
+        return BigQueryCaseMemoryStore()
     if os.environ.get(_INMEMORY_ENV, "").strip().lower() in {"1", "true", "yes"}:
         return InMemoryCaseMemoryStore()
     return FirestoreCaseMemoryStore()
