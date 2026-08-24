@@ -1,0 +1,35 @@
+# Native MCP tool-name ALLOW for the deviation-case Workflow Agent Identity
+# on the dedicated public-regulatory-screening MCP service.
+#
+# This policy is intentionally separate from the department MCP policy. The
+# screening service has no tenant, case, batch, CoA, Drive, SQL, Case Memory,
+# or QMS tool and accepts only public manufacturer/site/product/defect fields.
+# Its two tools are read-only and advisory; neither result is supplier
+# clearance or a release-gating ComplianceFinding.
+#
+# bind_to: case_workflow
+# do_not_bind_to: qc_probe, sponsor_liaison, hello_runtime
+#
+# MATCH_BASE_PROTOCOL_METHODS is required or initialize/ping are denied and
+# no MCP session can be established.
+name: countersign-mcp-case-workflow-regulatory-screening
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: REQUEST_AUTHZ
+action: ALLOW
+httpRules:
+  - to:
+      operations:
+        - hosts:
+            - exact: "countersign-regulatory-screening-mcp-777448403573.us-central1.run.app"
+          mcp:
+            baseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+            methods:
+              - name: "tools/list"
+              - name: "tools/call"
+                params:
+                  - exact: "eudragmdp_screen"
+              - name: "tools/call"
+                params:
+                  - exact: "openfda_enforcement_screen"

@@ -52,6 +52,10 @@ from app.domain.department_source import (
 )
 from app.domain.investigation import INVESTIGATION_AGENT_NAME
 from app.domain.qms_report_agent import QA_QMS_WRITE_AGENT_NAME, QA_QMS_WRITE_MODEL
+from app.domain.regulatory_screening import (
+    EUDRAGMDP_SCREEN,
+    OPENFDA_ENFORCEMENT_SCREEN,
+)
 from app.domain.workflow_meta import CASE_WORKFLOW_NAME
 from app.sponsor_liaison.agent import SPONSOR_LIAISON_AGENT_NAME, SPONSOR_LIAISON_MODEL
 
@@ -178,14 +182,24 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             kind=AgentKind.LLM_AGENT_SINGLE_TURN,
             department="supply",
             model="gemini-3.6-flash",
-            allowed_tools=["coa_fetch"],
-            backing_system=coa_backend_name(),
+            allowed_tools=[
+                "coa_fetch",
+                EUDRAGMDP_SCREEN,
+                OPENFDA_ENFORCEMENT_SCREEN,
+            ],
+            backing_system=(
+                f"{coa_backend_name()}+official_public_regulatory_mcp"
+            ),
             reasoning_authority=False,
             description=(
                 "Real single-turn Agent over the untrusted supplier-CoA "
-                "channel. Only certificate metadata (never certificate "
-                "text) is returned to the model as tool output. "
-                "check_coa runs on the tool's captured typed snapshot."
+                "channel. It calls the tenant-locked CoA tool first, then "
+                "the dedicated read-only EudraGMDP and openFDA public "
+                "screening tools exactly once each. Only safe status metadata "
+                "returns to the model; typed regulator results and "
+                "provenance are captured outside the model. CoA checks "
+                "remain compliance findings; regulator results are explicitly "
+                "advisory and never establish supplier clearance."
             ),
         ),
         FleetAgentEntry(

@@ -9,10 +9,10 @@ customProvider:
     resources:
       - "projects/countersign-505107/locations/us-central1/authzExtensions/countersign-model-armor"
 httpRules:
-  # notOperations.hosts excludes the department MCP service from Model
-  # Armor screening: its tools/call bodies are schema-validated JSON-RPC
-  # (Pydantic on the server, TQA/tool-name policy on the gateway), not LLM
-  # prompt/response text. Model Armor's SDP basic filter can redact a
+  # notOperations.hosts excludes the department and dedicated regulatory
+  # screening MCP services from Model Armor screening. Their tools/call bodies
+  # are schema-validated JSON-RPC (Pydantic on the server, TQA/tool-name
+  # policy on the gateway), not LLM prompt/response text. Model Armor's SDP
   # matched span inside a quoted JSON string (`processingEffect:
   # CONTENT_MODIFIED` in the gateway log), which breaks JSON syntax and made
   # every `prior_art_query` tools/call fail with a live-only 400 from the
@@ -25,6 +25,7 @@ httpRules:
       notOperations:
         - hosts:
             - exact: "countersign-department-mcp-777448403573.us-central1.run.app"
+            - exact: "countersign-regulatory-screening-mcp-777448403573.us-central1.run.app"
     when: >
       request.headers['content-type'] == 'application/json' ||
       request.headers['content-type'].startsWith('text/')

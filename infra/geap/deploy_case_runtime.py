@@ -13,6 +13,9 @@ user accounts, service accounts, or groups). So this Runtime deploy:
 * reaches LIMS/EM/CoA *and* the sterility clock only through
   ``COUNTERSIGN_MCP_URL`` — the department MCP service, which runs with a
   real service-account credential and already holds Cloud SQL access
+* reaches EudraGMDP/openFDA only through the separate
+  ``COUNTERSIGN_REGULATORY_MCP_URL`` — a public-only, read-only MCP service
+  with a separate invoker identity and Gateway tool policy
 
 Both ``identity_type=AGENT_IDENTITY`` and ``agent_gateway_config`` are set;
 omitting either leaves the agent quietly ungoverned.
@@ -95,10 +98,27 @@ def main() -> int:
             "Service account the Agent Identity impersonates to mint the "
             "Cloud Run ID token for the department MCP service. Cloud Run's "
             "invoker check does not accept a raw Workload-Identity-Federation "
-            "token from an Agent Identity's own ambient credentials — see "
-            "app/mcp/client.py::_mcp_auth_headers. The Agent Identity must "
-            "hold roles/iam.serviceAccountTokenCreator on this account, and "
-            "this account must hold roles/run.invoker on the MCP service."
+            "token from an Agent Identity's own ambient credentials. The "
+            "Agent Identity must hold roles/iam.serviceAccountTokenCreator "
+            "on this account, and this account must hold roles/run.invoker "
+            "on the department MCP service."
+        ),
+    )
+    parser.add_argument(
+        "--regulatory-mcp-url",
+        required=True,
+        help=(
+            "https Streamable HTTP URL of the dedicated public regulatory "
+            "screening MCP service."
+        ),
+    )
+    parser.add_argument(
+        "--regulatory-mcp-invoker-service-account",
+        required=True,
+        help=(
+            "Separate service account the Agent Identity impersonates for "
+            "the regulatory screening MCP Cloud Run ID token. It must hold "
+            "roles/run.invoker only on that dedicated service."
         ),
     )
     parser.add_argument(
@@ -122,6 +142,17 @@ def main() -> int:
 
     if not args.mcp_url.startswith("https://"):
         raise SystemExit("--mcp-url must be https so egress crosses the gateway.")
+    if not args.regulatory_mcp_url.startswith("https://"):
+        raise SystemExit(
+            "--regulatory-mcp-url must be https so egress crosses the gateway."
+        )
+    if (
+        args.mcp_invoker_service_account
+        == args.regulatory_mcp_invoker_service_account
+    ):
+        raise SystemExit(
+            "Department and regulatory MCP invoker service accounts must be distinct."
+        )
 
     staging_bucket = args.staging_bucket or f"gs://{args.project}-agent-staging"
     ensure_bucket(args.project, args.region, staging_bucket)
@@ -168,6 +199,12 @@ def main() -> int:
         # the department MCP service, never run in-process.
         "COUNTERSIGN_MCP_URL": args.mcp_url,
         "COUNTERSIGN_MCP_INVOKER_SERVICE_ACCOUNT": args.mcp_invoker_service_account,
+        # Public regulator screening is a separate read-only MCP boundary,
+        # never an in-process fallback or a department-tool expansion.
+        "COUNTERSIGN_REGULATORY_MCP_URL": args.regulatory_mcp_url,
+        "COUNTERSIGN_REGULATORY_MCP_INVOKER_SERVICE_ACCOUNT": (
+            args.regulatory_mcp_invoker_service_account
+        ),
     }
     if args.mcp_auth_debug:
         env_vars["COUNTERSIGN_MCP_AUTH_DEBUG"] = "1"
@@ -269,6 +306,10 @@ def main() -> int:
         "sessions": "vertex_managed",
         "mcp_url": args.mcp_url,
         "mcp_invoker_service_account": args.mcp_invoker_service_account,
+        "regulatory_mcp_url": args.regulatory_mcp_url,
+        "regulatory_mcp_invoker_service_account": (
+            args.regulatory_mcp_invoker_service_account
+        ),
         "project_number": project_number(args.project),
     }
     (ROOT / "case_deployment_metadata.json").write_text(
@@ -285,6 +326,10 @@ def main() -> int:
         "IAM bindings do not carry over automatically):\n"
         "  gcloud iam service-accounts add-iam-policy-binding "
         f"{args.mcp_invoker_service_account} \\\n"
+        f"    --member='principal://{effective}' \\\n"
+        "    --role=roles/iam.serviceAccountTokenCreator\n"
+        "  gcloud iam service-accounts add-iam-policy-binding "
+        f"{args.regulatory_mcp_invoker_service_account} \\\n"
         f"    --member='principal://{effective}' \\\n"
         "    --role=roles/iam.serviceAccountTokenCreator\n"
     )

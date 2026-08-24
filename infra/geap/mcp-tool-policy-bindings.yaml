@@ -24,6 +24,11 @@ bindings:
       - prior_art_write
       - controlled_guidance_query
       - qms_report_write
+  - policy: mcp-case-workflow-regulatory-screening-allow.yaml
+    identity: case_workflow
+    tools:
+      - eudragmdp_screen
+      - openfda_enforcement_screen
   - policy: mcp-qc-probe-lims-only.yaml
     identity: qc_probe
     tools:
@@ -35,6 +40,12 @@ bindings:
 forbidden_bindings:
   - policy: mcp-qc-probe-lims-only.yaml
     identity: case_workflow
+  - policy: mcp-case-workflow-regulatory-screening-allow.yaml
+    identity: qc_probe
+  - policy: mcp-case-workflow-regulatory-screening-allow.yaml
+    identity: hello_runtime
+  - policy: mcp-case-workflow-regulatory-screening-allow.yaml
+    identity: sponsor_liaison
   - policy: mcp-case-workflow-tools-allow.yaml
     identity: qc_probe
   - policy: mcp-case-workflow-tools-allow.yaml
