@@ -24,11 +24,25 @@ The GEAP hello agent used for Gateway deny proof stays isolated under
 from google.adk.apps import App, ResumabilityConfig
 
 from app.domain.case_graph import build_deviation_case_workflow
+from app.domain.cfi_graph import build_cfi_workflow
 
 root_agent = build_deviation_case_workflow()
 
 app = App(
     root_agent=root_agent,
     name="app",
+    resumability_config=ResumabilityConfig(is_resumable=True),
+)
+
+# The CFI investigation graph is deployed as its own Agent Runtime, with its
+# own Agent Identity and Gateway allow-list, disjoint from the case
+# workflow's (13_cfi_extended_investigation_plan.md section 4.1). It is a
+# second app in this same module, not a branch of `root_agent`/`app` above —
+# those stay byte-identical to before this graph existed.
+cfi_root_agent = build_cfi_workflow()
+
+cfi_app = App(
+    root_agent=cfi_root_agent,
+    name="cfi_app",
     resumability_config=ResumabilityConfig(is_resumable=True),
 )

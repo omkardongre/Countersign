@@ -69,6 +69,7 @@ from app.domain.branches import (
 )
 from app.domain.case_memory_node import record_case_memory, retrieve_prior_art
 from app.domain.case_models import CaseComplianceResult, DeviationCaseRequest
+from app.domain.cfi_escalation import escalate_to_cfi
 from app.domain.challenger import challenge_investigation
 from app.domain.compliance_models import ComplianceStatus
 from app.domain.department_models import (
@@ -236,5 +237,11 @@ def build_deviation_case_workflow() -> Workflow:
                 record_case_memory,
                 file_qms_report,
             ),
+            # Parallel terminal branch, not a step in the sequential path
+            # above: escalate_to_cfi runs off the same gate_investigation
+            # output but has no outgoing edge of its own, so it can never
+            # block, delay, or alter release/QP behavior. See
+            # cfi_escalation.py's module docstring.
+            (gate_investigation, escalate_to_cfi),
         ],
     )
