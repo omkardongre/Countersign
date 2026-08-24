@@ -118,7 +118,7 @@ So Countersign is built on one non-negotiable rule:
 | **P-A: real agent fleet conversion** | **Done live (8 of 8, 2026-08-23)** — all target agents are real: six tool-bound/structured ADK graph agents plus the separate sponsor A2A peer. Fleet manifest available at `GET /fleet/manifest` |
 | **P1: real Cloud SQL LIMS / BigQuery EM** | **Done live (2026-08-23)** — provisioned `countersign_lims.lims_results` and `countersign_em.em_readings`; deployed department MCP with `COUNTERSIGN_LIMS_BACKEND=cloud_sql` and `COUNTERSIGN_EM_BACKEND=bigquery`. Authenticated live MCP calls for `aurex`/`AX-2291` returned `system=cloud_sql` and `system=bigquery`. LIMS remains SELECT-only and EM has Data Viewer/Job User only. Supplier CoA (untrusted channel) and QMS write-back remain separate work |
 | **P3: sponsor liaison A2A peer (agent 8 of 8)** | **Done live (2026-08-23)** — separate Cloud Run A2A service with per-sponsor API-key auth, a real tool-bound agent, `case_status` Cloud SQL store, department MCP scope enforcement, and a dedicated Gateway tool policy. Live proof: authorized sponsor returns the real hold status; cross-tenant query is denied; unknown batch returns `not_found`; missing/wrong key returns 401 |
-| **CFI Phase 1: Cross-Functional Investigation core** | **Code done, not deployed (2026-08-24)** — deterministic trigger/ledger/gates/budget, a separate CFI ADK `Workflow` (`cfi_root_agent`/`cfi_app`), `cfi_lead_agent` + `scope_expansion_agent`, tenant-locked `sibling_batch_query`, and a Cloud SQL/MCP-backed durable CFI store with atomic idempotent open and optimistic-concurrency save. `escalate_to_cfi` is a parallel terminal branch off `gate_investigation` — no outgoing edge, so the proven release/QP path is unchanged. `sibling_batch_query` now has an explicit-opt-in real Cloud SQL backend (`COUNTERSIGN_SIBLING_BATCH_BACKEND=cloud_sql`, dedicated `batch_material_lots` table, SELECT-only), same pattern as LIMS/EM; unset keeps the synthetic catalog. Verified via compile/import/ruff/ty checks and a live MCP-transport smoke test; existing regression tests unchanged at 8 passed. No Cloud SQL schema provisioning has been run in a live project, no CFI Runtime deploy, Gateway policy, or Registry entry exist yet; Phase 2 (Chat interviews) and Phase 3 (trend correlation, Calendar, filed report) are not started. See `checklist.md` |
+| **CFI Phase 1: Cross-Functional Investigation core** | **Done live (2026-08-24)** — deterministic trigger/ledger/gates/budget, a separate CFI Agent Identity Runtime (`reasoningEngines/7328770015929303040`, from `app.cfi_app`), `cfi_lead_agent` + `scope_expansion_agent`, tenant-locked `sibling_batch_query`, and a live Cloud SQL/MCP-backed durable CFI store (`adk_sessions.cfi_investigation`, MCP identity SELECT/INSERT/UPDATE only, no DELETE/DDL) with atomic idempotent open and optimistic-concurrency save. `escalate_to_cfi` remains a parallel terminal branch off `gate_investigation` — the proven release/QP path is unchanged. `sibling_batch_query` is live on Cloud SQL (`COUNTERSIGN_SIBLING_BATCH_BACKEND=cloud_sql`, `batch_material_lots`, SELECT-only) on the redeployed department MCP, alongside unchanged real LIMS/EM. A dedicated Gateway policy (`countersign-mcp-cfi-workflow-tools`) exposes exactly `sibling_batch_query`/`cfi_open`/`cfi_get`/`cfi_save`; the Runtime has its own Agent Registry entry and its own `countersign-cfi-invoker` credential boundary, separate from the case Runtime's. **Live bounded probe passed:** a real CFI (tenant `aurex`, batch `AX-2291`) was opened, invoked on the deployed CFI Runtime (29 streamed events, no errors), returned real same-tenant Cloud SQL siblings (`AX-2292`/`AX-2293`), rejected a cross-tenant sibling query, and closed durably at `revision=2` with `outcome=root_cause_identified`, one hypothesis, and evidence recorded from `sibling_batch_query` — independently re-read through MCP, not just observed mid-run. The probe row is retained by design (no delete operation on this MCP surface). Phase 2 (Chat interviews) and Phase 3 (trend correlation, Calendar, filed report) are **not started**. See `checklist.md` |
 
 ### Real agent fleet
 
@@ -1200,3 +1200,49 @@ whichever call happened to win.
 A temporary `COUNTERSIGN_STERILITY_HOLD_SECONDS=20` was set on `countersign-department-mcp` for
 this run only (same reversible pattern as the 2026-08-18 kill/resume proof) and removed
 immediately after; the deployed service is back to the uncompressed default.
+
+## CFI Phase 1 — live provisioning and proof (2026-08-24)
+
+CFI Phase 1's code (see `checklist.md`'s 2026-08-24 CFI entries) is now provisioned and proven
+live, closing every item that entry left open:
+
+- **Data plane.** `infra/geap/provision_cfi_sql.sh` created `adk_sessions.cfi_investigation` on
+  the existing `countersign-sessions` Cloud SQL instance, granting the department MCP identity
+  `SELECT`/`INSERT`/`UPDATE` only — no `DELETE`, no DDL. `infra/geap/provision_department_systems.sh`
+  confirmed the real LIMS table and created/seeded `countersign_lims.batch_material_lots` with
+  the shared-lot siblings `AX-2291`/`AX-2292`/`AX-2293`.
+- **Department MCP redeploy.** `countersign-department-mcp` was redeployed with
+  `COUNTERSIGN_SIBLING_BATCH_BACKEND=cloud_sql` and `COUNTERSIGN_SIBLING_BATCH_TABLE=batch_material_lots`
+  set explicitly, alongside its unchanged real `COUNTERSIGN_LIMS_BACKEND=cloud_sql` and
+  `COUNTERSIGN_EM_BACKEND=bigquery`. Verified live: Cloud Run env vars, private IAM (still
+  `--no-allow-unauthenticated`), and an authenticated `tools/list` call all confirmed the switch
+  and the four CFI tool names.
+- **CFI Runtime.** `infra/geap/deploy_cfi_runtime.py` deployed a separate Agent Identity Runtime
+  from `app.cfi_app` (`reasoningEngines/7328770015929303040`), never the case Runtime's image.
+  Its own `countersign-cfi-invoker` service account holds `roles/run.invoker` on the department
+  MCP service; the CFI Agent Identity holds `roles/iam.serviceAccountTokenCreator` on that
+  invoker — the same credential-boundary pattern as the case Runtime's own invoker, but
+  disjoint from it.
+- **Gateway policy and Registry.** `countersign-mcp-cfi-workflow-tools` was imported as an
+  `ALLOW` policy on the existing `countersign-egress` gateway, permitting only
+  `sibling_batch_query`, `cfi_open`, `cfi_get`, `cfi_save` (plus `MATCH_BASE_PROTOCOL_METHODS`).
+  The CFI Runtime auto-registered in Agent Registry as `countersign-cfi`.
+- **Live bounded probe (`infra/geap/verify_cfi_live.py`).** Opened one explicitly named
+  live-probe CFI (`44dbfd6c-79e0-4732-952c-9bc7b8772177`, tenant `aurex`, batch `AX-2291`),
+  drove it through the deployed CFI Runtime's `streamQuery` (29 events, zero errors), confirmed
+  same-tenant sibling expansion returned real Cloud SQL rows and a cross-tenant sibling query
+  was rejected, then independently re-read the record over MCP after the run: `revision=2`,
+  `outcome=root_cause_identified`, one hypothesis, and evidence citing `sibling_batch_query`.
+  The probe record is retained, not deleted — this MCP surface has no delete operation, and
+  audit retention is the safer default for a GMP investigation trail.
+- **Two verifier-only issues found and fixed during this pass, not infra bugs:** the verifier
+  originally compared the Runtime's raw resource path against Agent Registry's `agentId`, which
+  is a `urn:agent:...reasoningEngines:{id}` string, not that path — fixed to match on the
+  runtime id substring. It also compared the Gateway policy's target against the project-ID
+  form of the gateway resource, while an imported policy canonicalizes the target to the
+  project-number form — fixed to accept either.
+- No tests were added or run for this pass; no commit was made. This is a live-infrastructure
+  provisioning and proof pass only.
+
+**CFI Phase 1 is now live and proven end to end.** Phase 2 (Chat interviews) and Phase 3 (trend
+correlation, Calendar site review, filed CFI report) remain **not started**.
