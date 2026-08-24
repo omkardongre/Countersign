@@ -1,0 +1,12 @@
+{
+  "spec_id": "cfi_budget_caps",
+  "spec_version": "1.0.0",
+  "effective_date": "2026-08-24",
+  "approved_by": "QA-Head (synthetic)",
+  "change_control_ref": "CC-2026-0171 (synthetic)",
+  "description": "Change-controlled bounded-autonomy caps for the CFI planning loop. Enforced in cfi_continue_gate, never in a prompt. max_wall_clock_days mirrors GMPSOP QMS-130's own 90-day open-CFI review trigger; exhausting any cap closes the CFI as cfi_abandoned_budget_exhausted rather than continuing to loop.",
+  "source": "https://www.gmpsop.com/gmp_documents/qms-130-cross-functional-investigation/",
+  "max_planning_rounds": 6,
+  "max_tool_calls_per_round": 4,
+  "max_wall_clock_days": 90
+}

@@ -46,6 +46,8 @@ _logger = logging.getLogger(__name__)
 _MASTER_DATA_DIR = pathlib.Path(__file__).parent / "master_data"
 
 BMR_PAGE_SPEC_FILENAME = "bmr_page_spec_v1.json"
+CFI_TRIGGER_SPEC_FILENAME = "cfi_trigger_spec_v1.json"
+CFI_BUDGET_SPEC_FILENAME = "cfi_budget_spec_v1.json"
 
 
 class RootCauseCategory(StrEnum):
@@ -292,6 +294,119 @@ def load_trend_baseline(filename: str) -> TrendBaseline:
         baseline.change_control_ref,
     )
     return baseline
+
+
+class CfiTriggerSpec(BaseModel):
+    """Change-controlled thresholds for the deterministic CFI trigger.
+
+    ``decide_cfi_required`` (``app/domain/cfi_trigger.py``) is a pure
+    function over these values and the joined case. Neither the trigger
+    function nor any agent decides whether a CFI is warranted from a
+    literal in code — the threshold itself is master data, approved and
+    hashed like every other spec in this module, per GMPSOP QMS-130
+    section 4.2.1 (a human/rule call, not an investigator's).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    spec_id: str
+    spec_version: str
+    spec_sha256: str = Field(
+        description="SHA-256 of the spec file bytes this object was loaded from."
+    )
+    effective_date: str
+    approved_by: str
+    change_control_ref: str
+    description: str
+    low_confidence_threshold: float = Field(ge=0.0, le=1.0)
+    recurrence_prior_occurrences_threshold: int = Field(ge=0)
+
+
+class CfiBudgetSpec(BaseModel):
+    """Change-controlled bounded-autonomy caps for the CFI planning loop.
+
+    Enforced by ``cfi_continue_gate`` (``app/domain/cfi_gate.py``), never by
+    a prompt. ``max_wall_clock_days`` mirrors GMPSOP QMS-130's own 90-day
+    open-CFI review trigger.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    spec_id: str
+    spec_version: str
+    spec_sha256: str = Field(
+        description="SHA-256 of the spec file bytes this object was loaded from."
+    )
+    effective_date: str
+    approved_by: str
+    change_control_ref: str
+    description: str
+    max_planning_rounds: int = Field(ge=1)
+    max_tool_calls_per_round: int = Field(ge=1)
+    max_wall_clock_days: int = Field(ge=1)
+
+
+@functools.cache
+def load_cfi_trigger_spec(filename: str = CFI_TRIGGER_SPEC_FILENAME) -> CfiTriggerSpec:
+    """Loads and pins the approved CFI trigger threshold specification.
+
+    Cached for the same reason as ``load_document_field_spec``: a CFI
+    trigger decision made mid-deployment must not silently shift underneath
+    cases already in flight because a file changed on disk without a
+    process restart.
+
+    Raises:
+        FileNotFoundError: If the named spec is not present.
+        ValueError: If the spec is malformed.
+    """
+    path = _MASTER_DATA_DIR / filename
+    if not path.is_file():
+        raise FileNotFoundError(f"CFI trigger spec not found: {filename}")
+
+    raw = path.read_bytes()
+    payload = json.loads(raw)
+    payload["spec_sha256"] = hashlib.sha256(raw).hexdigest()
+
+    spec = CfiTriggerSpec.model_validate(payload)
+
+    _logger.info(
+        "Loaded CFI trigger spec %s: version=%s sha256=%s change_control_ref=%s",
+        spec.spec_id,
+        spec.spec_version,
+        spec.spec_sha256,
+        spec.change_control_ref,
+    )
+    return spec
+
+
+@functools.cache
+def load_cfi_budget_spec(filename: str = CFI_BUDGET_SPEC_FILENAME) -> CfiBudgetSpec:
+    """Loads and pins the approved CFI bounded-autonomy budget specification.
+
+    Cached for the same reason as ``load_cfi_trigger_spec``.
+
+    Raises:
+        FileNotFoundError: If the named spec is not present.
+        ValueError: If the spec is malformed.
+    """
+    path = _MASTER_DATA_DIR / filename
+    if not path.is_file():
+        raise FileNotFoundError(f"CFI budget spec not found: {filename}")
+
+    raw = path.read_bytes()
+    payload = json.loads(raw)
+    payload["spec_sha256"] = hashlib.sha256(raw).hexdigest()
+
+    spec = CfiBudgetSpec.model_validate(payload)
+
+    _logger.info(
+        "Loaded CFI budget spec %s: version=%s sha256=%s change_control_ref=%s",
+        spec.spec_id,
+        spec.spec_version,
+        spec.spec_sha256,
+        spec.change_control_ref,
+    )
+    return spec
 
 
 @functools.cache

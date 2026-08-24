@@ -1,0 +1,11 @@
+{
+  "spec_id": "cfi_trigger_thresholds",
+  "spec_version": "1.0.0",
+  "effective_date": "2026-08-24",
+  "approved_by": "QA-Head (synthetic)",
+  "change_control_ref": "CC-2026-0170 (synthetic)",
+  "description": "Change-controlled thresholds for the deterministic CFI (Cross-Functional Investigation) trigger. decide_cfi_required() is a pure function over these values and the joined case; it does not itself decide the truth of any hypothesis, only whether the deviation qualifies for an extended investigation per GMPSOP QMS-130 section 4.2.1.",
+  "source": "https://www.gmpsop.com/gmp_documents/qms-130-cross-functional-investigation/",
+  "low_confidence_threshold": 0.6,
+  "recurrence_prior_occurrences_threshold": 3
+}
