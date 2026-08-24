@@ -28,6 +28,7 @@ from app.domain import challenger as challenger_mod
 from app.domain import department_tools as department_tools_mod
 from app.domain import extraction
 from app.domain import investigation as investigation_mod
+from app.domain import qms_report_agent as qms_report_agent_mod
 from app.domain.case_graph import CASE_WORKFLOW_NAME, build_deviation_case_workflow
 from app.domain.challenger import get_challenger_agent
 from app.domain.compliance_models import ComplianceStatus
@@ -170,6 +171,44 @@ def stub_investigation_agents(monkeypatch):
     )
     monkeypatch.setattr(
         challenger_mod, "get_challenger_agent", lambda: _stub_challenger()
+    )
+
+
+@pytest.fixture
+def stub_qms_write_agent(monkeypatch):
+    """Replaces the real Gemini call *and* the real Docs/Drive MCP call in
+    ``file_qms_report`` with a stub. Unlike ``stub_department_agents``
+    (which still exercises the real in-process MCP tool against synthetic
+    catalog data), the Docs/Drive API is external and out of scope for
+    these graph-flow tests — ``test_qms_report.py`` covers the deterministic
+    report content, and the MCP tool itself is exercised separately. Any
+    test that resumes the graph past ``confirm_qp`` reaches
+    ``file_qms_report`` and needs this stub so it does not attempt a real
+    network call.
+    """
+
+    async def _stub_call_qms_write_tool(name, arguments):
+        del name
+        return {
+            "document_id": "stub-doc-id",
+            "document_url": "https://docs.google.com/document/d/stub-doc-id/edit",
+            "was_update": False,
+        }
+
+    monkeypatch.setattr(
+        qms_report_agent_mod, "call_qms_write_tool", _stub_call_qms_write_tool
+    )
+
+    def _stub_get_qa_qms_write_agent(qms_write_tool):
+        @node(name="stub_qa_qms_write_agent")
+        async def stub_qa_qms_write_agent(node_input):
+            await qms_write_tool()
+            return qms_report_agent_mod.QaQmsWriteAgentSummary(report_filed=True)
+
+        return stub_qa_qms_write_agent
+
+    monkeypatch.setattr(
+        qms_report_agent_mod, "get_qa_qms_write_agent", _stub_get_qa_qms_write_agent
     )
 
 
@@ -438,6 +477,7 @@ async def test_qp_decline_resumes_and_records_confirmation(
     stub_ground_truth,
     stub_investigation_agents,
     stub_department_agents,
+    stub_qms_write_agent,
     sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())
@@ -468,6 +508,7 @@ async def test_qp_confirm_on_not_ready_is_rejected(
     stub_ground_truth,
     stub_investigation_agents,
     stub_department_agents,
+    stub_qms_write_agent,
     sterility_released,
 ) -> None:
     stub_ground_truth(make_page_extraction())

@@ -43,6 +43,7 @@ from app.domain.department_tools import (
     CASE_MEMORY_TOOLS,
     CASE_STATUS_TOOLS,
     DRIVE_TOOLS,
+    QMS_WRITE_TOOLS,
     SPONSOR_TOOLS,
     STERILITY_TOOLS,
 )
@@ -273,6 +274,22 @@ async def call_drive_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any
     if name not in DRIVE_TOOLS:
         raise DepartmentToolCallError(
             f"Callers may not call {name!r}; allowed={sorted(DRIVE_TOOLS)}"
+        )
+    payload = await call_mcp_tool(name, arguments)
+    if not payload:
+        raise DepartmentToolCallError(f"{name} returned no structured content.")
+    return payload
+
+
+async def call_qms_write_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Call ``qms_report_write`` over MCP. Fail closed on errors.
+
+    Its own allow-list, disjoint from every read-only set on this surface —
+    see ``app/domain/department_tools.py``'s ``QMS_WRITE_TOOLS`` docstring.
+    """
+    if name not in QMS_WRITE_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(QMS_WRITE_TOOLS)}"
         )
     payload = await call_mcp_tool(name, arguments)
     if not payload:

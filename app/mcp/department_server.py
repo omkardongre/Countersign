@@ -42,6 +42,7 @@ from app.domain.case_memory_models import (
     CaseMemoryFact,
     CaseMemoryQueryResult,
 )
+from app.domain.case_status_models import CaseStatusRecord
 from app.domain.department_models import (
     CoaSnapshot,
     DriveEvidencePayload,
@@ -57,6 +58,7 @@ from app.domain.department_tools import (
     PRIOR_ART_QUERY,
     PRIOR_ART_REDACT,
     PRIOR_ART_WRITE,
+    QMS_REPORT_WRITE,
     SPONSOR_BATCH_STATUS,
     STERILITY_BIND_RESUME_HANDLE,
     STERILITY_GET,
@@ -65,7 +67,11 @@ from app.domain.department_tools import (
     CaseStatusTenantMismatch,
     DepartmentRecordMissing,
     DriveFetchError,
+    QmsReportWriteError,
     SterilityTenantMismatch,
+)
+from app.domain.department_tools import (
+    case_status_upsert as run_case_status_upsert,
 )
 from app.domain.department_tools import (
     coa_fetch as load_coa,
@@ -89,7 +95,7 @@ from app.domain.department_tools import (
     prior_art_write as run_prior_art_write,
 )
 from app.domain.department_tools import (
-    case_status_upsert as run_case_status_upsert,
+    qms_report_write as run_qms_report_write,
 )
 from app.domain.department_tools import (
     sponsor_batch_status as run_sponsor_batch_status,
@@ -103,7 +109,7 @@ from app.domain.department_tools import (
 from app.domain.department_tools import (
     sterility_start as run_sterility_start,
 )
-from app.domain.case_status_models import CaseStatusRecord
+from app.domain.qms_report_models import QmsReportWriteResult
 from app.domain.sponsor_models import SponsorBatchStatusResult, SponsorScopeDenied
 from app.domain.sterility_models import SterilityIncubationRecord
 
@@ -219,6 +225,29 @@ def build_department_mcp(
         try:
             return run_drive_fetch_evidence(tenant_id=tenant_id, file_id=file_id)
         except DriveFetchError as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=QMS_REPORT_WRITE,
+        title="File QMS investigation report",
+        description=(
+            "File (or re-file) the investigation report and Annex 16 "
+            "confirmation package as a Google Doc in the deviation-reports "
+            "folder. Idempotent by tenant_id/case_id: a rerun overwrites the "
+            "existing filed doc rather than creating a duplicate. The only "
+            "write tool on this MCP surface — never merged into the "
+            "read-only department or Drive allow-lists."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def qms_report_write(
+        tenant_id: str, case_id: str, title: str, body: str
+    ) -> QmsReportWriteResult:
+        try:
+            return run_qms_report_write(
+                tenant_id=tenant_id, case_id=case_id, title=title, body=body
+            )
+        except QmsReportWriteError as exc:
             raise ToolError(str(exc)) from exc
 
     @mcp.tool(

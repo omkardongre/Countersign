@@ -26,6 +26,8 @@ MES and QMS are not in this slice. Investigation must not call these tools.
 
 from __future__ import annotations
 
+import os
+
 from app.domain.department_models import (
     CoaSnapshot,
     DriveEvidencePayload,
@@ -38,6 +40,7 @@ from app.domain.department_source import (
     get_em_source,
     get_lims_source,
 )
+from app.domain.qms_report_models import QmsReportWriteResult
 
 __all__ = [
     "ALLOWED_DEPARTMENT_TOOLS",
@@ -47,24 +50,28 @@ __all__ = [
     "COA_FETCH",
     "DRIVE_FETCH_EVIDENCE",
     "DRIVE_TOOLS",
-    "DepartmentRecordMissing",
-    "DriveFetchError",
     "EM_QUERY",
     "LIMS_QUERY",
     "PRIOR_ART_QUERY",
     "PRIOR_ART_REDACT",
     "PRIOR_ART_WRITE",
+    "QMS_REPORT_WRITE",
+    "QMS_WRITE_TOOLS",
+    "SPONSOR_BATCH_STATUS",
+    "SPONSOR_TOOLS",
     "STERILITY_BIND_RESUME_HANDLE",
     "STERILITY_GET",
     "STERILITY_START",
     "STERILITY_TOOLS",
-    "SPONSOR_BATCH_STATUS",
-    "SPONSOR_TOOLS",
+    "DepartmentRecordMissing",
+    "DriveFetchError",
+    "QmsReportWriteError",
     "case_status_upsert",
     "coa_fetch",
     "drive_fetch_evidence",
     "em_query",
     "lims_query",
+    "qms_report_write",
     "sponsor_batch_status",
 ]
 
@@ -115,6 +122,14 @@ ALLOWED_DEPARTMENT_TOOLS = frozenset({LIMS_QUERY, EM_QUERY, COA_FETCH})
 # call_department_tool hardcodes for the other three reads, so it is called
 # through call_drive_tool with its own allow-list instead.
 DRIVE_TOOLS = frozenset({DRIVE_FETCH_EVIDENCE})
+
+# The only tool that mutates an external record (files/creates or overwrites
+# a Google Doc). Kept in its own allow-list, never merged into
+# ALLOWED_DEPARTMENT_TOOLS or DRIVE_TOOLS, so a Gateway allow-list bug that
+# lets a read-only collector reach one of those sets can never also grant it
+# write access to Drive.
+QMS_REPORT_WRITE = "qms_report_write"
+QMS_WRITE_TOOLS = frozenset({QMS_REPORT_WRITE})
 
 
 class DriveFetchError(Exception):
@@ -224,6 +239,138 @@ def drive_fetch_evidence(*, tenant_id: str, file_id: str) -> DriveEvidencePayloa
         mime_type=mime_type,
         content_base64=base64.b64encode(payload).decode("ascii"),
     )
+
+
+class QmsReportWriteError(Exception):
+    """The Docs/Drive API call failed, or the reports folder is unset."""
+
+
+_QMS_REPORTS_FOLDER_ENV = "COUNTERSIGN_QMS_REPORTS_FOLDER_ID"
+_QMS_TENANT_PROPERTY = "countersign_tenant_id"
+_QMS_CASE_PROPERTY = "countersign_case_id"
+
+
+def qms_report_write(
+    *, tenant_id: str, case_id: str, title: str, body: str
+) -> QmsReportWriteResult:
+    """Files (or re-files) the investigation report + Annex 16 package as a
+    real Google Doc in the ``03 Deviation Reports`` folder.
+
+    Runs inside the MCP process, which holds the Drive/Docs credential — an
+    Agent Identity principal cannot itself be a Drive/Docs OAuth or
+    service-account principal, same reasoning as every other tool in this
+    module. Idempotent by ``(tenant_id, case_id)``: a rerun (resume after a
+    crash, or a corrected report) finds the existing filed doc by its Drive
+    ``appProperties`` and overwrites its body in place rather than filing a
+    second copy. ``title``/``body`` are pre-built deterministic text
+    (``app.domain.qms_report``); this function does not draft content.
+    """
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+
+    from app.app_utils.services import get_google_credentials
+
+    folder_id = os.environ.get(_QMS_REPORTS_FOLDER_ENV, "").strip()
+    if not folder_id:
+        raise QmsReportWriteError(
+            f"{_QMS_REPORTS_FOLDER_ENV} is not set; cannot file the "
+            "investigation report without a target Drive folder."
+        )
+
+    try:
+        credentials = get_google_credentials(
+            scopes=[
+                "https://www.googleapis.com/auth/documents",
+                "https://www.googleapis.com/auth/drive",
+            ]
+        )
+        drive = build("drive", "v3", credentials=credentials)
+        docs = build("docs", "v1", credentials=credentials)
+
+        query = (
+            f"'{folder_id}' in parents and trashed = false and "
+            f"appProperties has {{key='{_QMS_TENANT_PROPERTY}' and "
+            f"value='{tenant_id}'}} and "
+            f"appProperties has {{key='{_QMS_CASE_PROPERTY}' and "
+            f"value='{case_id}'}}"
+        )
+        existing = (
+            drive.files()
+            .list(q=query, fields="files(id,webViewLink)", pageSize=2)
+            .execute()
+            .get("files", [])
+        )
+
+        if existing:
+            # Overwrite in place: a rerun after resume must not create a
+            # second filed copy for the same case.
+            document_id = existing[0]["id"]
+            document = docs.documents().get(documentId=document_id).execute()
+            end_index = document["body"]["content"][-1]["endIndex"]
+            requests = []
+            if end_index > 1:
+                requests.append(
+                    {
+                        "deleteContentRange": {
+                            "range": {"startIndex": 1, "endIndex": end_index - 1}
+                        }
+                    }
+                )
+            requests.append(
+                {"insertText": {"location": {"index": 1}, "text": body}}
+            )
+            docs.documents().batchUpdate(
+                documentId=document_id, body={"requests": requests}
+            ).execute()
+            drive.files().update(
+                fileId=document_id, body={"name": title}
+            ).execute()
+            web_view_link = existing[0].get("webViewLink") or (
+                f"https://docs.google.com/document/d/{document_id}/edit"
+            )
+            return QmsReportWriteResult(
+                document_id=document_id,
+                document_url=web_view_link,
+                was_update=True,
+            )
+
+        created = docs.documents().create(body={"title": title}).execute()
+        document_id = created["documentId"]
+        docs.documents().batchUpdate(
+            documentId=document_id,
+            body={
+                "requests": [
+                    {"insertText": {"location": {"index": 1}, "text": body}}
+                ]
+            },
+        ).execute()
+        moved = (
+            drive.files()
+            .update(
+                fileId=document_id,
+                addParents=folder_id,
+                body={
+                    "appProperties": {
+                        _QMS_TENANT_PROPERTY: tenant_id,
+                        _QMS_CASE_PROPERTY: case_id,
+                    }
+                },
+                fields="id,webViewLink",
+            )
+            .execute()
+        )
+        web_view_link = moved.get("webViewLink") or (
+            f"https://docs.google.com/document/d/{document_id}/edit"
+        )
+        return QmsReportWriteResult(
+            document_id=document_id,
+            document_url=web_view_link,
+            was_update=False,
+        )
+    except HttpError as exc:
+        raise QmsReportWriteError(
+            f"Docs/Drive API call for {tenant_id}/{case_id} failed: {exc}"
+        ) from exc
 
 
 class CaseStatusTenantMismatch(Exception):

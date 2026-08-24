@@ -27,6 +27,7 @@ from app.domain.department_tools import (
     DRIVE_TOOLS,
     EM_QUERY,
     LIMS_QUERY,
+    QMS_WRITE_TOOLS,
     SPONSOR_TOOLS,
     STERILITY_TOOLS,
 )
@@ -58,6 +59,7 @@ async def test_department_mcp_exposes_exactly_the_named_tools() -> None:
         | CASE_MEMORY_TOOLS
         | CASE_STATUS_TOOLS
         | SPONSOR_TOOLS
+        | QMS_WRITE_TOOLS
     )
     assert "postgres-execute-sql" not in names
 

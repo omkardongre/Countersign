@@ -32,6 +32,7 @@ stall the join (ADK JoinNode caution).
           -> evaluate_annex16_release_gate
           -> confirm_qp
           -> record_case_memory
+          -> file_qms_report
 
 Manufacturing, QC lab, environmental monitoring, and supply are each a real
 single-turn ``Agent`` bound to its own MCP-backed tool(s)
@@ -46,7 +47,10 @@ gates are code. Sterility incubation is external store state plus a
 ``RequestInput`` checkpoint (``rerun_on_resume=True``); a scheduler tick
 marks the store complete and ADK resume continues. QP sign-off is a
 ``RequestInput`` pause on ``confirm_qp`` (``rerun_on_resume=True``).
-Nothing in this graph certifies or releases a batch.
+After the QP has acted, ``qa_qms_write_agent`` (``qms_report_agent.py``) —
+the 8th fleet member and the only agent permitted to mutate an external
+record — files the investigation report and Annex 16 package as a real
+Google Doc. Nothing in this graph certifies or releases a batch.
 """
 
 from __future__ import annotations
@@ -78,6 +82,7 @@ from app.domain.intake import classify_intake
 from app.domain.investigation import draft_investigation
 from app.domain.investigation_gate import gate_investigation
 from app.domain.models import ClassifiedCase
+from app.domain.qms_report_agent import file_qms_report
 from app.domain.qp_confirmation import confirm_qp
 from app.domain.qp_models import QpReviewedPackage
 from app.domain.release_gate import evaluate_annex16_release_gate_node
@@ -222,6 +227,7 @@ def build_deviation_case_workflow() -> Workflow:
                 evaluate_annex16_release_gate_node,
                 confirm_qp,
                 record_case_memory,
+                file_qms_report,
             ),
         ],
     )
