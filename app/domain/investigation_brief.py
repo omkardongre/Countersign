@@ -33,6 +33,15 @@ def allowed_source_uris(case: CaseComplianceResult) -> set[str]:
     for fact in case.prior_art:
         if not fact.redacted:
             uris.add(fact.source_uri)
+    # Doc 12 T1-5: only in-force (approved, not superseded) controlled
+    # SOP/public-guidance citations are citeable. A stale or unapproved
+    # guidance citation is deliberately excluded from the catalogue rather
+    # than left in and merely unable to satisfy the mandatory-SOP check —
+    # citing a withdrawn procedure as if it were current is itself a
+    # citation-gate failure, not a lesser one.
+    for citation in case.controlled_guidance:
+        if citation.in_force:
+            uris.add(citation.source_uri)
     return {uri for uri in uris if uri}
 
 
@@ -73,6 +82,19 @@ def build_investigation_brief(case: CaseComplianceResult) -> dict:
         for fact in case.prior_art
         if not fact.redacted
     ]
+    controlled_guidance = [
+        {
+            "doc_id": citation.doc_id,
+            "corpus": citation.corpus.value,
+            "title": citation.title,
+            "version": citation.version,
+            "source_uri": citation.source_uri,
+            "text": citation.text,
+            "similarity_score": citation.similarity_score,
+        }
+        for citation in case.controlled_guidance
+        if citation.in_force
+    ]
     findings = []
     for finding in case.findings:
         findings.append(
@@ -111,4 +133,5 @@ def build_investigation_brief(case: CaseComplianceResult) -> dict:
         "classification_rationale": classified.rationale,
         "prior_art": prior_art,
         "prior_art_embedded": case.prior_art_embedded,
+        "controlled_guidance": controlled_guidance,
     }

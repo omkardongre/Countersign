@@ -38,6 +38,8 @@ from google.genai import types
 
 from app.domain.case_memory_mcp import McpCaseMemoryStore
 from app.domain.case_models import CaseComplianceResult
+from app.domain.guidance_mcp import McpControlledGuidanceStore
+from app.domain.guidance_models import GuidanceCorpus
 from app.domain.investigation_brief import build_investigation_brief
 from app.domain.investigation_gate import departments_ready
 from app.domain.investigation_models import InvestigationDraft, InvestigationDraftResult
@@ -55,12 +57,13 @@ or batch disposition. You propose cited hypotheses only.
 Rules, in order of importance:
 
 1. Use only facts in the JSON brief, plus any prior-art facts returned by
-   `query_prior_deviations`. Never invent batch numbers, results,
+   `query_prior_deviations` or guidance returned by
+   `query_controlled_guidance`. Never invent batch numbers, results,
    departments, or source URIs.
 2. Every supporting claim must cite at least one `source_uri` from
    `allowed_source_uris`, or a `source_uri` returned by
-   `query_prior_deviations` in this turn. If you mention a finding, its
-   `finding_id` must be in `allowed_finding_ids`.
+   `query_prior_deviations`/`query_controlled_guidance` in this turn. If you
+   mention a finding, its `finding_id` must be in `allowed_finding_ids`.
 2a. Prior-art facts, whether pre-loaded in the brief or returned by
     `query_prior_deviations`, are about *past* deviations on this tenant,
     not findings on this case. You may cite a prior-art `source_uri` as
@@ -68,9 +71,22 @@ Rules, in order of importance:
     itself evidence that this deviation has the same cause. A prior-art
     fact's `similarity_score`, when present, is a retrieval-ranking number
     only — it never establishes or increases confidence in a root cause.
+2b. `controlled_guidance` entries, whether pre-loaded in the brief or
+    returned by `query_controlled_guidance`, are either the tenant's own
+    approved SOP (`corpus: controlled_sop`) or public regulatory text
+    (`corpus: public_guidance`). At least one supporting claim in your
+    draft must cite a `controlled_sop` source_uri when one is available —
+    an investigation that never references the procedure actually in force
+    is incomplete. Public guidance may support an interpretation, but a
+    `public_guidance` citation never substitutes for a `controlled_sop`
+    citation, and neither ever establishes a batch fact, root cause, or
+    disposition by itself.
 3. Call `query_prior_deviations` at most once, only if the brief's
    pre-loaded `prior_art` does not already cover a hypothesis you are
-   considering. Do not call it merely to browse.
+   considering. Call `query_controlled_guidance` at most once per corpus,
+   only if the brief's pre-loaded `controlled_guidance` does not already
+   cover the procedure or public guidance you need. Do not call either
+   merely to browse.
 4. If the evidence does not support a hypothesis, omit it and list an
    `open_question` instead.
 5. `confidence` is how well the cited evidence supports that hypothesis, not
@@ -120,7 +136,47 @@ def _make_prior_art_tool(
     return query_prior_deviations
 
 
-def get_investigation_agent(prior_art_tool: Any) -> Agent:
+def _make_controlled_guidance_tool(
+    case: CaseComplianceResult, captured: dict[str, Any]
+) -> Any:
+    """Tenant-locked closure: the model supplies only corpus and query
+    text, never the tenant — same scope discipline as the prior-art tool.
+    """
+
+    async def query_controlled_guidance(corpus: str, query: str) -> dict[str, Any]:
+        """Search controlled SOPs or public regulatory guidance for
+        additional context.
+
+        Args:
+            corpus: Either "controlled_sop" or "public_guidance".
+            query: What to search for, e.g. a process step or investigation
+                procedure.
+        """
+        result = await McpControlledGuidanceStore().query_async(
+            tenant_id=case.classified.tenant_id,
+            corpus=GuidanceCorpus(corpus),
+            query=query,
+            top_k=_PRIOR_ART_TOP_K,
+        )
+        captured.setdefault("additional_guidance", []).extend(result.citations)
+        return {
+            "citations": [
+                {
+                    "doc_id": citation.doc_id,
+                    "corpus": citation.corpus.value,
+                    "title": citation.title,
+                    "source_uri": citation.source_uri,
+                    "text": citation.text,
+                }
+                for citation in result.citations
+                if citation.in_force
+            ]
+        }
+
+    return query_controlled_guidance
+
+
+def get_investigation_agent(prior_art_tool: Any, controlled_guidance_tool: Any) -> Agent:
     """Built per call so workflow wrappers cannot leak mode mutations."""
     return Agent(
         name=INVESTIGATION_AGENT_NAME,
@@ -132,7 +188,7 @@ def get_investigation_agent(prior_art_tool: Any) -> Agent:
         include_contents="none",
         instruction=_INSTRUCTION,
         output_schema=InvestigationDraft,
-        tools=[FunctionTool(prior_art_tool)],
+        tools=[FunctionTool(prior_art_tool), FunctionTool(controlled_guidance_tool)],
     )
 
 
@@ -176,8 +232,10 @@ async def draft_investigation(
     )
     captured: dict[str, Any] = {}
     prior_art_tool = _make_prior_art_tool(case, captured)
+    controlled_guidance_tool = _make_controlled_guidance_tool(case, captured)
     raw = await ctx.run_node(
-        get_investigation_agent(prior_art_tool), node_input=content
+        get_investigation_agent(prior_art_tool, controlled_guidance_tool),
+        node_input=content,
     )
     if raw is None:
         return _skip(case, "Investigation agent returned no structured output.")
@@ -203,6 +261,17 @@ async def draft_investigation(
             fact for fact in additional_prior_art if fact.fact_id not in merged_ids
         ]
         case = case.model_copy(update={"prior_art": merged})
+    additional_guidance = captured.get("additional_guidance") or []
+    if additional_guidance:
+        merged_citation_ids = {
+            citation.citation_id for citation in case.controlled_guidance
+        }
+        merged_guidance = list(case.controlled_guidance) + [
+            citation
+            for citation in additional_guidance
+            if citation.citation_id not in merged_citation_ids
+        ]
+        case = case.model_copy(update={"controlled_guidance": merged_guidance})
     return InvestigationDraftResult(
         case=case,
         skipped=False,

@@ -52,6 +52,7 @@ from app.domain.department_models import (
 from app.domain.department_tools import (
     CASE_STATUS_UPSERT,
     COA_FETCH,
+    CONTROLLED_GUIDANCE_QUERY,
     DRIVE_FETCH_EVIDENCE,
     EM_QUERY,
     LIMS_QUERY,
@@ -65,6 +66,7 @@ from app.domain.department_tools import (
     STERILITY_START,
     CaseMemoryTenantMismatch,
     CaseStatusTenantMismatch,
+    ControlledGuidanceTenantMismatch,
     DepartmentRecordMissing,
     DriveFetchError,
     QmsReportWriteError,
@@ -75,6 +77,9 @@ from app.domain.department_tools import (
 )
 from app.domain.department_tools import (
     coa_fetch as load_coa,
+)
+from app.domain.department_tools import (
+    controlled_guidance_query as run_controlled_guidance_query,
 )
 from app.domain.department_tools import (
     drive_fetch_evidence as run_drive_fetch_evidence,
@@ -109,6 +114,7 @@ from app.domain.department_tools import (
 from app.domain.department_tools import (
     sterility_start as run_sterility_start,
 )
+from app.domain.guidance_models import GuidanceQueryResult
 from app.domain.qms_report_models import QmsReportWriteResult
 from app.domain.sponsor_models import SponsorBatchStatusResult, SponsorScopeDenied
 from app.domain.sterility_models import SterilityIncubationRecord
@@ -467,6 +473,34 @@ def build_department_mcp(
                 case_tenant_id=case_tenant_id,
             )
         except (KeyError, CaseMemoryTenantMismatch) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CONTROLLED_GUIDANCE_QUERY,
+        title="Controlled-guidance query",
+        description=(
+            "Tenant-scoped, manifest-verified retrieval of controlled SOP "
+            "or public regulatory-guidance citations via Vertex AI RAG "
+            "Engine. corpus must be 'controlled_sop' or 'public_guidance'. "
+            "Advisory input for Investigation, never a conclusion. "
+            "Read-only."
+        ),
+        annotations=_READ_ONLY,
+    )
+    async def controlled_guidance_query(
+        tenant_id: str, corpus: str, query: str, case_tenant_id: str, top_k: int = 5
+    ) -> GuidanceQueryResult:
+        try:
+            return await run_controlled_guidance_query(
+                tenant_id=tenant_id,
+                corpus=corpus,
+                query=query,
+                case_tenant_id=case_tenant_id,
+                top_k=top_k,
+            )
+        except ControlledGuidanceTenantMismatch as exc:
+            raise ToolError(str(exc)) from exc
+        except ValueError as exc:
             raise ToolError(str(exc)) from exc
 
     return mcp

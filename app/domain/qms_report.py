@@ -159,6 +159,19 @@ def build_report_body(reviewed: QpReviewedPackage) -> str:
     )
     lines.append("")
 
+    lines.append("SECTION 3A: CONTROLLED SOP AND PUBLIC-GUIDANCE CITATIONS")
+    if not case.controlled_guidance:
+        lines.append("No controlled SOP or public-guidance citation was retrieved.")
+    else:
+        for citation in case.controlled_guidance:
+            status = "in force" if citation.in_force else "NOT in force"
+            lines.append(
+                f"[{citation.corpus.value}] {citation.doc_id} v{citation.version} "
+                f"({status}) — {citation.title}"
+            )
+            lines.append(f"  Source: {citation.source_uri}")
+    lines.append("")
+
     challenger = investigation.challenger
     lines.append("SECTION 4: CHALLENGER REVIEW")
     if challenger is None or not challenger.attacks:

@@ -193,16 +193,19 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             kind=AgentKind.LLM_AGENT_SINGLE_TURN,
             department="investigation",
             model="gemini-3.6-flash",
-            allowed_tools=["prior_art_query"],
+            allowed_tools=["prior_art_query", "controlled_guidance_query"],
             backing_system=_case_memory_backend_name(),
             reasoning_authority=False,
             description=(
                 "Real single-turn Agent that may re-query prior deviations "
-                "on this tenant at most once. Its draft is a proposal only: "
+                "and controlled SOP/public guidance (Doc 12 T1-5) on this "
+                "tenant, each at most once. Its draft is a proposal only: "
                 "citations are checked afterwards by the deterministic "
-                "investigation_gate, and any prior-art fact it surfaces "
-                "becomes citeable only by being captured from the real "
-                "tool call, never by the agent's own assertion."
+                "investigation_gate, which also requires at least one "
+                "in-force controlled-SOP citation whenever a corpus is "
+                "configured. Any fact or citation it surfaces becomes "
+                "citeable only by being captured from the real tool call, "
+                "never by the agent's own assertion."
             ),
         ),
         FleetAgentEntry(

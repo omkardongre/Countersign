@@ -43,6 +43,7 @@ from app.domain.department_tools import (
     CASE_MEMORY_TOOLS,
     CASE_STATUS_TOOLS,
     DRIVE_TOOLS,
+    GUIDANCE_TOOLS,
     QMS_WRITE_TOOLS,
     SPONSOR_TOOLS,
     STERILITY_TOOLS,
@@ -325,6 +326,22 @@ async def call_case_memory_tool(
     if name not in CASE_MEMORY_TOOLS:
         raise DepartmentToolCallError(
             f"Callers may not call {name!r}; allowed={sorted(CASE_MEMORY_TOOLS)}"
+        )
+    return await call_mcp_tool(name, arguments)
+
+
+async def call_guidance_tool(
+    name: str, arguments: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Call ``controlled_guidance_query`` over MCP. Fail closed on errors.
+
+    Same reason as ``call_case_memory_tool``: an Agent Identity principal
+    cannot itself hold the Vertex AI RAG Engine credential this call needs,
+    so the case workflow reaches it through this MCP tool.
+    """
+    if name not in GUIDANCE_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(GUIDANCE_TOOLS)}"
         )
     return await call_mcp_tool(name, arguments)
 

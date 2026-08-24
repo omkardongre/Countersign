@@ -25,6 +25,7 @@ stall the join (ADK JoinNode caution).
           -> join_departments
           -> reconcile_departments
           -> retrieve_prior_art
+          -> retrieve_controlled_guidance
           -> draft_investigation
           -> challenge_investigation
           -> gate_investigation
@@ -77,6 +78,7 @@ from app.domain.department_models import (
     Department,
 )
 from app.domain.evidence_models import EvidenceIngestRequest
+from app.domain.guidance_node import retrieve_controlled_guidance
 from app.domain.ingest import EvidenceIntegrityError
 from app.domain.intake import classify_intake
 from app.domain.investigation import draft_investigation
@@ -220,6 +222,7 @@ def build_deviation_case_workflow() -> Workflow:
                 join_departments,
                 reconcile_departments,
                 retrieve_prior_art,
+                retrieve_controlled_guidance,
                 draft_investigation,
                 challenge_investigation,
                 gate_investigation,

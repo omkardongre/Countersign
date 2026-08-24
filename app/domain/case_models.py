@@ -31,6 +31,7 @@ from app.domain.compliance_models import (
     ComplianceStatus,
 )
 from app.domain.department_models import BranchOutcome
+from app.domain.guidance_models import GuidanceCitation
 from app.domain.models import CaseIntake, ClassifiedCase
 
 
@@ -78,4 +79,10 @@ class CaseComplianceResult(BaseModel):
     findings: list[ComplianceFinding] = Field(default_factory=list)
     prior_art: list[CaseMemoryFact] = Field(default_factory=list)
     prior_art_embedded: bool = False
+    # Doc 12 T1-5: retrieved, manifest-verified SOP/public-guidance
+    # citations. Kept separate from prior_art, never merged into it — a
+    # past deviation and a controlled procedure answer different questions
+    # in the citation gate; only an entry here with in_force True can
+    # satisfy the mandatory-controlled-SOP-citation requirement.
+    controlled_guidance: list[GuidanceCitation] = Field(default_factory=list)
     decision_authority: str = "none"

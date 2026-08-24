@@ -24,6 +24,7 @@ from google.adk.workflow import node
 
 from app.domain.case_models import CaseComplianceResult
 from app.domain.department_models import BranchStatus
+from app.domain.guidance_source import sop_corpus_configured
 from app.domain.investigation_brief import allowed_finding_ids, allowed_source_uris
 from app.domain.investigation_models import (
     ChallengedInvestigation,
@@ -54,6 +55,53 @@ def _iter_claims(draft: InvestigationDraft) -> list[CitedClaim]:
     if draft.product_impact is not None:
         claims.extend(draft.product_impact.supporting_claims)
     return claims
+
+
+def _controlled_sop_uris(case: CaseComplianceResult) -> set[str]:
+    """In-force controlled-SOP source URIs only — never public guidance.
+
+    Doc 12 T1-5: public guidance is advisory context and must never satisfy
+    the mandatory-controlled-SOP-citation requirement, so this is a
+    deliberately narrower set than ``allowed_source_uris``.
+    """
+    return {
+        citation.source_uri
+        for citation in case.controlled_guidance
+        if citation.in_force and citation.corpus.value == "controlled_sop"
+    }
+
+
+def guidance_citation_failures(
+    case: CaseComplianceResult, draft: InvestigationDraft
+) -> list[str]:
+    """Doc 12 T1-5: at least one claim must cite an in-force controlled SOP.
+
+    Enforced only when this deployment actually has a controlled-SOP corpus
+    configured (``sop_corpus_configured``) — a deployment that has not yet
+    provisioned T1-5 must not have every investigation start failing the
+    gate on a requirement it cannot possibly meet. Once configured, this is
+    unconditional: a case with zero in-force SOP citations available, or
+    whose draft never actually cited one, blocks the gate either way. A
+    citation to a stale or unapproved SOP source_uri does not count,
+    because that URI is not in ``allowed_source_uris`` in the first place
+    (see ``investigation_brief.allowed_source_uris``) and so is already
+    caught as an unknown-source-uri citation failure.
+    """
+    if not sop_corpus_configured():
+        return []
+    sop_uris = _controlled_sop_uris(case)
+    if not sop_uris:
+        return [
+            "No in-force controlled SOP citation is available for this case."
+        ]
+    cited_uris = {
+        uri for claim in _iter_claims(draft) for uri in claim.source_uris
+    }
+    if not (cited_uris & sop_uris):
+        return [
+            "Investigation draft cites no in-force controlled SOP source."
+        ]
+    return []
 
 
 def citation_failures(case: CaseComplianceResult, draft: InvestigationDraft) -> list[str]:
@@ -91,6 +139,7 @@ def evaluate_investigation_gate(
 
     reasons.extend(departments_ready(challenged.case))
     reasons.extend(citation_failures(challenged.case, challenged.draft))
+    reasons.extend(guidance_citation_failures(challenged.case, challenged.draft))
 
     if challenged.challenger is None:
         reasons.append("Challenger did not produce a report.")

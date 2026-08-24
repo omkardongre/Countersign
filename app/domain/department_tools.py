@@ -48,9 +48,11 @@ __all__ = [
     "CASE_STATUS_TOOLS",
     "CASE_STATUS_UPSERT",
     "COA_FETCH",
+    "CONTROLLED_GUIDANCE_QUERY",
     "DRIVE_FETCH_EVIDENCE",
     "DRIVE_TOOLS",
     "EM_QUERY",
+    "GUIDANCE_TOOLS",
     "LIMS_QUERY",
     "PRIOR_ART_QUERY",
     "PRIOR_ART_REDACT",
@@ -63,11 +65,13 @@ __all__ = [
     "STERILITY_GET",
     "STERILITY_START",
     "STERILITY_TOOLS",
+    "ControlledGuidanceTenantMismatch",
     "DepartmentRecordMissing",
     "DriveFetchError",
     "QmsReportWriteError",
     "case_status_upsert",
     "coa_fetch",
+    "controlled_guidance_query",
     "drive_fetch_evidence",
     "em_query",
     "lims_query",
@@ -114,6 +118,16 @@ PRIOR_ART_REDACT = "prior_art_redact"
 CASE_MEMORY_TOOLS = frozenset(
     {PRIOR_ART_QUERY, PRIOR_ART_WRITE, PRIOR_ART_REDACT}
 )
+
+# Doc 12 T1-5: controlled-SOP and public-guidance RAG. Reached over MCP for
+# the same reason as Case Memory and the sterility clock: Vertex AI RAG
+# Engine calls run under the MCP process's own service-account credential,
+# never under an Agent Identity principal directly. Read-only, its own tool
+# name rather than reusing prior_art_query — a past-deviation fact and a
+# controlled-guidance citation are different citation kinds with different
+# gate requirements (see app/domain/case_models.py::CaseComplianceResult).
+CONTROLLED_GUIDANCE_QUERY = "controlled_guidance_query"
+GUIDANCE_TOOLS = frozenset({CONTROLLED_GUIDANCE_QUERY})
 
 ALLOWED_DEPARTMENT_TOOLS = frozenset({LIMS_QUERY, EM_QUERY, COA_FETCH})
 
@@ -616,4 +630,41 @@ async def prior_art_redact(
 
     return await get_case_memory_store().redact(
         tenant_id=tenant_id, fact_id=fact_id, reason=reason
+    )
+
+
+class ControlledGuidanceTenantMismatch(Exception):
+    """The calling case is not the tenant that owns this guidance query."""
+
+
+def _check_guidance_tenant(tenant_id: str, case_tenant_id: str) -> None:
+    if tenant_id != case_tenant_id:
+        raise ControlledGuidanceTenantMismatch(
+            f"case_tenant_id {case_tenant_id!r} does not match "
+            f"tenant_id {tenant_id!r}."
+        )
+
+
+async def controlled_guidance_query(
+    *, tenant_id: str, corpus: str, query: str, case_tenant_id: str, top_k: int = 5
+):
+    """Doc 12 T1-5: tenant-scoped, manifest-verified SOP/public-guidance
+    retrieval. Advisory input for Investigation only.
+
+    Runs inside the MCP process, which holds the real Vertex AI credential
+    — an Agent Identity principal cannot itself be a Vertex AI RAG Engine
+    caller any more than it can be a Cloud SQL or Firestore one.
+    """
+    _check_guidance_tenant(tenant_id, case_tenant_id)
+    from app.domain.guidance_models import GuidanceCorpus, GuidanceQueryResult
+    from app.domain.guidance_source import get_guidance_source
+
+    citations, configured = await get_guidance_source().query(
+        tenant_id=tenant_id,
+        corpus=GuidanceCorpus(corpus),
+        query=query,
+        top_k=top_k,
+    )
+    return GuidanceQueryResult(
+        tenant_id=tenant_id, query=query, citations=citations, configured=configured
     )

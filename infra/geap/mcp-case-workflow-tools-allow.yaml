@@ -15,6 +15,11 @@
 # NOT included here — redaction is an operator action, not something the
 # case workflow itself should be able to invoke on its own behalf.
 #
+# controlled_guidance_query is Doc 12 T1-5: controlled-SOP/public-guidance
+# RAG. Same identity constraint applies to Vertex AI RAG Engine as to
+# Firestore/Cloud SQL, so the workflow reaches it through this MCP process
+# too. Read-only, its own tool name, never merged into prior_art_query.
+#
 # qms_report_write is the qa_qms_write_agent's one tool (file_qms_report,
 # the graph's last node, runs inside this same case Runtime/identity — it is
 # not a separate service like sponsor_liaison). Same Drive/Docs credential
@@ -83,6 +88,9 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "prior_art_write"
+              - name: "tools/call"
+                params:
+                  - exact: "controlled_guidance_query"
               - name: "tools/call"
                 params:
                   - exact: "case_status_upsert"
