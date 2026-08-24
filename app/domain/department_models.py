@@ -27,6 +27,10 @@ from pydantic import BaseModel, Field
 
 from app.domain.compliance_models import ComplianceFinding, ComplianceResult
 from app.domain.evidence_models import EvidenceIngestRequest
+from app.domain.regulatory_screening_models import (
+    RegulatoryScreeningBundle,
+    ScreeningAdvisoryFinding,
+)
 
 
 class Department(StrEnum):
@@ -89,6 +93,16 @@ class CoaSnapshot(BaseModel):
     signed: bool
     retest_date: datetime.date
     gmp_certificate_current: bool
+    # Public attributes are populated only by a real CoA/source adapter. They
+    # are intentionally separate from internal supplier/lot identifiers so
+    # regulator tools cannot accidentally transmit case-confidential data.
+    manufacturer_name: str | None = None
+    manufacturer_country: str | None = None
+    manufacturer_city: str | None = None
+    oms_location_id: str | None = None
+    public_product_name: str | None = None
+    public_active_ingredient: str | None = None
+    public_defect_signature: str | None = None
 
 
 class DriveEvidencePayload(BaseModel):
@@ -142,5 +156,10 @@ class BranchOutcome(BaseModel):
     error: str | None = None
     source_uris: list[str] = Field(default_factory=list)
     findings: list[ComplianceFinding] = Field(default_factory=list)
+    # Public-regulator context is advisory only and deliberately separate
+    # from ComplianceFinding, which participates in investigation/release
+    # gating. These values never establish supplier clearance.
+    regulatory_screening: RegulatoryScreeningBundle | None = None
+    advisory_findings: list[ScreeningAdvisoryFinding] = Field(default_factory=list)
     manufacturing_compliance: ComplianceResult | None = None
     decision_authority: str = "none"

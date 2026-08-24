@@ -33,6 +33,7 @@ from app.domain.compliance_models import (
 from app.domain.department_models import BranchOutcome
 from app.domain.guidance_models import GuidanceCitation
 from app.domain.models import CaseIntake, ClassifiedCase
+from app.domain.regulatory_screening_models import ScreeningAdvisoryFinding
 
 
 class EvidenceAttachment(BaseModel):
@@ -77,6 +78,9 @@ class CaseComplianceResult(BaseModel):
     aggregated_status: ComplianceStatus
     branches: list[BranchOutcome] = Field(default_factory=list)
     findings: list[ComplianceFinding] = Field(default_factory=list)
+    # Regulatory screening is public, advisory context. It is never merged
+    # into findings and therefore cannot affect release-gating status.
+    advisory_findings: list[ScreeningAdvisoryFinding] = Field(default_factory=list)
     prior_art: list[CaseMemoryFact] = Field(default_factory=list)
     prior_art_embedded: bool = False
     # Doc 12 T1-5: retrieved, manifest-verified SOP/public-guidance

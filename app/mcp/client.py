@@ -48,11 +48,18 @@ from app.domain.department_tools import (
     SPONSOR_TOOLS,
     STERILITY_TOOLS,
 )
+from app.domain.regulatory_screening import REGULATORY_SCREENING_TOOLS
 from app.mcp.department_server import get_department_mcp
+from app.mcp.regulatory_screening_server import get_regulatory_screening_mcp
 
 MCP_URL_ENV = "COUNTERSIGN_MCP_URL"
 MCP_INPROCESS_ENV = "COUNTERSIGN_MCP_INPROCESS"
 MCP_INVOKER_SERVICE_ACCOUNT_ENV = "COUNTERSIGN_MCP_INVOKER_SERVICE_ACCOUNT"
+REGULATORY_MCP_URL_ENV = "COUNTERSIGN_REGULATORY_MCP_URL"
+REGULATORY_MCP_INPROCESS_ENV = "COUNTERSIGN_REGULATORY_MCP_INPROCESS"
+REGULATORY_MCP_INVOKER_SERVICE_ACCOUNT_ENV = (
+    "COUNTERSIGN_REGULATORY_MCP_INVOKER_SERVICE_ACCOUNT"
+)
 _LOCAL_HTTP_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
@@ -90,6 +97,20 @@ def resolve_department_mcp_target() -> FastMCP | str:
     )
 
 
+def resolve_regulatory_screening_mcp_target() -> FastMCP | str:
+    """Resolve the dedicated public-screening MCP target, fail closed by default."""
+    url = os.environ.get(REGULATORY_MCP_URL_ENV, "").strip()
+    if url:
+        return validate_mcp_url(url)
+    if _env_flag(REGULATORY_MCP_INPROCESS_ENV):
+        return get_regulatory_screening_mcp()
+    raise DepartmentToolCallError(
+        "Regulatory screening MCP is not configured: set "
+        f"{REGULATORY_MCP_URL_ENV} (https through Agent Gateway) or "
+        f"{REGULATORY_MCP_INPROCESS_ENV}=1 for local tests."
+    )
+
+
 def cloud_run_audience(url: str) -> str:
     """Scheme + host of ``url``, which is the audience Cloud Run expects.
 
@@ -101,7 +122,11 @@ def cloud_run_audience(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _mcp_auth_headers(url: str) -> dict[str, str]:
+def _mcp_auth_headers(
+    url: str,
+    *,
+    invoker_service_account_env: str = MCP_INVOKER_SERVICE_ACCOUNT_ENV,
+) -> dict[str, str]:
     """OIDC bearer header for a private Cloud Run MCP service.
 
     The department MCP service is deployed ``--no-allow-unauthenticated``, so
@@ -144,7 +169,7 @@ def _mcp_auth_headers(url: str) -> dict[str, str]:
         return {}
 
     audience = cloud_run_audience(url)
-    invoker_sa = os.environ.get(MCP_INVOKER_SERVICE_ACCOUNT_ENV, "").strip()
+    invoker_sa = os.environ.get(invoker_service_account_env, "").strip()
     request = google.auth.transport.requests.Request()
     try:
         if invoker_sa:
@@ -233,6 +258,31 @@ async def _department_session() -> AsyncIterator[ClientSession]:
         yield session
 
 
+@asynccontextmanager
+async def _regulatory_screening_session() -> AsyncIterator[ClientSession]:
+    target = resolve_regulatory_screening_mcp_target()
+    if isinstance(target, str):
+        async with create_mcp_http_client(
+            headers=_mcp_auth_headers(
+                target,
+                invoker_service_account_env=(
+                    REGULATORY_MCP_INVOKER_SERVICE_ACCOUNT_ENV
+                ),
+            )
+        ) as http_client:
+            async with streamable_http_client(target, http_client=http_client) as (
+                read,
+                write,
+                _session_id,
+            ):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    yield session
+        return
+    async with create_connected_server_and_client_session(target) as session:
+        yield session
+
+
 async def call_department_tool(
     name: str,
     *,
@@ -259,6 +309,27 @@ async def call_department_tool(
     if not payload:
         raise DepartmentToolCallError(
             f"{name} returned no structured content for {tenant_id}/{batch_id}."
+        )
+    return payload
+
+
+async def call_regulatory_screening_tool(
+    name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """Call one of the two dedicated, read-only screening tools over MCP."""
+    if name not in REGULATORY_SCREENING_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; "
+            f"allowed={sorted(REGULATORY_SCREENING_TOOLS)}"
+        )
+    async with _regulatory_screening_session() as session:
+        result = await session.call_tool(name, arguments)
+    if result.isError:
+        raise DepartmentToolCallError(_error_text(result))
+    payload = result.structuredContent
+    if payload is None or not isinstance(payload, dict):
+        raise DepartmentToolCallError(
+            f"{name} returned no structured content payload."
         )
     return payload
 

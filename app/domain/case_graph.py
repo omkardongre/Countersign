@@ -179,6 +179,9 @@ def reconcile_departments(
                 )
 
     findings = [finding for branch in branches for finding in branch.findings]
+    advisory_findings = [
+        finding for branch in branches for finding in branch.advisory_findings
+    ]
     any_failed = any(branch.status is BranchStatus.FAILED for branch in branches)
     mfg_result = (
         manufacturing.manufacturing_compliance
@@ -198,6 +201,7 @@ def reconcile_departments(
         aggregated_status=status,
         branches=branches,
         findings=findings,
+        advisory_findings=advisory_findings,
         decision_authority="none",
     )
 
