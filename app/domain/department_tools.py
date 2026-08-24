@@ -33,7 +33,6 @@ from app.domain.cfi_models import (
     SiblingBatchCandidate,
     SiblingBatchQueryResult,
 )
-from app.domain.department_catalog import list_department_snapshots_for_tenant
 from app.domain.department_models import (
     CoaSnapshot,
     DriveEvidencePayload,
@@ -41,10 +40,11 @@ from app.domain.department_models import (
     LimsSnapshot,
 )
 from app.domain.department_source import (
-    DepartmentRecordMissing,  # noqa: F401 - re-exported via __all__
+    DepartmentRecordMissing,
     get_coa_source,
     get_em_source,
     get_lims_source,
+    get_sibling_batch_source,
 )
 from app.domain.qms_report_models import QmsReportWriteResult
 
@@ -733,25 +733,21 @@ def sibling_batch_query(
             "Phase 1 supports only 'material_lot'."
         )
 
-    snapshots = list_department_snapshots_for_tenant(tenant_id)
-    source = next((s for s in snapshots if s.batch_id == batch_id), None)
-    if source is None:
-        raise ValueError(
-            f"Batch {batch_id!r} is not in the department catalog for "
-            f"tenant {tenant_id!r}."
+    try:
+        _source_lot, matches = get_sibling_batch_source().batches_sharing_material_lot(
+            tenant_id=tenant_id, batch_id=batch_id
         )
+    except DepartmentRecordMissing as exc:
+        raise ValueError(str(exc)) from exc
 
-    source_value = source.coa.material_lot
     candidates = [
         SiblingBatchCandidate(
-            batch_id=snapshot.batch_id,
+            batch_id=match_batch_id,
             shared_attribute="material_lot",
-            shared_value=snapshot.coa.material_lot,
-            source_uri=snapshot.coa.source_uri,
+            shared_value=material_lot,
+            source_uri=source_uri,
         )
-        for snapshot in snapshots
-        if snapshot.batch_id != batch_id
-        and snapshot.coa.material_lot == source_value
+        for match_batch_id, material_lot, source_uri in matches
     ]
     return SiblingBatchQueryResult(
         tenant_id=tenant_id,

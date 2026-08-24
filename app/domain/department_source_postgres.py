@@ -38,6 +38,7 @@ from app.domain.department_source import (
     DepartmentRecordMissing,
     lims_db_name,
     lims_table_name,
+    sibling_batch_table_name,
 )
 
 LIMS_DDL_TEMPLATE = """
@@ -129,3 +130,81 @@ class PostgresLimsSource:
                 for raw in rows
             ],
         )
+
+
+SIBLING_BATCH_DDL_TEMPLATE = """
+CREATE TABLE IF NOT EXISTS {table} (
+    tenant_id TEXT NOT NULL,
+    batch_id TEXT NOT NULL,
+    material_lot TEXT NOT NULL,
+    source_uri TEXT NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, batch_id)
+)
+"""
+
+# tenant_id + material_lot leads the index because every sibling-batch scan
+# is "this tenant, this lot" — the same tenant-first discipline as the LIMS
+# index, so a query that omitted the tenant predicate could not use it.
+SIBLING_BATCH_INDEX_TEMPLATE = """
+CREATE INDEX IF NOT EXISTS {table}_tenant_lot_idx
+    ON {table} (tenant_id, material_lot)
+"""
+
+_SIBLING_SOURCE_LOT_TEMPLATE = """
+SELECT material_lot FROM {table} WHERE tenant_id = %s AND batch_id = %s
+"""
+
+_SIBLING_MATCHES_TEMPLATE = """
+SELECT batch_id, material_lot, source_uri FROM {table}
+WHERE tenant_id = %s AND material_lot = %s AND batch_id != %s
+ORDER BY batch_id
+"""
+
+
+class PostgresSiblingBatchSource:
+    """Cloud SQL-backed cross-batch material-lot reads for CFI scope
+    expansion (21 CFR 211.192's extend-to-associated-batches duty).
+
+    A dedicated table, not a join against ``lims_results`` or the supplier
+    CoA path: material lot is recorded once per batch regardless of which
+    LIMS assay rows exist, and the untrusted supplier-CoA channel (P1, not
+    yet moved off the catalog) must not become this table's source of
+    truth. Read-only by construction: ``SELECT`` only, matching every other
+    Cloud SQL-backed department read in this module.
+    """
+
+    backend_name_sibling_batch = BACKEND_CLOUD_SQL
+
+    def source_uri(self, *, tenant_id: str, batch_id: str) -> str:
+        table = sibling_batch_table_name()
+        return (
+            f"cloudsql://{instance_connection_name()}/{lims_db_name()}"
+            f"/{table}?tenant_id={tenant_id}&batch_id={batch_id}"
+        )
+
+    def batches_sharing_material_lot(
+        self, *, tenant_id: str, batch_id: str
+    ) -> tuple[str, list[tuple[str, str, str]]]:
+        table = sibling_batch_table_name()
+        with _connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                _SIBLING_SOURCE_LOT_TEMPLATE.format(table=table),
+                (tenant_id, batch_id),
+            )
+            source_row = cursor.fetchone()
+            if source_row is None:
+                raise DepartmentRecordMissing(
+                    f"No material-lot record in {table} for "
+                    f"{tenant_id}/{batch_id}."
+                )
+            source_lot = source_row[0]
+            cursor.execute(
+                _SIBLING_MATCHES_TEMPLATE.format(table=table),
+                (tenant_id, source_lot, batch_id),
+            )
+            matches = cursor.fetchall()
+        return source_lot, [
+            (raw[0], raw[1], raw[2]) for raw in matches
+        ]

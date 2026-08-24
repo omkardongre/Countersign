@@ -20,6 +20,9 @@ INSTANCE = os.environ.get(
 )
 DB_NAME = os.environ.get("LIMS_DB_NAME", "countersign_lims")
 TABLE_NAME = os.environ.get("LIMS_TABLE_NAME", "lims_results")
+SIBLING_BATCH_TABLE_NAME = os.environ.get(
+    "SIBLING_BATCH_TABLE_NAME", "batch_material_lots"
+)
 SESSIONS_DB_NAME = os.environ.get("SESSIONS_DB_NAME", "adk_sessions")
 # The department MCP service's own IAM database user (its Cloud Run service
 # account), not the human admin account — the MCP process is what actually
@@ -80,6 +83,32 @@ INSERT INTO {TABLE_NAME} (
     'aurex', 'AX-2291', 'QC-AX-2291-01', 'ASSAY', 'Assay',
     98.4, '%LC', 95.0, 105.0
 ) ON CONFLICT (tenant_id, batch_id, sample_id, test_code) DO NOTHING;
+-- Cross-batch material-lot table for CFI scope expansion (21 CFR 211.192's
+-- extend-to-associated-batches duty). Its own table, not a join against
+-- lims_results: material lot is recorded once per batch regardless of
+-- which LIMS assay rows exist. SELECT only, same GMP data-integrity
+-- reasoning as the LIMS grant above.
+CREATE TABLE IF NOT EXISTS {SIBLING_BATCH_TABLE_NAME} (
+    tenant_id TEXT NOT NULL,
+    batch_id TEXT NOT NULL,
+    material_lot TEXT NOT NULL,
+    source_uri TEXT NOT NULL,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, batch_id)
+);
+CREATE INDEX IF NOT EXISTS {SIBLING_BATCH_TABLE_NAME}_tenant_lot_idx
+    ON {SIBLING_BATCH_TABLE_NAME} (tenant_id, material_lot);
+GRANT SELECT ON {SIBLING_BATCH_TABLE_NAME} TO "{quoted}";
+-- Seed rows matching the existing synthetic catalog's shared lot
+-- (aurex/AX-2291, AX-2292, AX-2293 all cite LOT-88), so a CFI scope
+-- expansion behaves identically whether COUNTERSIGN_SIBLING_BATCH_BACKEND
+-- is on or off.
+INSERT INTO {SIBLING_BATCH_TABLE_NAME} (tenant_id, batch_id, material_lot, source_uri)
+VALUES
+    ('aurex', 'AX-2291', 'LOT-88', 'drive://synthetic/coa/MAT-441-LOT-88.pdf'),
+    ('aurex', 'AX-2292', 'LOT-88', 'drive://synthetic/coa/MAT-441-LOT-88.pdf'),
+    ('aurex', 'AX-2293', 'LOT-88', 'drive://synthetic/coa/MAT-441-LOT-88.pdf')
+ON CONFLICT (tenant_id, batch_id) DO NOTHING;
 """
     connector = Connector()
     conn = connector.connect(
@@ -151,8 +180,10 @@ INSERT INTO {TABLE_NAME} (
         connector.close()
     print(
         f"Created {DB_NAME}.{TABLE_NAME}, seeded aurex/AX-2291, "
-        f"granted SELECT-only to {IAM_USER}; ensured {SESSIONS_DB_NAME}.case_status "
-        "with status read/write access."
+        f"granted SELECT-only to {IAM_USER}; created "
+        f"{DB_NAME}.{SIBLING_BATCH_TABLE_NAME} seeded with the shared-lot "
+        "siblings AX-2291/AX-2292/AX-2293, granted SELECT-only; ensured "
+        f"{SESSIONS_DB_NAME}.case_status with status read/write access."
     )
     return 0
 
