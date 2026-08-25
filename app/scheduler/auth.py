@@ -21,8 +21,10 @@ audience, and the calling service account.
 
 Configuration:
 
-* ``COUNTERSIGN_SCHEDULER_AUDIENCE`` — required. The ``aud`` claim Cloud
-  Scheduler is configured to mint (the tick service URL).
+* ``COUNTERSIGN_SCHEDULER_AUDIENCE`` — required. Comma-separated set of
+  ``aud`` claims Cloud Scheduler is configured to mint — one per tick route
+  (sterility-tick, cfi-tick), since each is invoked by its own Scheduler job
+  targeting its own URL.
 * ``COUNTERSIGN_SCHEDULER_SERVICE_ACCOUNTS`` — required. Comma-separated
   allow-list; the verified ``email`` claim must match one of them.
 * ``COUNTERSIGN_SCHEDULER_AUTH_DISABLED`` — local development only. Logs a
@@ -56,6 +58,15 @@ def _allowed_service_accounts() -> set[str]:
     return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
 
+def _allowed_audiences() -> set[str]:
+    # Both /scheduler/sterility-tick and /scheduler/cfi-tick share this one
+    # router/dependency. Each is invoked by its own Cloud Scheduler job with
+    # its own OIDC audience, so this accepts a comma-separated set rather
+    # than forcing every tick route onto one fixed audience string.
+    raw = os.environ.get(AUDIENCE_ENV, "")
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
 def _verify_oidc_token(token: str, audience: str) -> dict[str, Any]:
     """Verify signature and audience. Separated so tests can substitute it."""
     import google.auth.transport.requests
@@ -75,9 +86,9 @@ def verify_scheduler_token(request: Request) -> None:
         )
         return
 
-    audience = os.environ.get(AUDIENCE_ENV, "").strip()
+    audiences = _allowed_audiences()
     allowed = _allowed_service_accounts()
-    if not audience or not allowed:
+    if not audiences or not allowed:
         # Misconfiguration must not degrade into an open endpoint.
         raise HTTPException(
             status_code=500,
@@ -92,11 +103,17 @@ def verify_scheduler_token(request: Request) -> None:
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(status_code=401, detail="Missing bearer token.")
 
-    try:
-        claims = _verify_oidc_token(token, audience)
-    except Exception as exc:
-        logger.warning("Scheduler token rejected: %s", exc)
-        raise HTTPException(status_code=401, detail="Invalid token.") from exc
+    claims: dict[str, Any] | None = None
+    last_error: Exception | None = None
+    for audience in audiences:
+        try:
+            claims = _verify_oidc_token(token, audience)
+            break
+        except Exception as exc:  # try the next configured audience
+            last_error = exc
+    if claims is None:
+        logger.warning("Scheduler token rejected: %s", last_error)
+        raise HTTPException(status_code=401, detail="Invalid token.") from last_error
 
     email = str(claims.get("email", "")).strip().lower()
     if email not in allowed:

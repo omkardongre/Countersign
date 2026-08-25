@@ -35,6 +35,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.domain.cfi_interview_models import CfiInterviewResult
 from app.domain.master_data import RootCauseCategory
 
 
@@ -272,8 +273,10 @@ class CfiRoundState(BaseModel):
     investigation: CfiInvestigation
     round_number: int = Field(ge=1)
     active_hypothesis_id: str | None = None
+    enquiry_kind: CfiEnquiryKind | None = None
     should_dispatch: bool = False
     rationale: str = ""
+    pending_interview_result: CfiInterviewResult | None = None
     pending_sibling_result: SiblingBatchQueryResult | None = None
 
 

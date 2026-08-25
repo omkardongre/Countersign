@@ -26,8 +26,36 @@ MES and QMS are not in this slice. Investigation must not call these tools.
 
 from __future__ import annotations
 
+import datetime
+import hashlib
 import os
 
+from app.domain.cfi_interview_chat import (
+    CfiChatError,
+    list_thread_messages,
+    max_nudges,
+    message_is_bot,
+    message_sender_id,
+    message_text,
+    message_timestamp,
+    nudge_interval_seconds,
+    responders_for_tenant,
+    send_message,
+    space_for_tenant,
+)
+from app.domain.cfi_interview_models import (
+    CfiInterviewMessageKind,
+    CfiInterviewQuestion,
+    CfiInterviewRecord,
+    CfiInterviewReply,
+    CfiInterviewResumeHandle,
+    CfiInterviewStatus,
+    CfiInterviewTickItem,
+    CfiInterviewTickResult,
+    CfiReplyClassification,
+)
+from app.domain.cfi_interview_reply import classify_reply, normalize_reply_text
+from app.domain.cfi_interview_store import CfiInterviewConcurrencyError
 from app.domain.cfi_models import (
     CfiInvestigation,
     SiblingBatchCandidate,
@@ -54,9 +82,13 @@ __all__ = [
     "CASE_STATUS_TOOLS",
     "CASE_STATUS_UPSERT",
     "CFI_GET",
+    "CFI_INTERVIEW_TICK",
+    "CFI_INTERVIEW_TOOLS",
     "CFI_OPEN",
     "CFI_SAVE",
     "CFI_TOOLS",
+    "CHAT_READ_REPLIES",
+    "CHAT_SEND_QUESTION",
     "COA_FETCH",
     "CONTROLLED_GUIDANCE_QUERY",
     "DRIVE_FETCH_EVIDENCE",
@@ -84,9 +116,10 @@ __all__ = [
     "SiblingBatchTenantMismatch",
     "case_status_upsert",
     "cfi_get",
+    "cfi_interview_tick",
     "cfi_open",
-    "cfi_save",
-    "coa_fetch",
+    "chat_read_replies",
+    "chat_send_question",
     "controlled_guidance_query",
     "drive_fetch_evidence",
     "em_query",
@@ -174,6 +207,16 @@ CFI_GET = "cfi_get"
 CFI_OPEN = "cfi_open"
 CFI_SAVE = "cfi_save"
 CFI_TOOLS = frozenset({CFI_GET, CFI_OPEN, CFI_SAVE})
+
+# CFI Phase 2 human interview tools. Chat credentials remain inside this
+# department MCP process; the CFI Runtime receives only typed interview
+# records over its own Gateway allow-list.
+CHAT_SEND_QUESTION = "chat_send_question"
+CHAT_READ_REPLIES = "chat_read_replies"
+CFI_INTERVIEW_TICK = "cfi_interview_tick"
+CFI_INTERVIEW_TOOLS = frozenset(
+    {CHAT_SEND_QUESTION, CHAT_READ_REPLIES, CFI_INTERVIEW_TICK}
+)
 
 SIBLING_BATCH_QUERY = "sibling_batch_query"
 
@@ -818,6 +861,495 @@ def cfi_save(
     return get_cfi_store().save(record)
 
 
+class CfiInterviewTenantMismatch(Exception):
+    """The interview is not owned by the calling tenant."""
+
+
+class CfiInterviewScopeError(Exception):
+    """The interview resource or Chat correlation is invalid."""
+
+
+def _check_cfi_interview_tenant(tenant_id: str, case_tenant_id: str) -> None:
+    if tenant_id != case_tenant_id:
+        raise CfiInterviewTenantMismatch(
+            f"case_tenant_id {case_tenant_id!r} does not match "
+            f"tenant_id {tenant_id!r}."
+        )
+
+
+def _parse_interview_time(value: str) -> datetime.datetime:
+    try:
+        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise CfiInterviewScopeError(
+            f"deadline_at is not an RFC-3339 datetime: {value!r}."
+        ) from exc
+    if parsed.tzinfo is None:
+        raise CfiInterviewScopeError("deadline_at must include a timezone.")
+    return parsed.astimezone(datetime.UTC)
+
+
+def _interview_thread_key(interview_id: str) -> str:
+    return "cfi-" + hashlib.sha256(interview_id.encode("utf-8")).hexdigest()[:32]
+
+
+def _resume_handle(
+    *,
+    app_name: str | None,
+    user_id: str | None,
+    session_id: str | None,
+    invocation_id: str | None,
+    interrupt_id: str | None,
+) -> CfiInterviewResumeHandle | None:
+    values = (app_name, user_id, session_id, invocation_id, interrupt_id)
+    if all(value and value.strip() for value in values):
+        return CfiInterviewResumeHandle(
+            app_name=str(app_name),
+            user_id=str(user_id),
+            session_id=str(session_id),
+            invocation_id=str(invocation_id),
+            interrupt_id=str(interrupt_id),
+        )
+    if any(value for value in values):
+        raise CfiInterviewScopeError(
+            "Interview resume handle must provide all five fields together."
+        )
+    return None
+
+
+def chat_send_question(
+    *,
+    tenant_id: str,
+    case_tenant_id: str,
+    interview_id: str,
+    cfi_id: str,
+    hypothesis_id: str,
+    round_number: int,
+    question_number: int,
+    question_text: str,
+    deadline_at: str,
+    app_name: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    invocation_id: str | None = None,
+    interrupt_id: str | None = None,
+    is_nudge: bool = False,
+) -> CfiInterviewRecord:
+    """Create one idempotent CFI Chat question or bounded nudge.
+
+    The caller never supplies a Chat space or responder list. Those are
+    resolved from server-owned tenant configuration and persisted with the
+    interview. The deterministic graph supplies the resume handle; the
+    model supplies only ``question_text``.
+    """
+    _check_cfi_interview_tenant(tenant_id, case_tenant_id)
+    from app.domain.cfi_interview_store import get_cfi_interview_store
+
+    store = get_cfi_interview_store()
+    record = store.get(interview_id)
+    now = datetime.datetime.now(datetime.UTC)
+    parsed_deadline = _parse_interview_time(deadline_at)
+    configured_space = space_for_tenant(tenant_id)
+    configured_responders = responders_for_tenant(tenant_id)
+    configured_max_nudges = max_nudges()
+    handle = _resume_handle(
+        app_name=app_name,
+        user_id=user_id,
+        session_id=session_id,
+        invocation_id=invocation_id,
+        interrupt_id=interrupt_id,
+    )
+
+    if record is None:
+        record = store.open(
+            CfiInterviewRecord(
+                interview_id=interview_id,
+                tenant_id=tenant_id,
+                cfi_id=cfi_id,
+                hypothesis_id=hypothesis_id,
+                round_number=round_number,
+                status=CfiInterviewStatus.QUESTION_SEND_PENDING,
+                allowed_responder_ids=list(configured_responders),
+                space_name=configured_space,
+                deadline_at=parsed_deadline,
+                max_nudges=configured_max_nudges,
+                resume_handle=handle,
+            )
+        )
+    else:
+        if (
+            record.tenant_id != tenant_id
+            or record.cfi_id != cfi_id
+            or record.hypothesis_id != hypothesis_id
+            or record.round_number != round_number
+        ):
+            raise CfiInterviewScopeError(
+                "Interview identity does not match the stored tenant/CFI/round."
+            )
+        if record.space_name != configured_space:
+            raise CfiInterviewScopeError(
+                "Stored interview space does not match server tenant configuration."
+            )
+        if tuple(record.allowed_responder_ids) != configured_responders:
+            raise CfiInterviewScopeError(
+                "Stored responder allow-list differs from current tenant configuration."
+            )
+        if handle is not None:
+            record = record.model_copy(update={"resume_handle": handle})
+
+    kind = CfiInterviewMessageKind.NUDGE if is_nudge else CfiInterviewMessageKind.QUESTION
+    existing = next(
+        (
+            item
+            for item in record.questions
+            if item.kind is kind and item.question_number == question_number
+        ),
+        None,
+    )
+    if existing is not None:
+        if existing.question_text != question_text:
+            raise CfiInterviewScopeError(
+                "An idempotency key was reused with different question text."
+            )
+        return record
+
+    if record.status in {
+        CfiInterviewStatus.COMPLETED,
+        CfiInterviewStatus.INTERVIEW_UNANSWERED,
+        CfiInterviewStatus.FAILED,
+    }:
+        raise CfiInterviewScopeError(
+            f"Cannot send a new interview message in terminal status "
+            f"{record.status.value!r}."
+        )
+    if not question_text.strip():
+        raise CfiInterviewScopeError("Question text must not be empty.")
+    if not is_nudge and question_number != len(
+        [item for item in record.questions if item.kind is CfiInterviewMessageKind.QUESTION]
+    ) + 1:
+        raise CfiInterviewScopeError(
+            "Question numbers must advance exactly once per interview question."
+        )
+    if is_nudge:
+        if record.nudge_count >= record.max_nudges:
+            return record
+        if record.last_nudge_at is not None and (
+            now - record.last_nudge_at
+        ).total_seconds() < nudge_interval_seconds():
+            return record
+
+    action_key = (
+        f"{interview_id}:nudge:{record.nudge_count + 1}"
+        if is_nudge
+        else f"{interview_id}:question:{question_number}"
+    )
+    response = send_message(
+        space_name=record.space_name or configured_space,
+        thread_key=(
+            None if record.thread_name else _interview_thread_key(interview_id)
+        ),
+        thread_name=record.thread_name,
+        text=question_text,
+        action_key=action_key,
+    )
+    message_name = response.get("name")
+    response_thread = (response.get("thread") or {}).get("name")
+    if not isinstance(message_name, str) or not message_name:
+        raise CfiChatError("Google Chat response did not contain message.name.")
+    if not isinstance(response_thread, str) or not response_thread:
+        raise CfiChatError("Google Chat response did not contain thread.name.")
+    response_space = response_thread.rsplit("/threads/", 1)[0]
+    if response_space != (record.space_name or configured_space):
+        raise CfiChatError("Google Chat returned a thread in an unexpected space.")
+    sent_at = message_timestamp(response) or now
+    questions = [
+        *record.questions,
+        CfiInterviewQuestion(
+            question_number=question_number,
+            kind=kind,
+            question_text=question_text,
+            sent_at=sent_at,
+            message_name=message_name,
+            thread_name=response_thread,
+            space_name=record.space_name or configured_space,
+        ),
+    ]
+    updated = record.model_copy(
+        update={
+            "status": CfiInterviewStatus.WAITING_FOR_REPLY,
+            "space_name": record.space_name or configured_space,
+            "thread_name": response_thread,
+            "questions": questions,
+            "nudge_count": record.nudge_count + (1 if is_nudge else 0),
+            "last_nudge_at": now if is_nudge else record.last_nudge_at,
+            "poll_lease_until": None,
+            "resume_handle": handle or record.resume_handle,
+        }
+    )
+    return store.save(updated)
+
+
+def chat_read_replies(
+    *,
+    tenant_id: str,
+    case_tenant_id: str,
+    interview_id: str,
+    finalize: bool = False,
+) -> CfiInterviewRecord:
+    """Read and persist only new messages in the stored interview thread.
+
+    The Chat API result is treated as untrusted input. Sender authorization,
+    exact-thread correlation, deterministic classification, cursor advance,
+    deadline handling, and state transitions all happen here before a reply
+    crosses the MCP boundary.
+    """
+    _check_cfi_interview_tenant(tenant_id, case_tenant_id)
+    from app.domain.cfi_interview_store import get_cfi_interview_store
+
+    store = get_cfi_interview_store()
+    record = store.get(interview_id)
+    if record is None:
+        raise CfiInterviewScopeError(f"No CFI interview exists for {interview_id!r}.")
+    if record.tenant_id != tenant_id:
+        raise CfiInterviewTenantMismatch(
+            f"Interview {interview_id!r} is not owned by tenant {tenant_id!r}."
+        )
+    if record.status is CfiInterviewStatus.COMPLETED:
+        return record
+    if record.status is CfiInterviewStatus.INTERVIEW_UNANSWERED and not finalize:
+        return record
+    if not record.space_name or not record.thread_name:
+        raise CfiInterviewScopeError("Interview has no persisted Chat thread.")
+
+    now = datetime.datetime.now(datetime.UTC)
+    messages = list_thread_messages(
+        space_name=record.space_name,
+        thread_name=record.thread_name,
+        after=record.last_seen_message_time,
+    )
+    known = {item.message_name for item in record.replies}
+    known.update(item.message_name for item in record.questions if item.message_name)
+    replies = list(record.replies)
+    latest_time = record.last_seen_message_time
+    latest_name = record.last_seen_message_name
+    question_number = max(
+        (item.question_number for item in record.questions), default=1
+    )
+    for message in messages:
+        message_thread = (message.get("thread") or {}).get("name")
+        if message_thread != record.thread_name:
+            raise CfiChatError(
+                "Google Chat returned a message outside the persisted interview thread."
+            )
+        message_name = message.get("name")
+        if not isinstance(message_name, str) or not message_name:
+            continue
+        stamp = message_timestamp(message) or now
+        if latest_time is None or stamp > latest_time:
+            latest_time = stamp
+            latest_name = message_name
+        elif stamp == latest_time and (latest_name is None or message_name > latest_name):
+            latest_name = message_name
+        if message_name in known or message_is_bot(message):
+            continue
+        sender_id = message_sender_id(message)
+        if sender_id is None:
+            continue
+        raw_text = message_text(message)
+        sender_allowed = sender_id in record.allowed_responder_ids
+        classification = (
+            classify_reply(raw_text)
+            if sender_allowed
+            else CfiReplyClassification.OUT_OF_SCOPE
+        )
+        replies.append(
+            CfiInterviewReply(
+                message_name=message_name,
+                sender_id=sender_id,
+                raw_text=raw_text,
+                received_at=stamp,
+                classification=classification,
+                sender_allowed=sender_allowed,
+                question_number=question_number,
+            )
+        )
+        known.add(message_name)
+
+    actionable = next(
+        (
+            reply
+            for reply in replies
+            if reply.sender_allowed
+            and reply.classification
+            in {
+                CfiReplyClassification.ANSWER,
+                CfiReplyClassification.DECLINE,
+                CfiReplyClassification.STOP,
+            }
+        ),
+        None,
+    )
+    if actionable is not None:
+        status = (
+            CfiInterviewStatus.COMPLETED
+            if finalize
+            else CfiInterviewStatus.REPLY_CAPTURED
+        )
+        summary = normalize_reply_text(actionable.raw_text)[:1000] or (
+            actionable.classification.value
+        )
+    elif now >= record.deadline_at:
+        status = CfiInterviewStatus.INTERVIEW_UNANSWERED
+        summary = "No accepted human answer was received before the interview deadline."
+    else:
+        status = CfiInterviewStatus.WAITING_FOR_REPLY
+        summary = record.outcome_summary
+
+    changed = (
+        replies != record.replies
+        or latest_time != record.last_seen_message_time
+        or latest_name != record.last_seen_message_name
+        or status != record.status
+        or record.poll_lease_until is not None
+        or (finalize and status is CfiInterviewStatus.COMPLETED)
+    )
+    if not changed:
+        return record
+    updated = record.model_copy(
+        update={
+            "status": status,
+            "replies": replies,
+            "last_seen_message_time": latest_time,
+            "last_seen_message_name": latest_name,
+            "poll_lease_until": None,
+            "outcome_summary": summary,
+        }
+    )
+    return store.save(updated)
+
+
+def cfi_interview_tick(
+    *,
+    now: str,
+    lease_seconds: int,
+    max_interviews: int,
+) -> CfiInterviewTickResult:
+    """Claim and poll a bounded batch of production CFI interviews.
+
+    This is an internal scheduler operation: Cloud SQL and Google Chat stay
+    inside the department MCP, while the scheduler receives only the minimal
+    resume metadata needed to wake the deployed CFI Runtime. Raw human reply
+    text never crosses this boundary.
+    """
+    try:
+        tick_time = datetime.datetime.fromisoformat(now.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise CfiInterviewScopeError(
+            f"now is not an RFC-3339 datetime: {now!r}."
+        ) from exc
+    if tick_time.tzinfo is None:
+        raise CfiInterviewScopeError("now must include a timezone.")
+    tick_time = tick_time.astimezone(datetime.UTC)
+    if lease_seconds < 1 or lease_seconds > 3600:
+        raise CfiInterviewScopeError("lease_seconds must be between 1 and 3600.")
+    if max_interviews < 1 or max_interviews > 100:
+        raise CfiInterviewScopeError("max_interviews must be between 1 and 100.")
+
+    from app.domain.cfi_interview_store import get_cfi_interview_store
+
+    store = get_cfi_interview_store()
+    claimed = store.claim_waiting(
+        now=tick_time, lease_seconds=lease_seconds, limit=max_interviews
+    )
+    items: list[CfiInterviewTickItem] = []
+    for claimed_record in claimed:
+        try:
+            record = chat_read_replies(
+                tenant_id=claimed_record.tenant_id,
+                case_tenant_id=claimed_record.tenant_id,
+                interview_id=claimed_record.interview_id,
+                finalize=False,
+            )
+            nudge_sent = False
+            if (
+                record.status is CfiInterviewStatus.WAITING_FOR_REPLY
+                and record.questions
+                and record.nudge_count < record.max_nudges
+            ):
+                handle = record.resume_handle
+                nudged = chat_send_question(
+                    tenant_id=record.tenant_id,
+                    case_tenant_id=record.tenant_id,
+                    interview_id=record.interview_id,
+                    cfi_id=record.cfi_id,
+                    hypothesis_id=record.hypothesis_id,
+                    round_number=record.round_number,
+                    question_number=record.questions[-1].question_number,
+                    question_text=(
+                        "Reminder: please reply to the CFI question in this "
+                        "thread with observed facts or records. Reply "
+                        "'decline' or 'stop' if you cannot continue. Do not "
+                        "include credentials or other secrets."
+                    ),
+                    deadline_at=record.deadline_at.isoformat(),
+                    app_name=handle.app_name if handle else None,
+                    user_id=handle.user_id if handle else None,
+                    session_id=handle.session_id if handle else None,
+                    invocation_id=handle.invocation_id if handle else None,
+                    interrupt_id=handle.interrupt_id if handle else None,
+                    is_nudge=True,
+                )
+                nudge_sent = nudged.nudge_count > record.nudge_count
+                record = nudged
+
+            if record.status in {
+                CfiInterviewStatus.REPLY_CAPTURED,
+                CfiInterviewStatus.INTERVIEW_UNANSWERED,
+            }:
+                reason = "resume_required"
+            elif nudge_sent:
+                reason = "nudge_sent"
+            else:
+                reason = "waiting_for_reply"
+            items.append(
+                CfiInterviewTickItem(
+                    tenant_id=record.tenant_id,
+                    interview_id=record.interview_id,
+                    status=record.status,
+                    nudge_sent=nudge_sent,
+                    nudge_count=record.nudge_count,
+                    resume_handle=record.resume_handle
+                    if record.status
+                    in {
+                        CfiInterviewStatus.REPLY_CAPTURED,
+                        CfiInterviewStatus.INTERVIEW_UNANSWERED,
+                    }
+                    else None,
+                    reason=reason,
+                )
+            )
+        except (
+            CfiChatError,
+            CfiInterviewConcurrencyError,
+            CfiInterviewScopeError,
+            CfiInterviewTenantMismatch,
+        ) as exc:
+            released = store.release_poll(claimed_record.interview_id)
+            items.append(
+                CfiInterviewTickItem(
+                    tenant_id=claimed_record.tenant_id,
+                    interview_id=claimed_record.interview_id,
+                    status=(
+                        released.status
+                        if released is not None
+                        else CfiInterviewStatus.FAILED
+                    ),
+                    nudge_count=released.nudge_count if released else 0,
+                    resume_handle=None,
+                    reason=f"poll_failed: {exc}",
+                )
+            )
+    return CfiInterviewTickResult(items=items)
 async def controlled_guidance_query(
     *, tenant_id: str, corpus: str, query: str, case_tenant_id: str, top_k: int = 5
 ):

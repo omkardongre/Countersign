@@ -200,3 +200,53 @@ def build_resume_client(runner: Any | None) -> ResumeClient:
         f"No resume transport: set {CASE_ENGINE_ENV} to the deployed Agent "
         "Runtime resource, or run the tick in the service hosting the case."
     )
+
+
+CFI_ENGINE_ENV = "COUNTERSIGN_CFI_ENGINE"
+CFI_RESUME_USER_AGENT = "countersign-cfi-interview-scheduler"
+
+
+def build_cfi_tick_message(
+    *, tenant_id: str, interview_id: str, interrupt_id: str, source: str
+) -> types.Content:
+    """Build the function response matched by the CFI RequestInput node."""
+    return types.Content(
+        role="user",
+        parts=[
+            types.Part(
+                function_response=types.FunctionResponse(
+                    id=interrupt_id,
+                    name=REQUEST_INPUT_FUNCTION,
+                    response={
+                        "tenant_id": tenant_id,
+                        "interview_id": interview_id,
+                        "source": source,
+                    },
+                )
+            )
+        ],
+    )
+
+
+def cfi_engine_resource() -> str | None:
+    value = os.environ.get(CFI_ENGINE_ENV, "").strip()
+    return value or None
+
+
+def build_cfi_resume_client(runner: Any | None = None) -> ResumeClient:
+    """Build the CFI-specific resume transport and fail closed if absent.
+
+    The CFI graph is a separate Agent Runtime from the case graph, so it
+    must never accidentally resume a case engine via ``COUNTERSIGN_CASE_ENGINE``.
+    A local runner is accepted only when an explicit caller supplies one (the
+    production FastAPI app does not supply the case runner for this path).
+    """
+    engine = cfi_engine_resource()
+    if engine:
+        return AgentRuntimeResumeClient(engine)
+    if runner is not None:
+        return RunnerResumeClient(runner)
+    raise RuntimeError(
+        f"No CFI resume transport: set {CFI_ENGINE_ENV} to the deployed CFI "
+        "Agent Runtime resource, or explicitly provide a local CFI runner."
+    )

@@ -55,6 +55,7 @@ from google.adk.events.event import Event
 from google.adk.workflow import DEFAULT_ROUTE, START, Workflow, node
 
 from app.domain.cfi_gate import cfi_continue_gate, evaluate_cfi_closure
+from app.domain.cfi_interview import run_interview
 from app.domain.cfi_lead import build_cfi_lead_content, get_cfi_lead_agent
 from app.domain.cfi_ledger import open_hypothesis
 from app.domain.cfi_ledger import record_evidence as ledger_record_evidence
@@ -86,6 +87,7 @@ CFI_WORKFLOW_VERSION = "cfi_investigation.1"
 # adding "interview"/"trend_correlation") does not silently change graph
 # routing semantics without a deliberate edit here too.
 _ROUTE_SCOPE_EXPANSION = "scope_expansion"
+_ROUTE_INTERVIEW = "interview"
 _ROUTE_SKIP_TO_SETTLEMENT = "skip"
 
 
@@ -157,17 +159,22 @@ async def cfi_plan_round(ctx: Context, node_input: CfiRoundState) -> Event:
     existing_statements = {h.statement.strip().lower() for h in investigation.hypotheses}
 
     active_hypothesis_id: str | None = None
+    enquiry_kind: CfiEnquiryKind | None = None
     should_dispatch = False
     updated_investigation = investigation
 
-    if plan.kind is not CfiEnquiryKind.SCOPE_EXPANSION:
+    if plan.kind not in {
+        CfiEnquiryKind.SCOPE_EXPANSION,
+        CfiEnquiryKind.INTERVIEW,
+    }:
         rationale = (
             f"Lead agent proposed unsupported enquiry kind {plan.kind.value!r} "
-            "in Phase 1; skipping to settlement this round."
+            "in this CFI deployment; skipping to settlement this round."
         )
     elif plan.target_hypothesis_id is not None:
         if plan.target_hypothesis_id in open_ids:
             active_hypothesis_id = plan.target_hypothesis_id
+            enquiry_kind = plan.kind
             should_dispatch = True
             rationale = plan.rationale
         else:
@@ -188,6 +195,7 @@ async def cfi_plan_round(ctx: Context, node_input: CfiRoundState) -> Event:
                 investigation, proposal, round_number=state.round_number
             )
             active_hypothesis_id = opened.hypothesis_id
+            enquiry_kind = plan.kind
             should_dispatch = True
             rationale = plan.rationale
     else:
@@ -200,6 +208,7 @@ async def cfi_plan_round(ctx: Context, node_input: CfiRoundState) -> Event:
         update={
             "investigation": updated_investigation,
             "active_hypothesis_id": active_hypothesis_id,
+            "enquiry_kind": enquiry_kind,
             "should_dispatch": should_dispatch,
             "rationale": rationale,
         }
@@ -217,9 +226,12 @@ async def dispatch_enquiry(ctx: Context, node_input: CfiRoundState) -> Event:
         if isinstance(node_input, CfiRoundState)
         else CfiRoundState.model_validate(node_input)
     )
-    ctx.route = (
-        _ROUTE_SCOPE_EXPANSION if state.should_dispatch else _ROUTE_SKIP_TO_SETTLEMENT
-    )
+    if not state.should_dispatch:
+        ctx.route = _ROUTE_SKIP_TO_SETTLEMENT
+    elif state.enquiry_kind is CfiEnquiryKind.INTERVIEW:
+        ctx.route = _ROUTE_INTERVIEW
+    else:
+        ctx.route = _ROUTE_SCOPE_EXPANSION
     return Event(output=state.model_dump(mode="json"))
 
 
@@ -283,23 +295,54 @@ async def record_evidence(node_input: CfiRoundState) -> Event:
         else CfiRoundState.model_validate(node_input)
     )
     investigation = state.investigation
-    result = state.pending_sibling_result
+    interview_result = state.pending_interview_result
+    sibling_result = state.pending_sibling_result
 
-    if result is not None and state.active_hypothesis_id is not None:
-        if result.candidates:
+    if interview_result is not None and state.active_hypothesis_id is not None:
+        # Human text is evidence only. Unlike the deterministic sibling
+        # association path, an answer cannot itself settle a hypothesis; the
+        # next lead round may consider this cited evidence.
+        source_uri = interview_result.source_uri
+        existing = next(
+            (
+                item
+                for item in investigation.evidence
+                if item.source_uri == source_uri
+                and item.source_tool == "chat_read_replies"
+            ),
+            None,
+        )
+        if existing is None:
             fact = (
-                f"{len(result.candidates)} sibling batch(es) share "
-                f"{result.shared_attribute}={result.candidates[0].shared_value!r} "
-                f"with {result.batch_id}: "
-                f"{', '.join(c.batch_id for c in result.candidates)}."
+                "CFI human interview result (deterministically classified; "
+                "untrusted text, no decision authority): "
+                f"{interview_result.summary}"
             )
-            source_uri = result.candidates[0].source_uri
+            investigation, _evidence = ledger_record_evidence(
+                investigation,
+                round_number=state.round_number,
+                source_tool="chat_read_replies",
+                source_uri=source_uri,
+                fact=fact,
+            )
+    elif sibling_result is not None and state.active_hypothesis_id is not None:
+        if sibling_result.candidates:
+            fact = (
+                f"{len(sibling_result.candidates)} sibling batch(es) share "
+                f"{sibling_result.shared_attribute}={sibling_result.candidates[0].shared_value!r} "
+                f"with {sibling_result.batch_id}: "
+                f"{', '.join(c.batch_id for c in sibling_result.candidates)}."
+            )
+            source_uri = sibling_result.candidates[0].source_uri
         else:
             fact = (
-                f"No sibling batches on tenant {result.tenant_id} share "
-                f"{result.shared_attribute} with {result.batch_id}."
+                f"No sibling batches on tenant {sibling_result.tenant_id} share "
+                f"{sibling_result.shared_attribute} with {sibling_result.batch_id}."
             )
-            source_uri = f"sibling_batch_query://{result.tenant_id}/{result.batch_id}"
+            source_uri = (
+                f"sibling_batch_query://{sibling_result.tenant_id}/"
+                f"{sibling_result.batch_id}"
+            )
         investigation, evidence = ledger_record_evidence(
             investigation,
             round_number=state.round_number,
@@ -313,8 +356,11 @@ async def record_evidence(node_input: CfiRoundState) -> Event:
                     [CfiCitedClaim(claim=fact, evidence_ids=[evidence.evidence_id])],
                     [],
                 )
-                if result.candidates
-                else ([], [CfiCitedClaim(claim=fact, evidence_ids=[evidence.evidence_id])])
+                if sibling_result.candidates
+                else (
+                    [],
+                    [CfiCitedClaim(claim=fact, evidence_ids=[evidence.evidence_id])],
+                )
             )
         }
         investigation = ledger_settle_hypotheses(
@@ -322,7 +368,11 @@ async def record_evidence(node_input: CfiRoundState) -> Event:
         )
 
     new_state = state.model_copy(
-        update={"investigation": investigation, "pending_sibling_result": None}
+        update={
+            "investigation": investigation,
+            "pending_interview_result": None,
+            "pending_sibling_result": None,
+        }
     )
     return Event(output=new_state.model_dump(mode="json"))
 
@@ -410,10 +460,12 @@ def build_cfi_workflow() -> Workflow:
                 dispatch_enquiry,
                 {
                     _ROUTE_SCOPE_EXPANSION: run_scope_expansion,
+                    _ROUTE_INTERVIEW: run_interview,
                     DEFAULT_ROUTE: record_evidence,
                 },
             ),
             (run_scope_expansion, record_evidence),
+            (run_interview, record_evidence),
             (record_evidence, cfi_continue_gate_node),
             (
                 cfi_continue_gate_node,

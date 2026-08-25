@@ -43,6 +43,12 @@ from app.domain.case_memory_models import (
     CaseMemoryQueryResult,
 )
 from app.domain.case_status_models import CaseStatusRecord
+from app.domain.cfi_interview_chat import CfiChatError
+from app.domain.cfi_interview_models import (
+    CfiInterviewRecord,
+    CfiInterviewTickResult,
+)
+from app.domain.cfi_interview_store import CfiInterviewConcurrencyError
 from app.domain.cfi_models import CfiInvestigation, SiblingBatchQueryResult
 from app.domain.cfi_store import (
     CfiConcurrencyError,
@@ -57,8 +63,11 @@ from app.domain.department_models import (
 from app.domain.department_tools import (
     CASE_STATUS_UPSERT,
     CFI_GET,
+    CFI_INTERVIEW_TICK,
     CFI_OPEN,
     CFI_SAVE,
+    CHAT_READ_REPLIES,
+    CHAT_SEND_QUESTION,
     COA_FETCH,
     CONTROLLED_GUIDANCE_QUERY,
     DRIVE_FETCH_EVIDENCE,
@@ -75,6 +84,8 @@ from app.domain.department_tools import (
     STERILITY_START,
     CaseMemoryTenantMismatch,
     CaseStatusTenantMismatch,
+    CfiInterviewScopeError,
+    CfiInterviewTenantMismatch,
     CfiTenantMismatch,
     ControlledGuidanceTenantMismatch,
     DepartmentRecordMissing,
@@ -90,10 +101,19 @@ from app.domain.department_tools import (
     cfi_get as run_cfi_get,
 )
 from app.domain.department_tools import (
+    cfi_interview_tick as run_cfi_interview_tick,
+)
+from app.domain.department_tools import (
     cfi_open as run_cfi_open,
 )
 from app.domain.department_tools import (
     cfi_save as run_cfi_save,
+)
+from app.domain.department_tools import (
+    chat_read_replies as run_chat_read_replies,
+)
+from app.domain.department_tools import (
+    chat_send_question as run_chat_send_question,
 )
 from app.domain.department_tools import (
     coa_fetch as load_coa,
@@ -164,6 +184,70 @@ _CAS_WRITE = ToolAnnotations(
     openWorldHint=False,
     destructiveHint=False,
 )
+
+CFI_TICK_CALLER_SERVICE_ACCOUNTS_ENV = "COUNTERSIGN_CFI_TICK_CALLER_SERVICE_ACCOUNTS"
+
+
+def _cfi_tick_allowed_callers() -> set[str]:
+    raw = os.environ.get(CFI_TICK_CALLER_SERVICE_ACCOUNTS_ENV, "")
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def _mcp_http_request(mcp: FastMCP) -> Any | None:
+    """The Starlette request for the in-flight MCP call, if any.
+
+    ``FastMCP.get_context()`` raises when no request is in flight (unit
+    tests calling the Python function directly, in-process transport), so
+    this returns ``None`` rather than propagating that as an unrelated error.
+    """
+    try:
+        request_context = mcp.get_context().request_context
+    except Exception:
+        return None
+    return getattr(request_context, "request", None)
+
+
+def _require_cfi_tick_caller(mcp: FastMCP) -> None:
+    """Scope ``cfi_interview_tick`` to the scheduler's own invoker identity.
+
+    Agent Gateway tool-name ALLOW policies (``mcp-tool-policy-bindings.yaml``)
+    only govern Agent Identity traffic egressing through the Gateway. The
+    Cloud Scheduler tick service calls this Cloud Run service directly, as a
+    normal OIDC-authenticated caller — Gateway never sees that call. Without
+    an explicit identity check here, holding ``roles/run.invoker`` on this
+    service (which the CFI Runtime's own MCP invoker service account also
+    holds, for ``chat_send_question``/``chat_read_replies``) would be enough
+    to call the scheduler-only control-plane tick as well.
+
+    Fails closed: unset config, a missing/invalid bearer token, or a caller
+    outside the explicit allow-list all raise, never silently pass through.
+    """
+    allowed = _cfi_tick_allowed_callers()
+    if not allowed:
+        raise ToolError(
+            f"{CFI_TICK_CALLER_SERVICE_ACCOUNTS_ENV} is not configured; "
+            "refusing to run the CFI interview tick for an unscoped caller."
+        )
+    request = _mcp_http_request(mcp)
+    if request is None:
+        raise ToolError("cfi_interview_tick requires an HTTP caller identity.")
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise ToolError("cfi_interview_tick requires a bearer token.")
+    audience = f"{request.url.scheme}://{request.url.netloc}"
+    try:
+        import google.auth.transport.requests
+        from google.oauth2 import id_token as google_id_token
+
+        claims = google_id_token.verify_oauth2_token(
+            token, google.auth.transport.requests.Request(), audience
+        )
+    except Exception as exc:
+        raise ToolError(f"cfi_interview_tick caller token is invalid: {exc}") from exc
+    email = str(claims.get("email", "")).strip().lower()
+    if email not in allowed:
+        raise ToolError(f"Caller {email or 'unknown'!r} may not call cfi_interview_tick.")
 
 
 def build_department_mcp(
@@ -632,6 +716,124 @@ def build_department_mcp(
             CfiConcurrencyError,
             CfiNotFoundError,
             CfiTenantMismatch,
+            ValueError,
+        ) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CHAT_SEND_QUESTION,
+        title="Send CFI interview question",
+        description=(
+            "Send one tenant-bound, idempotent CFI interview question or "
+            "bounded nudge to the server-configured Google Chat thread. "
+            "The caller cannot choose the Chat space or responder list."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def chat_send_question(
+        tenant_id: str,
+        case_tenant_id: str,
+        interview_id: str,
+        cfi_id: str,
+        hypothesis_id: str,
+        round_number: int,
+        question_number: int,
+        question_text: str,
+        deadline_at: str,
+        app_name: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        invocation_id: str | None = None,
+        interrupt_id: str | None = None,
+        is_nudge: bool = False,
+    ) -> CfiInterviewRecord:
+        try:
+            return run_chat_send_question(
+                tenant_id=tenant_id,
+                case_tenant_id=case_tenant_id,
+                interview_id=interview_id,
+                cfi_id=cfi_id,
+                hypothesis_id=hypothesis_id,
+                round_number=round_number,
+                question_number=question_number,
+                question_text=question_text,
+                deadline_at=deadline_at,
+                app_name=app_name,
+                user_id=user_id,
+                session_id=session_id,
+                invocation_id=invocation_id,
+                interrupt_id=interrupt_id,
+                is_nudge=is_nudge,
+            )
+        except (
+            CfiChatError,
+            CfiInterviewConcurrencyError,
+            CfiInterviewScopeError,
+            CfiInterviewTenantMismatch,
+            ValueError,
+        ) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CHAT_READ_REPLIES,
+        title="Read CFI interview replies",
+        description=(
+            "Read new messages only from the stored Google Chat interview "
+            "thread, classify them deterministically as untrusted evidence, "
+            "and persist the cursor and lifecycle state."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def chat_read_replies(
+        tenant_id: str,
+        case_tenant_id: str,
+        interview_id: str,
+        finalize: bool = False,
+    ) -> CfiInterviewRecord:
+        try:
+            return run_chat_read_replies(
+                tenant_id=tenant_id,
+                case_tenant_id=case_tenant_id,
+                interview_id=interview_id,
+                finalize=finalize,
+            )
+        except (
+            CfiChatError,
+            CfiInterviewConcurrencyError,
+            CfiInterviewScopeError,
+            CfiInterviewTenantMismatch,
+            ValueError,
+        ) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CFI_INTERVIEW_TICK,
+        title="Process CFI interview polling tick",
+        description=(
+            "Internal scheduler control-plane operation. Atomically claim a "
+            "bounded batch of CFI interviews, read their stored Chat threads, "
+            "send due nudges, and return only minimal resume metadata. Raw "
+            "human reply text never leaves the department MCP."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def cfi_interview_tick(
+        now: str,
+        lease_seconds: int,
+        max_interviews: int,
+    ) -> CfiInterviewTickResult:
+        _require_cfi_tick_caller(mcp)
+        try:
+            return run_cfi_interview_tick(
+                now=now,
+                lease_seconds=lease_seconds,
+                max_interviews=max_interviews,
+            )
+        except (
+            CfiChatError,
+            CfiInterviewConcurrencyError,
+            CfiInterviewScopeError,
+            CfiInterviewTenantMismatch,
             ValueError,
         ) as exc:
             raise ToolError(str(exc)) from exc

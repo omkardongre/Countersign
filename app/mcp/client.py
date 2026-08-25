@@ -42,6 +42,7 @@ from app.domain.department_tools import (
     ALLOWED_DEPARTMENT_TOOLS,
     CASE_MEMORY_TOOLS,
     CASE_STATUS_TOOLS,
+    CFI_INTERVIEW_TOOLS,
     CFI_TOOLS,
     DRIVE_TOOLS,
     GUIDANCE_TOOLS,
@@ -499,3 +500,14 @@ async def call_mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any] 
             f"{name} returned a non-object structured content payload."
         )
     return payload
+
+
+async def call_cfi_interview_tool(
+    name: str, arguments: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Call one of the tenant-locked CFI Chat tools over MCP."""
+    if name not in CFI_INTERVIEW_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(CFI_INTERVIEW_TOOLS)}"
+        )
+    return await call_mcp_tool(name, arguments)

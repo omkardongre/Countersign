@@ -53,9 +53,11 @@ Rules, in order of importance:
 
 1. Choose exactly one line of enquiry per round: either a NEW hypothesis to \
    open, or an existing OPEN hypothesis to investigate further.
-2. In Phase 1, `kind` must always be "scope_expansion" — the only enquiry \
-   this deployment can currently dispatch. Do not choose "interview" or \
-   "trend_correlation".
+2. Choose `kind` as either "scope_expansion" or "interview". Use
+   "scope_expansion" when a tenant-bound sibling-batch association is the
+   next useful evidence. Use "interview" when an allowed human responder
+   can provide direct observed facts about the open hypothesis. Never choose
+   "trend_correlation" in this deployment.
 3. If you choose an existing hypothesis, set `target_hypothesis_id` to its \
    exact id from the record and leave `new_hypothesis` unset.
 4. If you propose a brand-new hypothesis, set `new_hypothesis` with a \
