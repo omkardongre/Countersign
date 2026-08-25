@@ -106,3 +106,62 @@ def get_google_credentials(*, scopes: list[str]):
 
     credentials, _ = google.auth.default(scopes=scopes)
     return credentials
+
+
+def get_dwd_subject() -> str | None:
+    """Return the configured Workspace user for keyless DWD API calls."""
+    return (
+        os.environ.get("COUNTERSIGN_DWD_SUBJECT", "").strip()
+        or os.environ.get("COUNTERSIGN_CALENDAR_DWD_SUBJECT", "").strip()
+        or None
+    )
+
+
+def get_delegated_google_credentials(
+    *, scopes: list[str], subject: str | None = None
+):
+    """Create keyless Workspace DWD credentials using the ambient identity.
+
+    The service account signs the delegation JWT through IAM Credentials; no
+    downloaded service-account key is accepted or required. The target
+    service account must have ``roles/iam.serviceAccountTokenCreator`` on
+    itself, and the target OAuth scopes must be authorized for its client ID
+    in Workspace Domain-Wide Delegation.
+    """
+    import google.auth
+    from google.auth import iam
+    from google.auth.transport.requests import Request
+    from google.oauth2 import service_account
+
+    delegated_subject = subject or get_dwd_subject()
+    if not delegated_subject:
+        raise RuntimeError(
+            "COUNTERSIGN_DWD_SUBJECT is required for Workspace DWD credentials."
+        )
+
+    source, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    request = Request()
+    signer_email = (
+        os.environ.get("COUNTERSIGN_DWD_SIGNER", "").strip()
+        or os.environ.get("COUNTERSIGN_CALENDAR_DWD_SIGNER", "").strip()
+        or getattr(source, "service_account_email", "")
+        or ""
+    )
+    if not signer_email or signer_email == "default":
+        source.refresh(request)
+        signer_email = getattr(source, "service_account_email", "") or ""
+    if not signer_email or signer_email == "default":
+        raise RuntimeError(
+            "COUNTERSIGN_DWD_SIGNER is required when the ambient credential "
+            "does not expose a service-account signer identity."
+        )
+
+    return service_account.Credentials(
+        iam.Signer(request, source, signer_email),
+        signer_email,
+        token_uri="https://oauth2.googleapis.com/token",
+        scopes=scopes,
+        subject=delegated_subject,
+    )
