@@ -35,7 +35,12 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.domain.cfi_artifact_models import (
+    CfiReportReference,
+    CfiSiteReviewReference,
+)
 from app.domain.cfi_interview_models import CfiInterviewResult
+from app.domain.cfi_trend_models import CfiTrendResult
 from app.domain.master_data import RootCauseCategory
 
 
@@ -85,6 +90,21 @@ class CfiOutcome(StrEnum):
     ROOT_CAUSE_IDENTIFIED = "root_cause_identified"
     ROOT_CAUSE_UNDETERMINED = "root_cause_undetermined"
     ABANDONED_BUDGET_EXHAUSTED = "cfi_abandoned_budget_exhausted"
+
+
+class CfiLaunchStatus(StrEnum):
+    """Durable handoff state for the separate CFI Agent Runtime.
+
+    ``STARTED`` is the default for records opened by an already-running CFI
+    Runtime (including direct operator probes). The case-graph handoff sets
+    ``PENDING`` explicitly; only the authenticated scheduler control plane
+    may move it through ``LAUNCHING`` to ``STARTED``/``FAILED``.
+    """
+
+    STARTED = "started"
+    PENDING = "pending"
+    LAUNCHING = "launching"
+    FAILED = "failed"
 
 
 class CfiCitedClaim(BaseModel):
@@ -278,6 +298,7 @@ class CfiRoundState(BaseModel):
     rationale: str = ""
     pending_interview_result: CfiInterviewResult | None = None
     pending_sibling_result: SiblingBatchQueryResult | None = None
+    pending_trend_result: CfiTrendResult | None = None
 
 
 class CfiEscalationRequest(BaseModel):
@@ -320,6 +341,15 @@ class CfiInvestigation(BaseModel):
     budget: CfiBudgetState
     outcome: CfiOutcome | None = None
     closed_at: datetime.datetime | None = None
+    launch_status: CfiLaunchStatus = CfiLaunchStatus.STARTED
+    launch_attempts: int = Field(default=0, ge=0)
+    launch_lease_until: datetime.datetime | None = None
+    launch_error: str | None = None
+    runtime_invocation_id: str | None = None
+    site_review: CfiSiteReviewReference | None = None
+    site_review_error: str | None = None
+    report: CfiReportReference | None = None
+    report_error: str | None = None
     decision_authority: str = "none"
 
     @field_validator("decision_authority")
