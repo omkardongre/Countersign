@@ -199,6 +199,39 @@ def test_policy_bindings_forbid_sponsor_liaison_on_every_other_surface() -> None
     assert ("mcp-qc-probe-lims-only.yaml", "sponsor_liaison") in forbidden
 
 
+def test_cfi_workflow_policy_allows_chat_but_not_scheduler_tick() -> None:
+    text = _read("mcp-cfi-workflow-tools-allow.yaml")
+    assert "MATCH_BASE_PROTOCOL_METHODS" in text
+    assert _exact_tools(text) == {
+        "sibling_batch_query",
+        "cfi_open",
+        "cfi_get",
+        "cfi_save",
+        "chat_send_question",
+        "chat_read_replies",
+    }
+    assert "cfi_interview_tick" not in _exact_tools(text)
+
+
+def test_cfi_policy_is_host_scoped() -> None:
+    text = _read("mcp-cfi-workflow-tools-allow.yaml")
+    assert _hosts(text) == {_MCP_HOST}
+
+
+def test_cfi_tick_is_scheduler_only_and_cfi_identity_cannot_call_it() -> None:
+    text = _read("mcp-tool-policy-bindings.yaml")
+    assert "identity: scheduler_tick_service" in text
+    forbidden = _forbidden_pairs(text)
+    assert (
+        "mcp-cfi-workflow-tools-allow.yaml",
+        "scheduler_tick_service",
+    ) in forbidden
+    assert (
+        "mcp-cfi-workflow-tools-allow.yaml",
+        "case_workflow",
+    ) in forbidden
+
+
 def test_split_collector_identity_policies_are_not_in_tree() -> None:
     assert not (_GEAP / "mcp-qc-tools-allow.yaml").exists()
     assert not (_GEAP / "mcp-supply-tools-allow.yaml").exists()
