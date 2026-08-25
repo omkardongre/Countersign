@@ -209,6 +209,9 @@ def test_cfi_workflow_policy_allows_chat_but_not_scheduler_tick() -> None:
         "cfi_save",
         "chat_send_question",
         "chat_read_replies",
+        "cfi_trend_query",
+        "cfi_calendar_site_review",
+        "cfi_report_write",
     }
     assert "cfi_interview_tick" not in _exact_tools(text)
 

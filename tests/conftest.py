@@ -22,6 +22,7 @@ from app.domain.case_memory_store import (
     get_case_memory_store,
     reset_case_memory_store_cache,
 )
+from app.domain.cfi_store import get_cfi_store, reset_cfi_store_cache
 from app.domain.sterility_store import get_sterility_store, reset_sterility_store_cache
 
 
@@ -31,13 +32,25 @@ def _department_mcp_inprocess(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _fresh_cfi_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the CFI memory store only through an explicit test opt-in."""
+    monkeypatch.setenv("COUNTERSIGN_CFI_INMEMORY", "1")
+    monkeypatch.delenv("INSTANCE_CONNECTION_NAME", raising=False)
+    reset_cfi_store_cache()
+    get_cfi_store().reset()
+    yield
+    reset_cfi_store_cache()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_case_memory_store(monkeypatch: pytest.MonkeyPatch) -> None:
     """No Firestore in unit tests: explicit opt-out, like MCP in-process."""
     monkeypatch.setenv("COUNTERSIGN_CASE_MEMORY_INMEMORY", "1")
     reset_case_memory_store_cache()
     store = get_case_memory_store()
-    if hasattr(store, "reset"):
-        store.reset()
+    reset_fn = getattr(store, "reset", None)
+    if callable(reset_fn):
+        reset_fn()
     yield
     reset_case_memory_store_cache()
 

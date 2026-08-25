@@ -321,4 +321,4 @@ def test_no_record_claims_decision_authority() -> None:
 def test_anchor_provenance_cannot_be_supplied_by_the_model() -> None:
     """SourceAnchor requires artifact identity the extractor never sees."""
     with pytest.raises(ValueError):
-        SourceAnchor(source_uri="drive://x", page_number=1)  # type: ignore[call-arg]
+        SourceAnchor(**{"source_uri": "drive://x", "page_number": 1})  # type: ignore[call-arg]

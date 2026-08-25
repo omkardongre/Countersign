@@ -25,7 +25,7 @@ from google.genai import types
 
 from app.domain import branches as branches_mod
 from app.domain import challenger as challenger_mod
-from app.domain import department_tools as department_tools_mod
+from app.domain import department_source as department_source_mod
 from app.domain import extraction
 from app.domain import investigation as investigation_mod
 from app.domain import qms_report_agent as qms_report_agent_mod
@@ -131,14 +131,21 @@ def stub_department_agents(monkeypatch):
     itself is skipped, matching the existing extractor/investigation stubs.
     """
 
-    def _stub_get_qc_agent(lims_tool, em_tool):
+    def _stub_get_qc_agent(lims_tool):
         @node(name="stub_qc_agent")
         async def stub_qc_agent(node_input):
             await lims_tool()
-            await em_tool()
-            return branches_mod.QcAgentSummary(lims_reviewed=True, em_reviewed=True)
+            return branches_mod.QcAgentSummary(lims_reviewed=True)
 
         return stub_qc_agent
+
+    def _stub_get_em_agent(em_tool):
+        @node(name="stub_em_agent")
+        async def stub_em_agent(node_input):
+            await em_tool()
+            return branches_mod.EmAgentSummary(em_reviewed=True)
+
+        return stub_em_agent
 
     def _stub_get_supply_agent(coa_tool, eudragmdp_tool, openfda_tool):
         @node(name="stub_supply_agent")
@@ -155,6 +162,7 @@ def stub_department_agents(monkeypatch):
         return stub_supply_agent
 
     monkeypatch.setattr(branches_mod, "get_qc_agent", _stub_get_qc_agent)
+    monkeypatch.setattr(branches_mod, "get_em_agent", _stub_get_em_agent)
     monkeypatch.setattr(branches_mod, "get_supply_agent", _stub_get_supply_agent)
 
 
@@ -388,7 +396,7 @@ async def test_classified_case_and_compliance_share_scope(
     assert case.compliance.status is ComplianceStatus.SUFFICIENT_FOR_INVESTIGATION
     assert case.compliance.decision_authority == "none"
     departments = {branch.department.value for branch in case.branches}
-    assert departments == {"manufacturing", "qc", "supply"}
+    assert departments == {"manufacturing", "qc", "environmental_monitoring", "supply"}
     assert all(branch.status.value == "ok" for branch in case.branches)
     assert case.findings == []
 
@@ -465,7 +473,7 @@ async def test_qc_oos_still_runs_investigation(
         }
     )
     monkeypatch.setattr(
-        department_tools_mod, "lookup_department_snapshot", lambda **_kwargs: dirty
+        department_source_mod, "lookup_department_snapshot", lambda **_kwargs: dirty
     )
     result = _gate_package((await _start(_runner(), _case_payload()))[1])
     assert result.investigation.draft is not None

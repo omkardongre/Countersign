@@ -279,7 +279,7 @@ async def test_scheduler_tick_wakes_a_case_parked_on_the_hold(
     paused_at = [
         part.function_call.id
         for event in session.events
-        for part in (event.content.parts if event.content else [])
+        for part in (event.content.parts or [] if event.content else [])
         if part.function_call and part.function_call.name == "adk_request_input"
     ]
     # The tick advanced the case past the hold to the QP signature.

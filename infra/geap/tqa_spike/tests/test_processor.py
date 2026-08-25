@@ -6,7 +6,11 @@ from countersign_tqa.policy import (
     REASON_TENANT_MISMATCH,
     authorize_department_read,
 )
-from countersign_tqa.processor import continue_response, decide_request_body, deny_response
+from countersign_tqa.processor import (
+    continue_response,
+    decide_request_body,
+    deny_response,
+)
 
 
 def _tools_call(
@@ -57,7 +61,6 @@ def test_serve_uses_ca_signed_certificate(tmp_path) -> None:
     import threading
 
     import grpc
-
     from countersign_tqa import server as server_module
 
     ca_key = tmp_path / "ca.key"

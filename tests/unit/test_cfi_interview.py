@@ -335,6 +335,13 @@ def test_chat_read_rejects_wrong_tenant_thread_and_sender(
         "list_thread_messages",
         lambda **kwargs: [allowed_injection, unauthorized_sender],
     )
+
+    class _FixedDatetime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _NOW
+
+    monkeypatch.setattr(department_tools.datetime, "datetime", _FixedDatetime)
     updated = department_tools.chat_read_replies(
         tenant_id="tenant-a",
         case_tenant_id="tenant-a",
