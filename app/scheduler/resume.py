@@ -179,6 +179,136 @@ class AgentRuntimeResumeClient:
         await asyncio.to_thread(_post)
 
 
+class AgentRuntimeCfiStartClient:
+    """Start a fresh invocation on the separate CFI Agent Runtime.
+
+    This client has no local-runner fallback. The scheduler is a production
+    control plane and must fail visibly when ``COUNTERSIGN_CFI_ENGINE`` is
+    missing. The response is drained to the first checkpoint/terminal event;
+    the returned invocation id is the durable handoff acknowledgement.
+    """
+
+    def __init__(self, engine_resource: str) -> None:
+        self._engine = engine_resource
+        self._location = engine_resource.split("/locations/")[1].split("/")[0]
+
+    def _endpoint(self) -> str:
+        return (
+            f"https://{self._location}-aiplatform.googleapis.com/v1beta1/"
+            f"{self._engine}:streamQuery?alt=sse"
+        )
+
+    def _authorized_session(self) -> Any:
+        import google.auth
+        import google.auth.transport.requests
+
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        return google.auth.transport.requests.AuthorizedSession(credentials)
+
+    async def start(self, *, cfi_id: str, tenant_id: str) -> str:
+        import asyncio
+
+        body = {
+            "class_method": "async_stream_query",
+            "input": {
+                "user_id": f"cfi-launch-{cfi_id}",
+                "message": {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": json.dumps(
+                                {"cfi_id": cfi_id, "tenant_id": tenant_id},
+                                separators=(",", ":"),
+                            )
+                        }
+                    ],
+                },
+            },
+        }
+        timeout_raw = os.environ.get("COUNTERSIGN_CFI_START_TIMEOUT_SECONDS", "360")
+        try:
+            timeout_seconds = int(timeout_raw)
+        except ValueError as exc:
+            raise ResumeError(
+                "COUNTERSIGN_CFI_START_TIMEOUT_SECONDS must be an integer.",
+                recoverable=False,
+            ) from exc
+        if not 10 <= timeout_seconds <= 1800:
+            raise ResumeError(
+                "COUNTERSIGN_CFI_START_TIMEOUT_SECONDS must be between 10 and 1800.",
+                recoverable=False,
+            )
+
+        def _post() -> str:
+            session = self._authorized_session()
+            try:
+                response = session.post(
+                    self._endpoint(),
+                    data=json.dumps(body),
+                    headers={"Content-Type": "application/json"},
+                    stream=True,
+                    timeout=(30, timeout_seconds),
+                )
+                if response.status_code >= 400:
+                    recoverable = response.status_code not in (400, 404)
+                    raise ResumeError(
+                        "CFI Runtime start failed "
+                        f"({response.status_code}): {response.text[:500]}",
+                        recoverable=recoverable,
+                    )
+                invocation_id: str | None = None
+                event_count = 0
+                errors: list[str] = []
+                for raw_line in response.iter_lines(decode_unicode=True):
+                    if not raw_line:
+                        continue
+                    line = (
+                        raw_line[5:].strip()
+                        if raw_line.startswith("data:")
+                        else raw_line.strip()
+                    )
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    event_count += 1
+                    invocation_id = (
+                        event.get("invocationId")
+                        or event.get("invocation_id")
+                        or invocation_id
+                    )
+                    if event.get("errorCode") or event.get("errorMessage"):
+                        errors.append(json.dumps(event))
+                if errors:
+                    raise ResumeError(
+                        f"CFI Runtime emitted errors: {errors[:2]}",
+                        recoverable=True,
+                    )
+                if event_count == 0 or not invocation_id:
+                    raise ResumeError(
+                        "CFI Runtime start returned no acknowledged invocation id.",
+                        recoverable=True,
+                    )
+                return str(invocation_id)
+            finally:
+                response.close()
+
+        return await asyncio.to_thread(_post)
+
+
+def build_cfi_start_client() -> AgentRuntimeCfiStartClient:
+    """Build the deployed CFI start client; never falls back locally."""
+    engine = cfi_engine_resource()
+    if not engine:
+        raise RuntimeError(
+            f"No CFI start transport: set {CFI_ENGINE_ENV} to the deployed "
+            "CFI Agent Runtime resource."
+        )
+    return AgentRuntimeCfiStartClient(engine)
+
+
 def case_engine_resource() -> str | None:
     value = os.environ.get(CASE_ENGINE_ENV, "").strip()
     return value or None

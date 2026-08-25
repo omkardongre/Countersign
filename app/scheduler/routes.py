@@ -36,14 +36,24 @@ from app.domain.cfi_interview_models import (
     CfiInterviewStatus,
     CfiInterviewTickResult,
 )
-from app.domain.department_tools import CFI_INTERVIEW_TICK
+from app.domain.cfi_launch_models import CfiLaunchTickResult
+from app.domain.cfi_models import CfiLaunchStatus
+from app.domain.department_tools import (
+    CFI_INTERVIEW_TICK,
+    CFI_LAUNCH_RESULT,
+    CFI_START_TICK,
+)
 from app.domain.sterility_models import SterilityIncubationRecord
 from app.domain.sterility_store import get_sterility_store
-from app.mcp.client import DepartmentToolCallError, call_cfi_interview_tool
+from app.mcp.client import (
+    DepartmentToolCallError,
+    call_cfi_scheduler_tool,
+)
 from app.scheduler.auth import verify_scheduler_token
 from app.scheduler.resume import (
     ResumeError,
     build_cfi_resume_client,
+    build_cfi_start_client,
     build_cfi_tick_message,
     build_resume_client,
     build_tick_message,
@@ -54,6 +64,9 @@ logger = logging.getLogger(__name__)
 TICK_SOURCE = "cloud-scheduler"
 CFI_TICK_MAX_INTERVIEWS_ENV = "COUNTERSIGN_CFI_TICK_MAX_INTERVIEWS"
 CFI_TICK_LEASE_SECONDS_ENV = "COUNTERSIGN_CFI_TICK_LEASE_SECONDS"
+CFI_START_MAX_ENV = "COUNTERSIGN_CFI_START_MAX"
+CFI_START_LEASE_SECONDS_ENV = "COUNTERSIGN_CFI_START_LEASE_SECONDS"
+CFI_START_MAX_ATTEMPTS_ENV = "COUNTERSIGN_CFI_START_MAX_ATTEMPTS"
 
 
 def _required_cfi_tick_int(name: str, *, minimum: int, maximum: int) -> int:
@@ -133,6 +146,108 @@ async def _wake(record: SterilityIncubationRecord, runner: Any | None) -> dict[s
     return outcome
 
 
+async def _start_pending_cfis() -> list[dict[str, Any]]:
+    """Claim and start a bounded batch of pending CFI Runtime handoffs."""
+    max_starts = _required_cfi_tick_int(
+        CFI_START_MAX_ENV, minimum=1, maximum=50
+    )
+    lease_seconds = _required_cfi_tick_int(
+        CFI_START_LEASE_SECONDS_ENV, minimum=30, maximum=3600
+    )
+    max_attempts = _required_cfi_tick_int(
+        CFI_START_MAX_ATTEMPTS_ENV, minimum=1, maximum=10
+    )
+    try:
+        payload = await call_cfi_scheduler_tool(
+            CFI_START_TICK,
+            {
+                "now": datetime.datetime.now(datetime.UTC).isoformat(),
+                "lease_seconds": lease_seconds,
+                "max_starts": max_starts,
+                "max_attempts": max_attempts,
+            },
+        )
+    except DepartmentToolCallError as exc:
+        logger.error("CFI launch claim failed: %s", exc)
+        raise HTTPException(
+            status_code=503, detail="CFI launch control plane unavailable."
+        ) from exc
+    if not payload:
+        raise HTTPException(
+            status_code=502, detail="CFI launch control plane returned no result."
+        )
+    body: object = payload
+    if isinstance(body, dict) and "result" in body and "items" not in body:
+        body = body["result"]
+    try:
+        tick = CfiLaunchTickResult.model_validate(body)
+    except ValueError as exc:
+        logger.error("Invalid CFI launch tick result: %s", exc)
+        raise HTTPException(
+            status_code=502, detail="Invalid CFI launch control-plane result."
+        ) from exc
+
+    client = None
+    records: list[dict[str, Any]] = []
+    for item in tick.items:
+        result: dict[str, Any] = {
+            "cfi_id": item.cfi_id,
+            "tenant_id": item.tenant_id,
+            "source_case_id": item.source_case_id,
+            "batch_id": item.batch_id,
+            "launch_attempts": item.launch_attempts,
+            "started": False,
+        }
+        try:
+            if client is None:
+                client = build_cfi_start_client()
+            invocation_id = await client.start(
+                cfi_id=item.cfi_id, tenant_id=item.tenant_id
+            )
+        except ResumeError as exc:
+            error = f"{exc}; recoverable={exc.recoverable}"
+            result["reason"] = f"launch_failed: {error}"
+            result["recoverable"] = exc.recoverable
+            logger.warning("CFI launch failed for %s: %s", item.cfi_id, error)
+            launch_status = CfiLaunchStatus.FAILED.value
+            invocation_id = None
+            launch_error = error
+        except Exception as exc:
+            launch_error = str(exc)
+            result["reason"] = f"launch_failed: {launch_error}"
+            result["recoverable"] = True
+            logger.exception("CFI launch failed for %s", item.cfi_id)
+            launch_status = CfiLaunchStatus.FAILED.value
+            invocation_id = None
+        else:
+            launch_status = CfiLaunchStatus.STARTED.value
+            launch_error = None
+            result["started"] = True
+            result["invocation_id"] = invocation_id
+            result["reason"] = "started"
+
+        try:
+            await call_cfi_scheduler_tool(
+                CFI_LAUNCH_RESULT,
+                {
+                    "tenant_id": item.tenant_id,
+                    "case_tenant_id": item.tenant_id,
+                    "cfi_id": item.cfi_id,
+                    "launch_status": launch_status,
+                    "runtime_invocation_id": invocation_id,
+                    "launch_error": launch_error,
+                },
+            )
+        except DepartmentToolCallError as exc:
+            result["recorded"] = False
+            result["recording_error"] = str(exc)
+            logger.error("Could not record CFI launch result for %s: %s", item.cfi_id, exc)
+        else:
+            result["recorded"] = True
+        records.append(result)
+    return records
+
+
 @router.post("/cfi-tick")
 async def cfi_tick(request: Request) -> dict[str, Any]:
     """Poll Chat interviews inside the department MCP and wake CFI Runtime.
@@ -142,6 +257,7 @@ async def cfi_tick(request: Request) -> dict[str, Any]:
     status plus a persisted resume handle. A resume failure leaves the
     interview in a retryable captured/unanswered state for a later tick.
     """
+    launch_records = await _start_pending_cfis()
     max_interviews = _required_cfi_tick_int(
         CFI_TICK_MAX_INTERVIEWS_ENV, minimum=1, maximum=100
     )
@@ -149,7 +265,7 @@ async def cfi_tick(request: Request) -> dict[str, Any]:
         CFI_TICK_LEASE_SECONDS_ENV, minimum=1, maximum=3600
     )
     try:
-        payload = await call_cfi_interview_tool(
+        payload = await call_cfi_scheduler_tool(
             CFI_INTERVIEW_TICK,
             {
                 "now": datetime.datetime.now(datetime.UTC).isoformat(),
@@ -245,6 +361,9 @@ async def cfi_tick(request: Request) -> dict[str, Any]:
         records.append(result)
 
     return {
+        "launch_claimed": len(launch_records),
+        "launch_started": sum(1 for item in launch_records if item.get("started")),
+        "launch_records": launch_records,
         "claimed": len(tick.items),
         "nudged": sum(1 for item in tick.items if item.nudge_sent),
         "resume_required": sum(
