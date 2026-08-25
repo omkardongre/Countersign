@@ -37,7 +37,7 @@ from __future__ import annotations
 from google.adk.workflow import node
 from pydantic import BaseModel, field_validator
 
-from app.domain.cfi_models import CfiBudgetState, CfiInvestigation
+from app.domain.cfi_models import CfiBudgetState, CfiInvestigation, CfiLaunchStatus
 from app.domain.cfi_store_mcp import McpCfiStore
 from app.domain.cfi_trigger import CfiTriggerDecision, decide_cfi_required
 from app.domain.investigation_models import InvestigationCaseResult
@@ -92,6 +92,7 @@ async def _open_cfi(
             budget_spec_version=budget_spec.spec_version,
             budget_spec_sha256=budget_spec.spec_sha256,
         ),
+        launch_status=CfiLaunchStatus.PENDING,
     )
     return await McpCfiStore().open_async(seed)
 

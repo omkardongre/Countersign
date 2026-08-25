@@ -35,10 +35,13 @@ store never accepts an unvalidated dictionary.
 
 from __future__ import annotations
 
+import datetime
 import functools
+import os
 from threading import RLock
 from typing import Protocol
 
+from app.domain.cfi_launch_models import CfiLaunchItem
 from app.domain.cfi_models import CfiInvestigation
 
 
@@ -60,6 +63,25 @@ class CfiStore(Protocol):
     def list_open_for_batch(
         self, *, tenant_id: str, batch_id: str
     ) -> list[CfiInvestigation]: ...
+
+    def count_for_tenant(self, *, tenant_id: str, exclude_cfi_id: str) -> int: ...
+
+    def claim_pending_starts(
+        self,
+        *,
+        now: datetime.datetime,
+        lease_seconds: int,
+        limit: int,
+        max_attempts: int,
+    ) -> list[CfiLaunchItem]: ...
+
+    def mark_launch_started(
+        self, *, tenant_id: str, cfi_id: str, invocation_id: str
+    ) -> CfiLaunchItem: ...
+
+    def mark_launch_failed(
+        self, *, tenant_id: str, cfi_id: str, error: str
+    ) -> CfiLaunchItem: ...
 
     def reset(self) -> None: ...
 
@@ -146,20 +168,184 @@ class InMemoryCfiStore:
                 and record.outcome is None
             ]
 
+    def count_for_tenant(self, *, tenant_id: str, exclude_cfi_id: str) -> int:
+        """Count this tenant's other CFI records for recurrence evidence."""
+        with self._lock:
+            return sum(
+                1
+                for record in self._rows.values()
+                if record.tenant_id == tenant_id and record.cfi_id != exclude_cfi_id
+            )
+
+    def claim_pending_starts(
+        self,
+        *,
+        now: datetime.datetime,
+        lease_seconds: int,
+        limit: int,
+        max_attempts: int,
+    ) -> list[CfiLaunchItem]:
+        from datetime import timedelta
+
+        from app.domain.cfi_models import CfiLaunchStatus
+
+        with self._lock:
+            candidates = sorted(
+                self._rows.values(), key=lambda record: (record.opened_at, record.cfi_id)
+            )
+            claimed: list[CfiLaunchItem] = []
+            lease_until = now + timedelta(seconds=lease_seconds)
+            for record in candidates:
+                if len(claimed) >= limit or record.outcome is not None:
+                    continue
+                expired = (
+                    record.launch_status is CfiLaunchStatus.LAUNCHING
+                    and record.launch_lease_until is not None
+                    and record.launch_lease_until <= now
+                )
+                eligible = record.launch_status in {
+                    CfiLaunchStatus.PENDING,
+                    CfiLaunchStatus.FAILED,
+                } or expired
+                if not eligible or record.launch_attempts >= max_attempts:
+                    continue
+                updated = record.model_copy(
+                    deep=True,
+                    update={
+                        "launch_status": CfiLaunchStatus.LAUNCHING,
+                        "launch_attempts": record.launch_attempts + 1,
+                        "launch_lease_until": lease_until,
+                        "launch_error": None,
+                    },
+                )
+                self._rows[record.cfi_id] = updated
+                claimed.append(
+                    CfiLaunchItem(
+                        cfi_id=updated.cfi_id,
+                        tenant_id=updated.tenant_id,
+                        source_case_id=updated.source_case_id,
+                        batch_id=updated.batch_id,
+                        launch_attempts=updated.launch_attempts,
+                        launch_status=updated.launch_status,
+                    )
+                )
+            return claimed
+
+    def mark_launch_started(
+        self, *, tenant_id: str, cfi_id: str, invocation_id: str
+    ) -> CfiLaunchItem:
+        from app.domain.cfi_models import CfiLaunchStatus
+
+        with self._lock:
+            record = self._rows.get(cfi_id)
+            if record is None or record.tenant_id != tenant_id:
+                raise CfiNotFoundError(cfi_id)
+            if record.launch_status is CfiLaunchStatus.STARTED:
+                if record.runtime_invocation_id not in {None, invocation_id}:
+                    raise CfiConcurrencyError(
+                        "CFI launch is already bound to a different invocation."
+                    )
+                return CfiLaunchItem(
+                    cfi_id=record.cfi_id,
+                    tenant_id=record.tenant_id,
+                    source_case_id=record.source_case_id,
+                    batch_id=record.batch_id,
+                    launch_attempts=record.launch_attempts,
+                    launch_status=record.launch_status,
+                )
+            if record.launch_status is not CfiLaunchStatus.LAUNCHING:
+                raise CfiConcurrencyError(
+                    f"CFI {cfi_id!r} is not in a launchable claimed state."
+                )
+            updated = record.model_copy(
+                deep=True,
+                update={
+                    "launch_status": CfiLaunchStatus.STARTED,
+                    "launch_lease_until": None,
+                    "launch_error": None,
+                    "runtime_invocation_id": invocation_id,
+                },
+            )
+            self._rows[cfi_id] = updated
+            return CfiLaunchItem(
+                cfi_id=updated.cfi_id,
+                tenant_id=updated.tenant_id,
+                source_case_id=updated.source_case_id,
+                batch_id=updated.batch_id,
+                launch_attempts=updated.launch_attempts,
+                launch_status=updated.launch_status,
+            )
+
+    def mark_launch_failed(
+        self, *, tenant_id: str, cfi_id: str, error: str
+    ) -> CfiLaunchItem:
+        from app.domain.cfi_models import CfiLaunchStatus
+
+        with self._lock:
+            record = self._rows.get(cfi_id)
+            if record is None or record.tenant_id != tenant_id:
+                raise CfiNotFoundError(cfi_id)
+            if record.launch_status is CfiLaunchStatus.STARTED:
+                return CfiLaunchItem(
+                    cfi_id=record.cfi_id,
+                    tenant_id=record.tenant_id,
+                    source_case_id=record.source_case_id,
+                    batch_id=record.batch_id,
+                    launch_attempts=record.launch_attempts,
+                    launch_status=record.launch_status,
+                )
+            updated = record.model_copy(
+                deep=True,
+                update={
+                    "launch_status": CfiLaunchStatus.FAILED,
+                    "launch_lease_until": None,
+                    "launch_error": error[:2000],
+                },
+            )
+            self._rows[cfi_id] = updated
+            return CfiLaunchItem(
+                cfi_id=updated.cfi_id,
+                tenant_id=updated.tenant_id,
+                source_case_id=updated.source_case_id,
+                batch_id=updated.batch_id,
+                launch_attempts=updated.launch_attempts,
+                launch_status=updated.launch_status,
+            )
+
     def reset(self) -> None:
         with self._lock:
             self._rows.clear()
 
 
+CFI_INMEMORY_ENV = "COUNTERSIGN_CFI_INMEMORY"
+
+
 @functools.cache
 def get_cfi_store() -> CfiStore:
+    """Select durable Cloud SQL by default; allow memory only explicitly.
+
+    Production must set ``INSTANCE_CONNECTION_NAME`` so a process restart
+    cannot discard investigation state. The in-memory implementation is
+    available only when ``COUNTERSIGN_CFI_INMEMORY=1`` is explicitly set for
+    a local test or an intentionally disposable local graph run.
+    """
     from app.app_utils.cloud_sql import instance_connection_name
 
     if instance_connection_name():
         from app.domain.cfi_store_postgres import PostgresCfiStore
 
         return PostgresCfiStore()
-    return InMemoryCfiStore()
+    if os.environ.get(CFI_INMEMORY_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return InMemoryCfiStore()
+    raise RuntimeError(
+        "CFI durable store is not configured: set INSTANCE_CONNECTION_NAME "
+        "for Cloud SQL, or set COUNTERSIGN_CFI_INMEMORY=1 explicitly for "
+        "local tests/disposable runs."
+    )
 
 
 def reset_cfi_store_cache() -> None:

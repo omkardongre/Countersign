@@ -29,6 +29,7 @@ The table has two concurrency protections:
 
 from __future__ import annotations
 
+import datetime
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -36,6 +37,7 @@ from contextlib import contextmanager
 import pg8000.exceptions
 
 from app.app_utils.cloud_sql import connect_pg8000
+from app.domain.cfi_launch_models import CfiLaunchItem
 from app.domain.cfi_models import CfiInvestigation
 from app.domain.cfi_store import CfiConcurrencyError, CfiNotFoundError
 
@@ -264,6 +266,241 @@ class PostgresCfiStore:
             CfiInvestigation.model_validate(_decode_payload(raw[0]))
             for raw in rows
         ]
+
+    def count_for_tenant(self, *, tenant_id: str, exclude_cfi_id: str) -> int:
+        """Count this tenant's other CFI rows for recurrence evidence."""
+        with _connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM cfi_investigation
+                WHERE tenant_id = %s AND cfi_id <> %s
+                """,
+                (tenant_id, exclude_cfi_id),
+            )
+            (count,) = cursor.fetchone()
+        return int(count)
+
+    def claim_pending_starts(
+        self,
+        *,
+        now: datetime.datetime,
+        lease_seconds: int,
+        limit: int,
+        max_attempts: int,
+    ) -> list[CfiLaunchItem]:
+        from datetime import timedelta
+
+        from app.domain.cfi_models import CfiLaunchStatus
+
+        lease_until = now + timedelta(seconds=lease_seconds)
+        claimed: list[CfiLaunchItem] = []
+        with _connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT cfi_id, payload
+                FROM cfi_investigation
+                WHERE outcome IS NULL
+                  AND (
+                    COALESCE(payload->>'launch_status', 'started') IN ('pending', 'failed')
+                    OR (
+                      COALESCE(payload->>'launch_status', 'started') = 'launching'
+                      AND (payload->>'launch_lease_until') IS NOT NULL
+                      AND (payload->>'launch_lease_until')::timestamptz <= %s
+                    )
+                  )
+                  AND COALESCE((payload->>'launch_attempts')::integer, 0) < %s
+                ORDER BY updated_at, cfi_id
+                FOR UPDATE SKIP LOCKED
+                LIMIT %s
+                """,
+                (now, max_attempts, limit),
+            )
+            rows = cursor.fetchall()
+            for cfi_id, raw_payload in rows:
+                record = CfiInvestigation.model_validate(_decode_payload(raw_payload))
+                if record.launch_status not in {
+                    CfiLaunchStatus.PENDING,
+                    CfiLaunchStatus.FAILED,
+                    CfiLaunchStatus.LAUNCHING,
+                }:
+                    continue
+                updated = record.model_copy(
+                    update={
+                        "launch_status": CfiLaunchStatus.LAUNCHING,
+                        "launch_attempts": record.launch_attempts + 1,
+                        "launch_lease_until": lease_until,
+                        "launch_error": None,
+                    }
+                )
+                cursor.execute(
+                    """
+                    UPDATE cfi_investigation
+                    SET revision = revision + 1,
+                        payload = jsonb_set(
+                            %s::jsonb,
+                            '{revision}',
+                            to_jsonb(revision + 1),
+                            true
+                        ),
+                        updated_at = now()
+                    WHERE cfi_id = %s
+                    RETURNING payload
+                    """,
+                    (json.dumps(updated.model_dump(mode="json")), cfi_id),
+                )
+                saved = cursor.fetchone()
+                if saved is None:
+                    continue
+                saved_record = CfiInvestigation.model_validate(
+                    _decode_payload(saved[0])
+                )
+                claimed.append(
+                    CfiLaunchItem(
+                        cfi_id=saved_record.cfi_id,
+                        tenant_id=saved_record.tenant_id,
+                        source_case_id=saved_record.source_case_id,
+                        batch_id=saved_record.batch_id,
+                        launch_attempts=saved_record.launch_attempts,
+                        launch_status=saved_record.launch_status,
+                    )
+                )
+        return claimed
+
+    def mark_launch_started(
+        self, *, tenant_id: str, cfi_id: str, invocation_id: str
+    ) -> CfiLaunchItem:
+        from app.domain.cfi_models import CfiLaunchStatus
+
+        with _connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT payload FROM cfi_investigation WHERE cfi_id = %s FOR UPDATE",
+                (cfi_id,),
+            )
+            raw = cursor.fetchone()
+            if raw is None:
+                raise CfiNotFoundError(cfi_id)
+            record = CfiInvestigation.model_validate(_decode_payload(raw[0]))
+            if record.tenant_id != tenant_id:
+                raise CfiConcurrencyError("CFI launch tenant does not match.")
+            if record.launch_status is CfiLaunchStatus.STARTED:
+                if record.runtime_invocation_id not in {None, invocation_id}:
+                    raise CfiConcurrencyError(
+                        "CFI launch is already bound to a different invocation."
+                    )
+                return CfiLaunchItem(
+                    cfi_id=record.cfi_id,
+                    tenant_id=record.tenant_id,
+                    source_case_id=record.source_case_id,
+                    batch_id=record.batch_id,
+                    launch_attempts=record.launch_attempts,
+                    launch_status=record.launch_status,
+                )
+            if record.launch_status is not CfiLaunchStatus.LAUNCHING:
+                raise CfiConcurrencyError(
+                    f"CFI {cfi_id!r} is not in a launchable claimed state."
+                )
+            updated = record.model_copy(
+                update={
+                    "launch_status": CfiLaunchStatus.STARTED,
+                    "launch_lease_until": None,
+                    "launch_error": None,
+                    "runtime_invocation_id": invocation_id,
+                }
+            )
+            cursor.execute(
+                """
+                UPDATE cfi_investigation
+                SET revision = revision + 1,
+                    payload = jsonb_set(
+                        %s::jsonb,
+                        '{revision}',
+                        to_jsonb(revision + 1),
+                        true
+                    ),
+                    updated_at = now()
+                WHERE cfi_id = %s
+                RETURNING payload
+                """,
+                (json.dumps(updated.model_dump(mode="json")), cfi_id),
+            )
+            saved = cursor.fetchone()
+        if saved is None:
+            raise CfiConcurrencyError(f"CFI launch update failed for {cfi_id!r}.")
+        saved_record = CfiInvestigation.model_validate(_decode_payload(saved[0]))
+        return CfiLaunchItem(
+            cfi_id=saved_record.cfi_id,
+            tenant_id=saved_record.tenant_id,
+            source_case_id=saved_record.source_case_id,
+            batch_id=saved_record.batch_id,
+            launch_attempts=saved_record.launch_attempts,
+            launch_status=saved_record.launch_status,
+        )
+
+    def mark_launch_failed(
+        self, *, tenant_id: str, cfi_id: str, error: str
+    ) -> CfiLaunchItem:
+        from app.domain.cfi_models import CfiLaunchStatus
+
+        with _connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT payload FROM cfi_investigation WHERE cfi_id = %s FOR UPDATE",
+                (cfi_id,),
+            )
+            raw = cursor.fetchone()
+            if raw is None:
+                raise CfiNotFoundError(cfi_id)
+            record = CfiInvestigation.model_validate(_decode_payload(raw[0]))
+            if record.tenant_id != tenant_id:
+                raise CfiConcurrencyError("CFI launch tenant does not match.")
+            if record.launch_status is CfiLaunchStatus.STARTED:
+                return CfiLaunchItem(
+                    cfi_id=record.cfi_id,
+                    tenant_id=record.tenant_id,
+                    source_case_id=record.source_case_id,
+                    batch_id=record.batch_id,
+                    launch_attempts=record.launch_attempts,
+                    launch_status=record.launch_status,
+                )
+            updated = record.model_copy(
+                update={
+                    "launch_status": CfiLaunchStatus.FAILED,
+                    "launch_lease_until": None,
+                    "launch_error": error[:2000],
+                }
+            )
+            cursor.execute(
+                """
+                UPDATE cfi_investigation
+                SET revision = revision + 1,
+                    payload = jsonb_set(
+                        %s::jsonb,
+                        '{revision}',
+                        to_jsonb(revision + 1),
+                        true
+                    ),
+                    updated_at = now()
+                WHERE cfi_id = %s
+                RETURNING payload
+                """,
+                (json.dumps(updated.model_dump(mode="json")), cfi_id),
+            )
+            saved = cursor.fetchone()
+        if saved is None:
+            raise CfiConcurrencyError(f"CFI launch update failed for {cfi_id!r}.")
+        saved_record = CfiInvestigation.model_validate(_decode_payload(saved[0]))
+        return CfiLaunchItem(
+            cfi_id=saved_record.cfi_id,
+            tenant_id=saved_record.tenant_id,
+            source_case_id=saved_record.source_case_id,
+            batch_id=saved_record.batch_id,
+            launch_attempts=saved_record.launch_attempts,
+            launch_status=saved_record.launch_status,
+        )
 
     def reset(self) -> None:
         with _connect() as conn:
