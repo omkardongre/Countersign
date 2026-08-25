@@ -107,6 +107,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
 !.env.example
 .venv
 .venv*
@@ -213,12 +214,17 @@ tools/a2a-inspector/
 
 # Credentials and private keys
 *.pem
+*.key
+*.p12
+*.pfx
 *-key.json
+client_secret*.json
 credentials*.json
 application_default_credentials.json
 **/application_default_credentials.json
 service-account*.json
 *service_account*.json
+.secrets/
 
 # Gateway TLS inspection dumps (not for git)
 infra/geap/evidence/tqa-gateway.json
