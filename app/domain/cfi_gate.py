@@ -131,6 +131,15 @@ def evaluate_cfi_closure(
           refuted or explicitly undetermined without exhausting the
           budget, the SOP's own legitimate "cause not apparent" outcome.
     """
+    if investigation.outcome is not None and investigation.closed_at is not None:
+        # Closure is idempotent. This node is rerun_on_resume, and the
+        # post-closure Calendar/report nodes derive the site-review window
+        # from closed_at while keying the Calendar event on cfi_id alone. A
+        # second stamp would move the window under a stable event id, so a
+        # retry would be rejected as "reused with a different start" and the
+        # already-closed CFI would never get its artifacts.
+        return investigation
+
     if any(
         hypothesis.state is CfiHypothesisState.OPEN
         for hypothesis in investigation.hypotheses

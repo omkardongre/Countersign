@@ -45,6 +45,7 @@ from app.domain.cfi_interview_models import (
     CfiReplyClassification,
 )
 from app.domain.cfi_models import CfiRoundState
+from app.domain.master_data import load_cfi_budget_spec
 
 CFI_INTERVIEW_INTERRUPT_PREFIX = "cfi_interview"
 
@@ -168,6 +169,9 @@ async def run_interview(ctx: Context, node_input: CfiRoundState):
     and the resulting Chat thread is durably bound to the paused invocation.
     On resume, only a scheduler tick with the same tenant/interview scope is
     accepted; the MCP then reads the exact thread and returns typed evidence.
+    Every ``chat_send_question`` and ``chat_read_replies`` call consumes the
+    current planning round's change-controlled tool-call budget, including
+    repeated scheduler polls while the interview remains unanswered.
     """
     state = _state(node_input)
     if state.active_hypothesis_id is None:
@@ -178,8 +182,57 @@ async def run_interview(ctx: Context, node_input: CfiRoundState):
     resume_inputs = ctx.resume_inputs or {}
     resume_input = resume_inputs.get(interrupt_id)
     mcp = McpCfiInterview()
+    context_state = getattr(ctx, "state", None)
+    if context_state is None:
+        context_state = {}
+    counter_key = f"cfi_interview_tool_calls:{interview_id}"
+    calls_made = int(context_state.get(counter_key, 0))
+    max_calls = load_cfi_budget_spec().max_tool_calls_per_round
+    baseline_calls = state.investigation.budget.tool_calls_in_current_round
+
+    def consume_tool_call() -> None:
+        nonlocal calls_made
+        if baseline_calls + calls_made >= max_calls:
+            raise RuntimeError(
+                "CFI interview tool-call budget is exhausted for this round."
+            )
+        calls_made += 1
+        context_state[counter_key] = calls_made
+
+    def budget_exhausted_result() -> CfiInterviewResult:
+        return CfiInterviewResult(
+            interview_id=interview_id,
+            status=CfiInterviewStatus.INTERVIEW_UNANSWERED,
+            answered=False,
+            summary=(
+                "The CFI interview tool-call budget was exhausted before an "
+                "accepted human answer was captured."
+            ),
+            source_uri=f"google-chat-interview://{interview_id}",
+        )
+
+    def output_state(result: CfiInterviewResult) -> CfiRoundState:
+        context_state.pop(counter_key, None)
+        budget = state.investigation.budget.model_copy(
+            update={
+                "tool_calls_in_current_round": baseline_calls + calls_made,
+            }
+        )
+        return state.model_copy(
+            update={
+                "investigation": state.investigation.model_copy(
+                    update={"budget": budget}
+                ),
+                "pending_interview_result": result,
+            }
+        )
 
     if not resume_input:
+        try:
+            consume_tool_call()
+        except RuntimeError:
+            yield Event(output=output_state(budget_exhausted_result()).model_dump(mode="json"))
+            return
         raw = await ctx.run_node(
             get_interview_agent(),
             node_input=build_interview_content(
@@ -221,31 +274,49 @@ async def run_interview(ctx: Context, node_input: CfiRoundState):
     ):
         raise ValueError("CFI interview tick scope does not match the paused CFI.")
 
+    try:
+        consume_tool_call()
+    except RuntimeError:
+        yield Event(output=output_state(budget_exhausted_result()).model_dump(mode="json"))
+        return
     record = await mcp.read_replies_async(
         tenant_id=state.investigation.tenant_id,
         interview_id=interview_id,
         finalize=False,
     )
     if record.status is CfiInterviewStatus.REPLY_CAPTURED:
-        record = await mcp.read_replies_async(
-            tenant_id=state.investigation.tenant_id,
-            interview_id=interview_id,
-            finalize=True,
-        )
+        try:
+            consume_tool_call()
+        except RuntimeError:
+            # The captured reply is already typed by the MCP. It can be
+            # consumed without a second finalize read when the round cap has
+            # been reached.
+            pass
+        else:
+            record = await mcp.read_replies_async(
+                tenant_id=state.investigation.tenant_id,
+                interview_id=interview_id,
+                finalize=True,
+            )
     if record.status not in {
         CfiInterviewStatus.COMPLETED,
         CfiInterviewStatus.INTERVIEW_UNANSWERED,
+        CfiInterviewStatus.REPLY_CAPTURED,
     }:
-        # A scheduler tick is allowed to be duplicated or arrive before a
-        # valid answer. Re-check and park at the same durable checkpoint.
-        yield _request_input(record, interrupt_id=interrupt_id)
+        if baseline_calls + calls_made >= max_calls:
+            yield Event(
+                output=output_state(budget_exhausted_result()).model_dump(mode="json")
+            )
+        else:
+            # A scheduler tick is allowed to be duplicated or arrive before a
+            # valid answer. Re-check and park at the same durable checkpoint.
+            yield _request_input(record, interrupt_id=interrupt_id)
         return
 
-    result = _result(record)
-    yield Event(
-        output=state.model_copy(
-            update={
-                "pending_interview_result": result,
-            }
-        ).model_dump(mode="json")
+    result = (
+        budget_exhausted_result()
+        if record.status is CfiInterviewStatus.INTERVIEW_UNANSWERED
+        and not record.outcome_summary
+        else _result(record)
     )
+    yield Event(output=output_state(result).model_dump(mode="json"))

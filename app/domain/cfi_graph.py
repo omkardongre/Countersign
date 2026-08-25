@@ -19,7 +19,8 @@ deployed as its own Agent Runtime — never a branch of ``case_graph.py``
     START -> load_cfi
           -> cfi_plan_round          AGENT: choose the next enquiry   ◀─┐
           -> dispatch_enquiry        deterministic: validate the plan │
-          -> scope_expansion_agent   AGENT: sibling-batch tool call   │
+          -> (scope_expansion_agent | interview_agent |               │
+              trend_correlation_agent)   AGENT: one enquiry tool call │
           -> record_evidence         deterministic: capture, persist │
           -> settle_hypotheses_node  deterministic: confirm/refute    │
           -> cfi_continue_gate_node  deterministic: budget + settle ──┘ back-edge
@@ -54,6 +55,7 @@ from google.adk.agents.context import Context
 from google.adk.events.event import Event
 from google.adk.workflow import DEFAULT_ROUTE, START, Workflow, node
 
+from app.domain.cfi_calendar_mcp import McpCfiCalendar
 from app.domain.cfi_gate import cfi_continue_gate, evaluate_cfi_closure
 from app.domain.cfi_interview import run_interview
 from app.domain.cfi_lead import build_cfi_lead_content, get_cfi_lead_agent
@@ -69,6 +71,7 @@ from app.domain.cfi_models import (
     CfiInvestigation,
     CfiRoundState,
 )
+from app.domain.cfi_report_agent import file_cfi_report
 from app.domain.cfi_scope import (
     build_scope_expansion_content,
     get_scope_expansion_agent,
@@ -77,6 +80,13 @@ from app.domain.cfi_scope import (
     make_sibling_batch_tool as _make_sibling_batch_tool,
 )
 from app.domain.cfi_store_mcp import McpCfiStore
+from app.domain.cfi_trend import (
+    build_trend_correlation_content,
+    get_trend_correlation_agent,
+)
+from app.domain.cfi_trend import (
+    make_trend_query_tool as _make_trend_query_tool,
+)
 from app.domain.master_data import load_cfi_budget_spec
 
 CFI_WORKFLOW_NAME = "cfi_investigation"
@@ -88,6 +98,7 @@ CFI_WORKFLOW_VERSION = "cfi_investigation.1"
 # routing semantics without a deliberate edit here too.
 _ROUTE_SCOPE_EXPANSION = "scope_expansion"
 _ROUTE_INTERVIEW = "interview"
+_ROUTE_TREND_CORRELATION = "trend_correlation"
 _ROUTE_SKIP_TO_SETTLEMENT = "skip"
 
 
@@ -166,6 +177,7 @@ async def cfi_plan_round(ctx: Context, node_input: CfiRoundState) -> Event:
     if plan.kind not in {
         CfiEnquiryKind.SCOPE_EXPANSION,
         CfiEnquiryKind.INTERVIEW,
+        CfiEnquiryKind.TREND_CORRELATION,
     }:
         rationale = (
             f"Lead agent proposed unsupported enquiry kind {plan.kind.value!r} "
@@ -230,6 +242,8 @@ async def dispatch_enquiry(ctx: Context, node_input: CfiRoundState) -> Event:
         ctx.route = _ROUTE_SKIP_TO_SETTLEMENT
     elif state.enquiry_kind is CfiEnquiryKind.INTERVIEW:
         ctx.route = _ROUTE_INTERVIEW
+    elif state.enquiry_kind is CfiEnquiryKind.TREND_CORRELATION:
+        ctx.route = _ROUTE_TREND_CORRELATION
     else:
         ctx.route = _ROUTE_SCOPE_EXPANSION
     return Event(output=state.model_dump(mode="json"))
@@ -279,6 +293,50 @@ async def run_scope_expansion(ctx: Context, node_input: CfiRoundState) -> Event:
     return Event(output=new_state.model_dump(mode="json"))
 
 
+@node(name="run_trend_correlation", rerun_on_resume=True)
+async def run_trend_correlation(ctx: Context, node_input: CfiRoundState) -> Event:
+    """AGENT: calls ``cfi_trend_query`` for the round's active hypothesis.
+
+    The tenant/batch scope is bound into the tool closure from the CFI's
+    own record, never supplied by the model — same discipline as every
+    other tool closure in this codebase.
+    """
+    state = (
+        node_input
+        if isinstance(node_input, CfiRoundState)
+        else CfiRoundState.model_validate(node_input)
+    )
+    investigation = state.investigation
+    captured: dict = {}
+    trend_query_tool = _make_trend_query_tool(investigation, captured)
+
+    content = build_trend_correlation_content(investigation, rationale=state.rationale)
+    await ctx.run_node(
+        get_trend_correlation_agent(trend_query_tool), node_input=content
+    )
+    pending = captured.get("result")
+    tool_calls_made = captured.get("tool_calls", 0)
+    updated_investigation = investigation.model_copy(
+        update={
+            "budget": investigation.budget.model_copy(
+                update={
+                    "tool_calls_in_current_round": (
+                        investigation.budget.tool_calls_in_current_round
+                        + tool_calls_made
+                    )
+                }
+            )
+        }
+    )
+    new_state = state.model_copy(
+        update={
+            "investigation": updated_investigation,
+            "pending_trend_result": pending,
+        }
+    )
+    return Event(output=new_state.model_dump(mode="json"))
+
+
 @node(name="record_evidence", rerun_on_resume=True)
 async def record_evidence(node_input: CfiRoundState) -> Event:
     """Deterministic: captures the enquiry's tool result as evidence.
@@ -297,6 +355,7 @@ async def record_evidence(node_input: CfiRoundState) -> Event:
     investigation = state.investigation
     interview_result = state.pending_interview_result
     sibling_result = state.pending_sibling_result
+    trend_result = state.pending_trend_result
 
     if interview_result is not None and state.active_hypothesis_id is not None:
         # Human text is evidence only. Unlike the deterministic sibling
@@ -366,12 +425,44 @@ async def record_evidence(node_input: CfiRoundState) -> Event:
         investigation = ledger_settle_hypotheses(
             investigation, claims_by_hypothesis_id=claims, now=_utcnow()
         )
+    elif trend_result is not None and state.active_hypothesis_id is not None:
+        # An association only, same discipline as the sibling-batch path:
+        # a value delta or recurrence count never itself settles a
+        # hypothesis to supported/refuted by name — it becomes cited
+        # evidence for a later round's own lead-agent judgement, unless the
+        # lead agent's plan already targeted this exact hypothesis with a
+        # trend enquiry and the comparison is directly on point (Phase 3
+        # keeps this deliberately conservative: trend correlation records
+        # evidence, it does not itself decide support/refutation, since a
+        # historical value delta needs a human-legible threshold judgement
+        # this deployment has not been given change-controlled master data
+        # for).
+        if trend_result.prior_cfi_count is not None:
+            fact = (
+                f"Tenant {trend_result.tenant_id} has {trend_result.prior_cfi_count} "
+                "other CFI(s) on record (prior-CFI recurrence signal)."
+            )
+        else:
+            fact = (
+                f"{trend_result.parameter_or_test_code} on {trend_result.batch_id} "
+                f"averaged {trend_result.subject_mean}{trend_result.unit or ''}, "
+                f"vs {trend_result.compare_mean}{trend_result.unit or ''} on "
+                f"{trend_result.compare_batch_id} (delta {trend_result.delta})."
+            )
+        investigation, _evidence = ledger_record_evidence(
+            investigation,
+            round_number=state.round_number,
+            source_tool="cfi_trend_query",
+            source_uri=trend_result.source_uri,
+            fact=fact,
+        )
 
     new_state = state.model_copy(
         update={
             "investigation": investigation,
             "pending_interview_result": None,
             "pending_sibling_result": None,
+            "pending_trend_result": None,
         }
     )
     return Event(output=new_state.model_dump(mode="json"))
@@ -440,6 +531,50 @@ async def cfi_closure_node(node_input: CfiRoundState) -> CfiInvestigation:
     return await McpCfiStore().save_async(closed)
 
 
+def _artifact_error(exc: Exception) -> str:
+    detail = str(exc).strip() or exc.__class__.__name__
+    return f"{exc.__class__.__name__}: {detail[:2000]}"
+
+
+@node(name="schedule_site_review", rerun_on_resume=True)
+async def schedule_site_review(
+    node_input: CfiInvestigation,
+) -> CfiInvestigation:
+    """Schedule the server-owned Calendar review after deterministic closure.
+
+    Calendar writes are idempotent by CFI id. A configuration or API failure
+    is written to ``site_review_error`` and remains visible to the desk and
+    report path; it is never converted into a successful-looking omission.
+    """
+    investigation = (
+        node_input
+        if isinstance(node_input, CfiInvestigation)
+        else CfiInvestigation.model_validate(node_input)
+    )
+    if investigation.outcome is None or investigation.closed_at is None:
+        raise ValueError("Site-review scheduling requires a durably closed CFI.")
+    if investigation.site_review is not None:
+        return investigation
+
+    try:
+        reference = await McpCfiCalendar().schedule_async(
+            tenant_id=investigation.tenant_id,
+            cfi_id=investigation.cfi_id,
+            source_case_id=investigation.source_case_id,
+            batch_id=investigation.batch_id,
+            outcome=investigation.outcome.value,
+            closed_at=investigation.closed_at.isoformat(),
+        )
+        updated = investigation.model_copy(
+            update={"site_review": reference, "site_review_error": None}
+        )
+    except Exception as exc:
+        updated = investigation.model_copy(
+            update={"site_review_error": _artifact_error(exc)}
+        )
+    return await McpCfiStore().save_async(updated)
+
+
 def build_cfi_workflow() -> Workflow:
     """Builds the CFI investigation Workflow.
 
@@ -461,11 +596,13 @@ def build_cfi_workflow() -> Workflow:
                 {
                     _ROUTE_SCOPE_EXPANSION: run_scope_expansion,
                     _ROUTE_INTERVIEW: run_interview,
+                    _ROUTE_TREND_CORRELATION: run_trend_correlation,
                     DEFAULT_ROUTE: record_evidence,
                 },
             ),
             (run_scope_expansion, record_evidence),
             (run_interview, record_evidence),
+            (run_trend_correlation, record_evidence),
             (record_evidence, cfi_continue_gate_node),
             (
                 cfi_continue_gate_node,
@@ -474,5 +611,7 @@ def build_cfi_workflow() -> Workflow:
                     "close": cfi_closure_node,
                 },
             ),
+            (cfi_closure_node, schedule_site_review),
+            (schedule_site_review, file_cfi_report),
         ],
     )
