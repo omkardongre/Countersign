@@ -22,7 +22,11 @@ import type {
   CaseQueueItem,
   ClassifiedCase,
 } from "@/lib/types";
-import { AgentRuntimeClient, liveEngineResourceName } from "./engine-client";
+import {
+  AgentRuntimeClient,
+  liveEngineResourceName,
+  type EngineEvent,
+} from "./engine-client";
 import { type PendingInterrupt, projectLiveEvents } from "./projector";
 
 type LiveCaseSession = {
@@ -30,6 +34,8 @@ type LiveCaseSession = {
   userId: string;
   sessionId: string;
   pendingInterrupt: PendingInterrupt | null;
+  /** Events from the separate CFI Runtime, when its poller is configured. */
+  cfiEvents: EngineEvent[];
   record: CaseDeskRecord;
 };
 
@@ -134,6 +140,7 @@ export async function openLiveCase(args: {
     userId,
     sessionId: session.id,
     pendingInterrupt,
+    cfiEvents: [],
     record,
   });
   return record;
@@ -152,10 +159,14 @@ export async function pollLiveCase(caseId: string): Promise<CaseDeskRecord | nul
   const session = await client.getSession(live.userId, live.sessionId);
   if (!session) return live.record;
 
-  const { record, pendingInterrupt } = projectLiveEvents(session.events, {
-    intake: live.record.intake,
-    classified: live.record.classified,
-  });
+  const { record, pendingInterrupt } = projectLiveEvents(
+    session.events,
+    {
+      intake: live.record.intake,
+      classified: live.record.classified,
+    },
+    { cfiEvents: live.cfiEvents },
+  );
   record.origin = "live";
   live.pendingInterrupt = pendingInterrupt;
   live.record = record;
@@ -187,10 +198,44 @@ export async function resumeLiveCase(
     live.pendingInterrupt.functionName,
     response,
   );
-  const { record, pendingInterrupt } = projectLiveEvents(events, {
-    intake: live.record.intake,
-    classified: live.record.classified,
-  });
+  const { record, pendingInterrupt } = projectLiveEvents(
+    events,
+    {
+      intake: live.record.intake,
+      classified: live.record.classified,
+    },
+    { cfiEvents: live.cfiEvents },
+  );
+  record.origin = "live";
+  live.pendingInterrupt = pendingInterrupt;
+  live.record = record;
+  return record;
+}
+
+/**
+ * Reprojects a live case after a separate CFI Runtime poll has returned its
+ * event history. The CFI handoff and Runtime remain separate trust
+ * boundaries; this function only joins already-authenticated event streams
+ * for presentation and never starts or resumes the CFI itself.
+ */
+export async function updateLiveCfiEvents(
+  caseId: string,
+  cfiEvents: EngineEvent[],
+): Promise<CaseDeskRecord | null> {
+  const live = globalLiveStore().sessions.get(caseId);
+  if (!live) return null;
+  const client = new AgentRuntimeClient(live.engineResource);
+  const session = await client.getSession(live.userId, live.sessionId);
+  if (!session) return live.record;
+  live.cfiEvents = cfiEvents;
+  const { record, pendingInterrupt } = projectLiveEvents(
+    session.events,
+    {
+      intake: live.record.intake,
+      classified: live.record.classified,
+    },
+    { cfiEvents: live.cfiEvents },
+  );
   record.origin = "live";
   live.pendingInterrupt = pendingInterrupt;
   live.record = record;

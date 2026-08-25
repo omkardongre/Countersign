@@ -218,6 +218,205 @@ export type SterilityHold = {
   status: "incubating" | "due" | "ticked";
 };
 
+export type CfiTriggerReason =
+  | "gate_failed"
+  | "no_hypotheses"
+  | "low_confidence"
+  | "challenger_insufficient_evidence"
+  | "challenger_alternative_cause"
+  | "recurrence";
+export type CfiHypothesisState = "open" | "supported" | "refuted" | "undetermined";
+export type CfiEnquiryKind = "scope_expansion" | "interview" | "trend_correlation";
+export type CfiOutcome =
+  | "root_cause_identified"
+  | "root_cause_undetermined"
+  | "cfi_abandoned_budget_exhausted";
+export type CfiLaunchStatus = "started" | "pending" | "launching" | "failed";
+export type CfiInterviewStatus =
+  | "created"
+  | "question_send_pending"
+  | "waiting_for_reply"
+  | "polling"
+  | "reply_captured"
+  | "completed"
+  | "interview_unanswered"
+  | "failed";
+export type CfiReplyClassification =
+  | "answer"
+  | "decline"
+  | "stop"
+  | "unreadable"
+  | "out_of_scope";
+export type CfiInterviewMessageKind = "question" | "nudge";
+
+export type CfiBudgetState = {
+  planning_rounds_used: number;
+  tool_calls_in_current_round: number;
+  budget_spec_version: string;
+  budget_spec_sha256: string;
+};
+
+export type CfiCitedClaim = {
+  claim: string;
+  evidence_ids: string[];
+};
+
+export type CfiHypothesis = {
+  hypothesis_id: string;
+  category: RootCauseCategory;
+  statement: string;
+  state: CfiHypothesisState;
+  opened_in_round: number;
+  supporting_claims: CfiCitedClaim[];
+  refuting_claims: CfiCitedClaim[];
+  settled_at: string | null;
+};
+
+export type CfiEvidenceItem = {
+  evidence_id: string;
+  round_number: number;
+  source_tool: string;
+  source_uri: string;
+  fact: string;
+  captured_at: string;
+};
+
+export type CfiSiteReviewReference = {
+  calendar_id: string;
+  event_id: string;
+  event_url: string;
+  start_at: string;
+  end_at: string;
+  attendees: string[];
+  decision_authority: typeof DECISION_AUTHORITY;
+};
+
+export type CfiReportReference = {
+  document_id: string;
+  document_url: string;
+  was_update: boolean;
+  decision_authority: typeof DECISION_AUTHORITY;
+};
+
+export type CfiInterviewQuestion = {
+  question_number: number;
+  kind: CfiInterviewMessageKind;
+  question_text: string;
+  sent_at: string | null;
+  message_name: string | null;
+  thread_name: string | null;
+  space_name: string | null;
+};
+
+export type CfiInterviewReply = {
+  message_name: string;
+  sender_id: string;
+  raw_text: string;
+  received_at: string;
+  classification: CfiReplyClassification;
+  sender_allowed: boolean;
+  question_number: number;
+};
+
+/** Durable interview shape returned by the CFI interview store. */
+export type CfiInterviewRecord = {
+  interview_id: string;
+  revision: number;
+  tenant_id: string;
+  cfi_id: string;
+  hypothesis_id: string;
+  round_number: number;
+  status: CfiInterviewStatus;
+  allowed_responder_ids: string[];
+  space_name: string | null;
+  thread_name: string | null;
+  questions: CfiInterviewQuestion[];
+  replies: CfiInterviewReply[];
+  last_seen_message_name: string | null;
+  last_seen_message_time: string | null;
+  nudge_count: number;
+  max_nudges: number;
+  deadline_at: string;
+  last_nudge_at: string | null;
+  poll_lease_until: string | null;
+  resume_handle: {
+    app_name: string;
+    user_id: string;
+    session_id: string;
+    invocation_id: string;
+    interrupt_id: string;
+  } | null;
+  created_at: string;
+  outcome_summary: string | null;
+  decision_authority: typeof DECISION_AUTHORITY;
+};
+
+/** Reduced interview view used when a live CFI event has only a checkpoint. */
+export type CfiInterviewSummary = {
+  interview_id: string;
+  cfi_id: string;
+  hypothesis_id: string | null;
+  round_number: number | null;
+  status: CfiInterviewStatus;
+  question: string | null;
+  thread_name: string | null;
+  deadline_at: string | null;
+  nudge_count: number;
+  max_nudges: number | null;
+  replies: CfiInterviewReply[];
+  outcome_summary: string | null;
+  decision_authority: typeof DECISION_AUTHORITY;
+};
+
+export type CfiActivity = {
+  activity_id: string;
+  node: string;
+  kind:
+    | "handoff"
+    | "planning"
+    | "dispatch"
+    | "interview"
+    | "evidence"
+    | "closure"
+    | "artifact";
+  at: string | null;
+  detail: string;
+  decision_authority: typeof DECISION_AUTHORITY;
+};
+
+/** Durable CFI aggregate as projected onto the operator desk. */
+export type CfiRecord = {
+  cfi_id: string;
+  revision: number;
+  tenant_id: string;
+  source_case_id: string;
+  batch_id: string;
+  trigger_reasons: CfiTriggerReason[];
+  trigger_spec_version: string;
+  trigger_spec_sha256: string;
+  opened_at: string;
+  hypotheses: CfiHypothesis[];
+  evidence: CfiEvidenceItem[];
+  budget: CfiBudgetState;
+  outcome: CfiOutcome | null;
+  closed_at: string | null;
+  launch_status: CfiLaunchStatus;
+  launch_attempts: number;
+  launch_lease_until: string | null;
+  launch_error: string | null;
+  runtime_invocation_id: string | null;
+  site_review: CfiSiteReviewReference | null;
+  site_review_error: string | null;
+  report: CfiReportReference | null;
+  report_error: string | null;
+  decision_authority: typeof DECISION_AUTHORITY;
+};
+
+export type CfiDeskState = CfiRecord & {
+  interviews: CfiInterviewSummary[];
+  activity: CfiActivity[];
+};
+
 export type CaseDeskRecord = {
   data_class: "labelled_synthetic";
   origin: "fixture" | "intake" | "live";
@@ -236,6 +435,7 @@ export type CaseDeskRecord = {
   release_gate: ReleaseGateResult | null;
   sterility_hold: SterilityHold | null;
   qp_confirmation: QpConfirmationRecord | null;
+  cfi: CfiDeskState | null;
   decision_authority: typeof DECISION_AUTHORITY;
 };
 

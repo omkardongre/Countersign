@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CasePanels } from "@/components/case-panels";
+import { CfiPanel } from "@/components/cfi-panel";
 import { LivePoller } from "@/components/live-poller";
 import { Pipeline } from "@/components/pipeline";
 import { QpPanel } from "@/components/qp-panel";
@@ -52,6 +53,7 @@ export default async function CasePage({
       )}
       <Pipeline stage={record.desk_stage} lifecycle={classified.lifecycle_state} />
       <div className="mt-5 space-y-4">
+        <CfiPanel record={record} />
         <QpPanel record={record} />
         <CasePanels record={record} />
       </div>

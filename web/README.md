@@ -72,6 +72,20 @@ to create these credentials and what to update before deploying past
 | Waiting | **Polling, never a held stream.** A single streaming response is capped at 15 minutes and the sterility hold runs for days, so `GET /api/cases/[caseId]` re-reads the Runtime session and re-projects it. `components/live-poller.tsx` polls every 4s and stops after 15 minutes |
 | Resume | `POST /api/cases/[caseId]/confirm` replies to the pending `adk_request_input` function call; `invocation_id` is resolved by the Runner from the matching call in session history |
 
+## CFI desk panel
+
+The case desk includes a labelled CFI panel when a `CfiDeskState` is present. It renders the
+hypothesis ledger, captured evidence and source tools, untrusted interview status/replies, consumed
+budget counters, deterministic activity events, and Calendar/Drive artifact references or typed
+filing errors. `lib/live/projector.ts` understands the separate CFI graph node names and can merge a
+separately authenticated CFI event history into the same record; `lib/live/live-store.ts` keeps that
+history separate from the case Runtime session and never starts or resumes the CFI Runtime.
+
+The local `AX-2402` fixture demonstrates the complete labelled-synthetic panel. The production CFI
+Runtime handoff remains scheduler-owned. Calendar and Drive configuration is manual and the Phase 3
+artifact flow is not claimed live until the department MCP is deployed with its tenant maps and the
+operator runs the live verifier.
+
 ## Known limits in this slice
 
 - **A fresh live case parks at the sterility hold**, which comes before the

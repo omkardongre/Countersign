@@ -73,6 +73,10 @@ export function LivePoller({
           findings: body.findings?.length ?? 0,
           draft: Boolean(body.draft),
           qp: body.qp_confirmation?.outcome ?? null,
+          cfi_revision: body.cfi?.revision ?? null,
+          cfi_outcome: body.cfi?.outcome ?? null,
+          cfi_site_review: Boolean(body.cfi?.site_review),
+          cfi_report: Boolean(body.cfi?.report),
         });
         if (signatureRef.current !== signature) {
           router.refresh();

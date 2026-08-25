@@ -86,6 +86,7 @@ export function emptyDeskRecord(
     release_gate: null,
     sterility_hold: null,
     qp_confirmation: null,
+    cfi: null,
     decision_authority: "none",
   };
 }
