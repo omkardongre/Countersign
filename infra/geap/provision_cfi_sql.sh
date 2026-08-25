@@ -38,5 +38,5 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 (cd "${REPO_ROOT}" && uv run python "${SCRIPT_DIR}/bootstrap_cfi_sql.py")
 
 echo
-echo "CFI Cloud SQL is provisioned: ${CFI_DB_NAME}.cfi_investigation"
+echo "CFI Cloud SQL is provisioned: ${CFI_DB_NAME}.cfi_investigation and ${CFI_DB_NAME}.cfi_interview"
 echo "Runtime access remains MCP-only; the MCP identity has no CFI DELETE or DDL grant."

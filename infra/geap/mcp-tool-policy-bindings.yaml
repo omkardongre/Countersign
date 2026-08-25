@@ -44,6 +44,19 @@ bindings:
       - cfi_open
       - cfi_get
       - cfi_save
+      - chat_send_question
+      - chat_read_replies
+  # cfi_interview_tick has no Gateway ALLOW binding at all. Cloud Scheduler
+  # calls it as a direct authenticated Cloud Run caller (never through this
+  # Agent Gateway), so the actual enforcement point is the caller-identity
+  # check in department_server.py::_require_cfi_tick_caller, scoped by
+  # COUNTERSIGN_CFI_TICK_CALLER_SERVICE_ACCOUNTS to the scheduler tick
+  # service's own invoker service account. Documented here as a checklist
+  # entry, not a policy file, since there is no Gateway resource to bind.
+  - policy: "(none — Cloud Run caller-identity check, not a Gateway policy)"
+    identity: scheduler_tick_service
+    tools:
+      - cfi_interview_tick
 forbidden_bindings:
   - policy: mcp-qc-probe-lims-only.yaml
     identity: case_workflow
@@ -85,3 +98,9 @@ forbidden_bindings:
     identity: sponsor_liaison
   - policy: mcp-cfi-workflow-tools-allow.yaml
     identity: hello_runtime
+  # The CFI Runtime's own Gateway ALLOW must never include the scheduler
+  # control-plane tool; enforced twice — absent from
+  # mcp-cfi-workflow-tools-allow.yaml above, and independently by
+  # department_server.py's caller-identity check regardless of Gateway state.
+  - policy: mcp-cfi-workflow-tools-allow.yaml
+    identity: scheduler_tick_service

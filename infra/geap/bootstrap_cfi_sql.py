@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Provision the durable CFI aggregate table with least privilege.
+"""Provision the durable CFI aggregate and interview tables with least privilege.
 
 The department MCP service is the only process that opens this connection at
-runtime. The CFI Agent Runtime reaches the table through cfi_open/cfi_get/
-cfi_save over MCP and never receives a Cloud SQL credential.
+runtime. The CFI Agent Runtime reaches cfi_investigation through
+cfi_open/cfi_get/cfi_save over MCP, and cfi_interview through
+chat_send_question/chat_read_replies/cfi_interview_tick — it never receives a
+Cloud SQL credential itself.
 """
 
 from __future__ import annotations
@@ -70,6 +72,48 @@ GRANT USAGE ON SCHEMA public TO "{quoted_user}";
 GRANT SELECT, INSERT, UPDATE ON cfi_investigation TO "{quoted_user}";
 """
 
+    # cfi_interview mirrors cfi_investigation's grant shape exactly: the MCP
+    # store (cfi_interview_store_postgres.py) does insert-or-read opens and
+    # optimistic-concurrency saves, and claim_waiting()/release_poll() need
+    # SELECT ... FOR UPDATE plus UPDATE on the same table. No DELETE or DDL
+    # grant, matching the tick service's own least-privilege pattern.
+    interview_ddl = f"""
+CREATE TABLE IF NOT EXISTS cfi_interview (
+    interview_id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    cfi_id TEXT NOT NULL,
+    hypothesis_id TEXT NOT NULL,
+    round_number INTEGER NOT NULL CHECK (round_number >= 1),
+    status TEXT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 0,
+    payload JSONB NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT cfi_interview_tenant_cfi_hyp_round_key
+        UNIQUE (tenant_id, cfi_id, hypothesis_id, round_number)
+);
+-- Migrate the first Phase 2 schema, which kept round_number only in payload
+-- and keyed uniqueness at (tenant, CFI, hypothesis). Existing rows are
+-- backfilled from their immutable JSON payload before the NOT NULL constraint
+-- and round-aware unique key are installed.
+ALTER TABLE cfi_interview ADD COLUMN IF NOT EXISTS round_number INTEGER;
+UPDATE cfi_interview
+SET round_number = (payload->>'round_number')::integer
+WHERE round_number IS NULL;
+ALTER TABLE cfi_interview ALTER COLUMN round_number SET NOT NULL;
+ALTER TABLE cfi_interview DROP CONSTRAINT IF EXISTS cfi_interview_round_number_check;
+ALTER TABLE cfi_interview
+    ADD CONSTRAINT cfi_interview_round_number_check CHECK (round_number >= 1);
+ALTER TABLE cfi_interview DROP CONSTRAINT IF EXISTS cfi_interview_tenant_cfi_hyp_key;
+ALTER TABLE cfi_interview
+    DROP CONSTRAINT IF EXISTS cfi_interview_tenant_cfi_hyp_round_key;
+ALTER TABLE cfi_interview
+    ADD CONSTRAINT cfi_interview_tenant_cfi_hyp_round_key
+    UNIQUE (tenant_id, cfi_id, hypothesis_id, round_number);
+CREATE INDEX IF NOT EXISTS cfi_interview_status_idx
+    ON cfi_interview (status);
+GRANT SELECT, INSERT, UPDATE ON cfi_interview TO "{quoted_user}";
+"""
+
     connector = Connector()
     conn = connector.connect(
         INSTANCE,
@@ -81,7 +125,7 @@ GRANT SELECT, INSERT, UPDATE ON cfi_investigation TO "{quoted_user}";
     )
     try:
         cursor = conn.cursor()
-        for statement in ddl.split(";"):
+        for statement in (ddl + interview_ddl).split(";"):
             body = statement.strip()
             if body:
                 cursor.execute(body)
@@ -91,8 +135,8 @@ GRANT SELECT, INSERT, UPDATE ON cfi_investigation TO "{quoted_user}";
         connector.close()
 
     print(
-        f"Ensured {DB_NAME}.cfi_investigation on {INSTANCE}; granted "
-        f"SELECT/INSERT/UPDATE only to {IAM_USER}."
+        f"Ensured {DB_NAME}.cfi_investigation and {DB_NAME}.cfi_interview on "
+        f"{INSTANCE}; granted SELECT/INSERT/UPDATE only to {IAM_USER}."
     )
     return 0
 

@@ -12,6 +12,22 @@
 #
 # MATCH_BASE_PROTOCOL_METHODS is required or initialize/ping are denied and
 # no MCP session can be established.
+#
+# chat_send_question and chat_read_replies (Phase 2) are the CFI interview
+# tools: send one tenant-bound question/nudge to the server-configured Chat
+# space, and read new thread messages as untrusted evidence. The CFI
+# identity cannot choose the Chat space or responder allow-list — those are
+# server-side config (COUNTERSIGN_CFI_CHAT_SPACE_MAP_JSON /
+# COUNTERSIGN_CFI_CHAT_RESPONDER_MAP_JSON) — so this ALLOW only widens which
+# tenant-bound interview it may act on, never which humans it may reach.
+#
+# cfi_interview_tick is deliberately NOT included here. It is the scheduler
+# control-plane operation (claim/poll/nudge across tenants, resume metadata
+# only) and must never be reachable by the CFI Workflow identity itself —
+# see mcp-scheduler-cfi-tick-only.yaml and the in-process caller-identity
+# check in department_server.py::_require_cfi_tick_caller, which is the
+# actual enforcement point since the scheduler calls this Cloud Run service
+# directly and never crosses this Gateway.
 name: countersign-mcp-cfi-workflow-tools
 target:
   resources:
@@ -39,3 +55,9 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "cfi_save"
+              - name: "tools/call"
+                params:
+                  - exact: "chat_send_question"
+              - name: "tools/call"
+                params:
+                  - exact: "chat_read_replies"
