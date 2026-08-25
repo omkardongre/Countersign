@@ -26,7 +26,7 @@ SPONSOR_AGENT_NAME = "sponsor_liaison_agent"
 SPONSOR_SKILL = "sponsor_batch_status"
 MCP_SERVICE = "countersign-department-mcp-tools"
 DEFAULT_MCP_URL = "https://countersign-department-mcp-sm343mxwxq-uc.a.run.app/mcp"
-EXPECTED_FLEET_SIZE = 9
+EXPECTED_FLEET_SIZE = 14
 
 
 def _gcloud(*args: str) -> Any:

@@ -46,6 +46,9 @@ bindings:
       - cfi_save
       - chat_send_question
       - chat_read_replies
+      - cfi_trend_query
+      - cfi_calendar_site_review
+      - cfi_report_write
   # cfi_interview_tick has no Gateway ALLOW binding at all. Cloud Scheduler
   # calls it as a direct authenticated Cloud Run caller (never through this
   # Agent Gateway), so the actual enforcement point is the caller-identity

@@ -4,7 +4,10 @@
 # CFI state lives in the existing adk_sessions database on the sessions
 # instance, alongside sterility_incubation and case_status. The CFI table is
 # separate, and the department MCP service account receives only the
-# SELECT/INSERT/UPDATE rights needed by cfi_get/cfi_open/cfi_save.
+# SELECT/INSERT/UPDATE rights needed by cfi_get/cfi_open/cfi_save and the
+# post-closure artifact error/reference updates. Artifact references and
+# typed external-write errors are JSON payload fields, so no extra table or
+# broad grant is needed.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

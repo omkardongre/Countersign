@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded live proof for the CFI Phase 1 Runtime and MCP boundary.
+"""Bounded live proof for the CFI Phase 3 Runtime and MCP boundary.
 
 This is an operator probe, not a test suite. It creates one explicitly named
 live-probe CFI row (retained for audit because production MCP access has no
@@ -9,11 +9,12 @@ reads the durable result through the private department MCP.
 The verifier fails closed unless all of these are true:
 * the CFI Runtime has an org-scoped Agent Identity and the configured Gateway;
 * the CFI Runtime is present in Agent Registry;
-* the CFI Gateway policy exposes only Phase 1 CFI tools;
+* the CFI Gateway policy exposes exactly the Phase 3 CFI tools;
 * the department MCP is explicitly on the Cloud SQL sibling backend;
 * sibling scope expansion returns same-tenant Cloud SQL rows;
 * a cross-tenant sibling request is rejected;
-* the Runtime completes and persists evidence/outcome through MCP.
+* the Runtime completes and persists evidence/outcome through MCP;
+* Calendar site review and the deterministic CFI report are filed successfully.
 """
 
 from __future__ import annotations
@@ -164,7 +165,17 @@ def _verify_runtime_and_registry(resource: str) -> dict[str, Any]:
                     for param in params
                     if isinstance(param, dict) and "exact" in param
                 )
-    expected_tools = {"sibling_batch_query", "cfi_open", "cfi_get", "cfi_save"}
+    expected_tools = {
+        "sibling_batch_query",
+        "cfi_open",
+        "cfi_get",
+        "cfi_save",
+        "cfi_trend_query",
+        "chat_send_question",
+        "chat_read_replies",
+        "cfi_calendar_site_review",
+        "cfi_report_write",
+    }
     _require(
         allowed_tools == expected_tools,
         f"CFI policy tools mismatch: {sorted(allowed_tools)}",
@@ -399,6 +410,10 @@ async def _wait_for_durable_close(cfi_id: str, timeout_seconds: int) -> dict[str
                     any(item.source_tool == "sibling_batch_query" for item in last.evidence),
                     "closed CFI has no sibling_batch_query evidence",
                 )
+                _require(last.site_review is not None, "CFI site review was not filed")
+                _require(last.site_review_error is None, "CFI site review has a persisted error")
+                _require(last.report is not None, "CFI report was not filed")
+                _require(last.report_error is None, "CFI report has a persisted error")
                 return {
                     "cfi_id": last.cfi_id,
                     "revision": last.revision,
@@ -406,6 +421,8 @@ async def _wait_for_durable_close(cfi_id: str, timeout_seconds: int) -> dict[str
                     "hypothesis_count": len(last.hypotheses),
                     "evidence_count": len(last.evidence),
                     "evidence_tools": sorted({item.source_tool for item in last.evidence}),
+                    "site_review_event_id": last.site_review.event_id,
+                    "report_document_id": last.report.document_id,
                 }
         await asyncio.sleep(5)
     raise VerificationError(

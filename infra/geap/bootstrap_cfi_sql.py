@@ -5,7 +5,9 @@ The department MCP service is the only process that opens this connection at
 runtime. The CFI Agent Runtime reaches cfi_investigation through
 cfi_open/cfi_get/cfi_save over MCP, and cfi_interview through
 chat_send_question/chat_read_replies/cfi_interview_tick — it never receives a
-Cloud SQL credential itself.
+Cloud SQL credential itself. Calendar/report references and typed filing
+errors are stored in the aggregate JSON payload through the same CAS update;
+no separate artifact table or write authority is introduced.
 """
 
 from __future__ import annotations

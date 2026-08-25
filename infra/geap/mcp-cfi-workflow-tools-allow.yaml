@@ -1,7 +1,7 @@
 # Native MCP tool-name ALLOW for the separate CFI Workflow Agent Identity.
 #
-# Phase 1 is deliberately limited to the durable CFI store and tenant-locked
-# sibling-batch scope expansion. The case Workflow identity is not granted
+# Phase 3 is deliberately limited to the durable CFI store and tenant-locked
+# sibling-batch/trend scope expansion and post-closure artifacts. The case Workflow identity is not granted
 # these tools, and this CFI identity is not granted the case workflow's
 # department, QMS, regulatory, or sponsor tools (see
 # mcp-tool-policy-bindings.yaml).
@@ -61,3 +61,12 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "chat_read_replies"
+              - name: "tools/call"
+                params:
+                  - exact: "cfi_trend_query"
+              - name: "tools/call"
+                params:
+                  - exact: "cfi_calendar_site_review"
+              - name: "tools/call"
+                params:
+                  - exact: "cfi_report_write"

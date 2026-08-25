@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy the separate Phase 1 CFI Workflow to Agent Runtime.
+"""Deploy the separate Phase 3 CFI Workflow to Agent Runtime.
 
 The CFI graph is deliberately not embedded in the proven deviation-case
 Runtime. It is deployed from ``app.cfi_app`` with its own Agent Identity and
@@ -43,12 +43,18 @@ CFI_REQUIREMENTS = [
     "pydantic",
     "google-auth>=2.38.0,<3.0.0",
     "requests>=2.32.0,<3.0.0",
+    # Phase 3: calendar_tools.py / cfi_report_writer.py call the Calendar,
+    # Docs, and Drive APIs directly for the site-review event and filed
+    # CFI report, the same client already required by qms_report_write.
+    "google-api-python-client>=2.190.0,<3.0.0",
+    "google-auth-httplib2>=0.2.0,<1.0.0",
 ]
 
 DESCRIPTION = (
-    "Countersign Phase 1 Cross-Functional Investigation workflow: bounded "
-    "hypothesis planning, tenant-locked sibling scope expansion, and durable "
-    "evidence ledger. No agent holds decision authority."
+    "Countersign Phase 3 Cross-Functional Investigation workflow: bounded "
+    "hypothesis planning, tenant-locked scope/trend evidence, human "
+    "interviews, deterministic three-outcome closure, and retry-safe "
+    "Calendar/Drive artifacts. No agent holds decision authority."
 )
 
 

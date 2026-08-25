@@ -44,6 +44,11 @@ from app.domain.branches import (
     SUPPLY_AGENT_NAME,
 )
 from app.domain.case_memory_store import get_case_memory_store
+from app.domain.cfi_interview_agent import INTERVIEW_AGENT_MODEL, INTERVIEW_AGENT_NAME
+from app.domain.cfi_lead import CFI_LEAD_AGENT_NAME, CFI_LEAD_MODEL
+from app.domain.cfi_report_agent import CFI_REPORTER_AGENT_NAME, CFI_REPORTER_MODEL
+from app.domain.cfi_scope import SCOPE_EXPANSION_AGENT_NAME, SCOPE_EXPANSION_MODEL
+from app.domain.cfi_trend import TREND_CORRELATION_AGENT_NAME, TREND_CORRELATION_MODEL
 from app.domain.challenger import CHALLENGER_AGENT_NAME
 from app.domain.department_source import (
     coa_backend_name,
@@ -231,7 +236,7 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             backing_system="cloud_sql_case_status",
             reasoning_authority=False,
             description=(
-                "Agent 8 of 8: a real A2A peer running as its own, separate "
+                "Separate A2A peer: a real agent running as its own, separate "
                 "Cloud Run service (app/sponsor_liaison/), not a node in "
                 "this graph. Answers a sponsor company's own QA agent one "
                 "scoped question about one of their own batches, "
@@ -274,6 +279,78 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
                 "investigation report and Annex 16 package as a Google "
                 "Doc, it never drafts report content and never alters "
                 "the QP's decision."
+            ),
+        ),
+        FleetAgentEntry(
+            name=CFI_LEAD_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
+            department="cfi_investigation",
+            model=CFI_LEAD_MODEL,
+            allowed_tools=[],
+            reasoning_authority=False,
+            description=(
+                "Real single-turn CFI planning agent. It proposes one next "
+                "line of enquiry or hypothesis, but deterministic dispatch, "
+                "ledger transitions, budget gates, and closure remain outside "
+                "the model."
+            ),
+        ),
+        FleetAgentEntry(
+            name=SCOPE_EXPANSION_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
+            department="cfi_scope_expansion",
+            model=SCOPE_EXPANSION_MODEL,
+            allowed_tools=["sibling_batch_query"],
+            backing_system="cloud_sql_sibling_batches",
+            reasoning_authority=False,
+            description=(
+                "Real CFI scope agent with a tenant/batch-locked sibling "
+                "query closure. Shared batches are captured associations, "
+                "never model-determined causation."
+            ),
+        ),
+        FleetAgentEntry(
+            name=INTERVIEW_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
+            department="cfi_interview",
+            model=INTERVIEW_AGENT_MODEL,
+            allowed_tools=[],
+            backing_system="google_chat",
+            reasoning_authority=False,
+            description=(
+                "Real CFI question-drafting agent. Chat send/read calls are "
+                "performed by the deterministic pause/resume node through "
+                "the department MCP, so human replies remain typed, scoped, "
+                "and untrusted rather than becoming model tools."
+            ),
+        ),
+        FleetAgentEntry(
+            name=TREND_CORRELATION_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
+            department="cfi_trend_correlation",
+            model=TREND_CORRELATION_MODEL,
+            allowed_tools=["cfi_trend_query"],
+            backing_system="cloud_sql_lims+bigquery_em+cfi_cloud_sql",
+            reasoning_authority=False,
+            description=(
+                "Real CFI trend agent with one fixed, tenant-locked historical "
+                "comparison tool. A delta or recurrence count is provenance-"
+                "captured association only and never settles a hypothesis."
+            ),
+        ),
+        FleetAgentEntry(
+            name=CFI_REPORTER_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
+            department="cfi_reporting",
+            model=CFI_REPORTER_MODEL,
+            allowed_tools=["cfi_report_write"],
+            backing_system="google_drive_docs",
+            reasoning_authority=False,
+            description=(
+                "Write-only CFI reporter. Deterministic code prepares the "
+                "title and body; its one tenant/CFI-locked tool files the "
+                "same idempotent document and cannot change investigation "
+                "truth, release status, or QP authority."
             ),
         ),
     ]

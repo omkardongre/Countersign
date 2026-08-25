@@ -49,9 +49,9 @@ gates are code. Sterility incubation is external store state plus a
 marks the store complete and ADK resume continues. QP sign-off is a
 ``RequestInput`` pause on ``confirm_qp`` (``rerun_on_resume=True``).
 After the QP has acted, ``qa_qms_write_agent`` (``qms_report_agent.py``) —
-the 8th fleet member and the only agent permitted to mutate an external
-record — files the investigation report and Annex 16 package as a real
-Google Doc. Nothing in this graph certifies or releases a batch.
+the case-workflow QMS writer and the only agent permitted to mutate an external
+record — files the investigation report and Annex 16 package as a real Google
+Doc. Nothing in this graph certifies or releases a batch.
 """
 
 from __future__ import annotations
