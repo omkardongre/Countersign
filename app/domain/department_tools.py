@@ -30,6 +30,18 @@ import datetime
 import hashlib
 import os
 
+from app.domain.calendar_tools import (
+    CfiCalendarError,
+)
+from app.domain.calendar_tools import (
+    schedule_site_review as persist_site_review,
+)
+from app.domain.cfi_artifact_models import (
+    CfiReportWriteRequest,
+    CfiReportWriteResult,
+    CfiSiteReviewReference,
+    CfiSiteReviewRequest,
+)
 from app.domain.cfi_interview_chat import (
     CfiChatError,
     list_thread_messages,
@@ -56,11 +68,24 @@ from app.domain.cfi_interview_models import (
 )
 from app.domain.cfi_interview_reply import classify_reply, normalize_reply_text
 from app.domain.cfi_interview_store import CfiInterviewConcurrencyError
+from app.domain.cfi_launch_models import (
+    CfiLaunchResult,
+    CfiLaunchTickResult,
+)
 from app.domain.cfi_models import (
     CfiInvestigation,
+    CfiLaunchStatus,
     SiblingBatchCandidate,
     SiblingBatchQueryResult,
 )
+from app.domain.cfi_report import build_cfi_report_body, build_cfi_report_title
+from app.domain.cfi_report_writer import (
+    CfiReportWriteError,
+)
+from app.domain.cfi_report_writer import (
+    write_cfi_report as persist_cfi_report,
+)
+from app.domain.cfi_trend_models import CfiTrendQueryKind, CfiTrendResult
 from app.domain.department_models import (
     CoaSnapshot,
     DriveEvidencePayload,
@@ -81,12 +106,19 @@ __all__ = [
     "CASE_MEMORY_TOOLS",
     "CASE_STATUS_TOOLS",
     "CASE_STATUS_UPSERT",
+    "CFI_ARTIFACT_TOOLS",
+    "CFI_CALENDAR_SITE_REVIEW",
     "CFI_GET",
     "CFI_INTERVIEW_TICK",
     "CFI_INTERVIEW_TOOLS",
+    "CFI_LAUNCH_RESULT",
     "CFI_OPEN",
+    "CFI_REPORT_WRITE",
     "CFI_SAVE",
+    "CFI_SCHEDULER_TOOLS",
+    "CFI_START_TICK",
     "CFI_TOOLS",
+    "CFI_TREND_QUERY",
     "CHAT_READ_REPLIES",
     "CHAT_SEND_QUESTION",
     "COA_FETCH",
@@ -108,6 +140,8 @@ __all__ = [
     "STERILITY_GET",
     "STERILITY_START",
     "STERILITY_TOOLS",
+    "CfiCalendarError",
+    "CfiReportWriteError",
     "CfiTenantMismatch",
     "ControlledGuidanceTenantMismatch",
     "DepartmentRecordMissing",
@@ -115,9 +149,14 @@ __all__ = [
     "QmsReportWriteError",
     "SiblingBatchTenantMismatch",
     "case_status_upsert",
+    "cfi_calendar_site_review",
     "cfi_get",
     "cfi_interview_tick",
+    "cfi_launch_result",
     "cfi_open",
+    "cfi_report_write",
+    "cfi_start_tick",
+    "cfi_trend_query",
     "chat_read_replies",
     "chat_send_question",
     "controlled_guidance_query",
@@ -206,7 +245,18 @@ QMS_WRITE_TOOLS = frozenset({QMS_REPORT_WRITE})
 CFI_GET = "cfi_get"
 CFI_OPEN = "cfi_open"
 CFI_SAVE = "cfi_save"
-CFI_TOOLS = frozenset({CFI_GET, CFI_OPEN, CFI_SAVE})
+
+# CFI Phase 3 trend correlation. Read-only, tenant-locked exactly like
+# sibling_batch_query: the model chooses which of three fixed comparisons to
+# run (EM parameter, LIMS test, or this tenant's own prior-CFI recurrence
+# count) and supplies no tenant scope, no raw SQL, and no table name.
+CFI_TREND_QUERY = "cfi_trend_query"
+CFI_CALENDAR_SITE_REVIEW = "cfi_calendar_site_review"
+CFI_REPORT_WRITE = "cfi_report_write"
+CFI_ARTIFACT_TOOLS = frozenset(
+    {CFI_CALENDAR_SITE_REVIEW, CFI_REPORT_WRITE}
+)
+CFI_TOOLS = frozenset({CFI_GET, CFI_OPEN, CFI_SAVE, CFI_TREND_QUERY})
 
 # CFI Phase 2 human interview tools. Chat credentials remain inside this
 # department MCP process; the CFI Runtime receives only typed interview
@@ -216,6 +266,15 @@ CHAT_READ_REPLIES = "chat_read_replies"
 CFI_INTERVIEW_TICK = "cfi_interview_tick"
 CFI_INTERVIEW_TOOLS = frozenset(
     {CHAT_SEND_QUESTION, CHAT_READ_REPLIES, CFI_INTERVIEW_TICK}
+)
+
+# Scheduler-only control-plane tools. They are intentionally not in
+# CFI_TOOLS/CFI_INTERVIEW_TOOLS and are protected by the direct HTTP caller
+# identity check in department_server.py.
+CFI_START_TICK = "cfi_start_tick"
+CFI_LAUNCH_RESULT = "cfi_launch_result"
+CFI_SCHEDULER_TOOLS = frozenset(
+    {CFI_INTERVIEW_TICK, CFI_START_TICK, CFI_LAUNCH_RESULT}
 )
 
 SIBLING_BATCH_QUERY = "sibling_batch_query"
@@ -859,6 +918,347 @@ def cfi_save(
             f"tenant_id {tenant_id!r}."
         )
     return get_cfi_store().save(record)
+
+
+def cfi_trend_query(
+    *,
+    tenant_id: str,
+    batch_id: str,
+    cfi_id: str,
+    case_tenant_id: str,
+    kind: str,
+    compare_batch_id: str | None = None,
+    parameter: str | None = None,
+    test_code: str | None = None,
+) -> CfiTrendResult:
+    """One of three fixed, tenant-locked CFI trend comparisons.
+
+    Read-only, same tenant-check discipline as ``sibling_batch_query``. The
+    model chooses only ``kind``/``compare_batch_id``/``parameter``/
+    ``test_code``; ``tenant_id`` is stamped by the caller and re-checked
+    here. There is no complaint or Annual Product Review source in this
+    deployment (2026-08-25 read-only catalog discovery), so no such kind
+    exists — this function never fabricates a comparison it cannot back
+    with a real query.
+
+    Raises:
+        CfiTenantMismatch: ``case_tenant_id`` does not match ``tenant_id``.
+        ValueError: an unsupported ``kind``, a missing required argument for
+            the chosen ``kind``, or a compared batch/test/parameter that has
+            no matching row in the backing system.
+    """
+    _check_cfi_tenant(tenant_id, case_tenant_id)
+    try:
+        query_kind = CfiTrendQueryKind(kind)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported cfi_trend_query kind {kind!r}.") from exc
+
+    if query_kind is CfiTrendQueryKind.EM_PARAMETER_COMPARISON:
+        if not compare_batch_id or not parameter:
+            raise ValueError(
+                "em_parameter_comparison requires compare_batch_id and parameter."
+            )
+        source = get_em_source()
+        try:
+            subject = source.em(tenant_id=tenant_id, batch_id=batch_id)
+            compare = source.em(tenant_id=tenant_id, batch_id=compare_batch_id)
+        except DepartmentRecordMissing as exc:
+            raise ValueError(str(exc)) from exc
+        subject_values = [
+            row.value for row in subject.rows if row.parameter == parameter
+        ]
+        compare_values = [
+            row.value for row in compare.rows if row.parameter == parameter
+        ]
+        if not subject_values or not compare_values:
+            raise ValueError(
+                f"No EM readings for parameter {parameter!r} on one or both "
+                f"of {batch_id!r}/{compare_batch_id!r}."
+            )
+        subject_mean = sum(subject_values) / len(subject_values)
+        compare_mean = sum(compare_values) / len(compare_values)
+        unit = next(
+            (row.unit for row in subject.rows if row.parameter == parameter), None
+        )
+        return CfiTrendResult(
+            kind=query_kind,
+            tenant_id=tenant_id,
+            batch_id=batch_id,
+            compare_batch_id=compare_batch_id,
+            parameter_or_test_code=parameter,
+            subject_mean=subject_mean,
+            compare_mean=compare_mean,
+            unit=unit,
+            delta=subject_mean - compare_mean,
+            source_uri=subject.source_uri,
+        )
+
+    if query_kind is CfiTrendQueryKind.LIMS_TEST_COMPARISON:
+        if not compare_batch_id or not test_code:
+            raise ValueError(
+                "lims_test_comparison requires compare_batch_id and test_code."
+            )
+        source = get_lims_source()
+        try:
+            subject = source.lims(tenant_id=tenant_id, batch_id=batch_id)
+            compare = source.lims(tenant_id=tenant_id, batch_id=compare_batch_id)
+        except DepartmentRecordMissing as exc:
+            raise ValueError(str(exc)) from exc
+        subject_values = [
+            row.result_value for row in subject.rows if row.test_code == test_code
+        ]
+        compare_values = [
+            row.result_value for row in compare.rows if row.test_code == test_code
+        ]
+        if not subject_values or not compare_values:
+            raise ValueError(
+                f"No LIMS results for test_code {test_code!r} on one or "
+                f"both of {batch_id!r}/{compare_batch_id!r}."
+            )
+        subject_mean = sum(subject_values) / len(subject_values)
+        compare_mean = sum(compare_values) / len(compare_values)
+        unit = next(
+            (row.unit for row in subject.rows if row.test_code == test_code), None
+        )
+        return CfiTrendResult(
+            kind=query_kind,
+            tenant_id=tenant_id,
+            batch_id=batch_id,
+            compare_batch_id=compare_batch_id,
+            parameter_or_test_code=test_code,
+            subject_mean=subject_mean,
+            compare_mean=compare_mean,
+            unit=unit,
+            delta=subject_mean - compare_mean,
+            source_uri=subject.source_uri,
+        )
+
+    # PRIOR_CFI_RECURRENCE
+    from app.domain.cfi_store import get_cfi_store
+
+    prior_count = get_cfi_store().count_for_tenant(
+        tenant_id=tenant_id, exclude_cfi_id=cfi_id
+    )
+    return CfiTrendResult(
+        kind=query_kind,
+        tenant_id=tenant_id,
+        batch_id=batch_id,
+        prior_cfi_count=prior_count,
+        source_uri=f"cfi_investigation://{tenant_id}?exclude={cfi_id}",
+    )
+
+
+def _closed_cfi_for_tenant(
+    *, tenant_id: str, case_tenant_id: str, cfi_id: str
+) -> CfiInvestigation:
+    _check_cfi_tenant(tenant_id, case_tenant_id)
+    from app.domain.cfi_store import get_cfi_store
+
+    record = get_cfi_store().get(cfi_id)
+    if record is None:
+        raise ValueError(f"No CFI exists for cfi_id={cfi_id!r}.")
+    if record.tenant_id != tenant_id:
+        raise CfiTenantMismatch(
+            f"CFI {cfi_id!r} is not owned by tenant {tenant_id!r}."
+        )
+    if record.outcome is None or record.closed_at is None:
+        raise ValueError("CFI artifacts may be filed only after deterministic closure.")
+    return record
+
+
+def _cfi_artifact_record(
+    *,
+    tenant_id: str,
+    case_tenant_id: str,
+    cfi_id: str,
+    source_case_id: str,
+    batch_id: str,
+    outcome: str,
+) -> CfiInvestigation:
+    """Validate an artifact request against the durable CFI aggregate."""
+    record = _closed_cfi_for_tenant(
+        tenant_id=tenant_id, case_tenant_id=case_tenant_id, cfi_id=cfi_id
+    )
+    if record.source_case_id != source_case_id or record.batch_id != batch_id:
+        raise ValueError(
+            "CFI artifact identity does not match the durable source case or batch."
+        )
+    if record.outcome is None or record.closed_at is None:
+        raise ValueError("CFI artifacts may be filed only after deterministic closure.")
+    if record.outcome.value != outcome:
+        raise ValueError(
+            f"Artifact outcome {outcome!r} does not match the durable CFI outcome "
+            f"{record.outcome.value!r}."
+        )
+    return record
+
+
+def cfi_calendar_site_review(
+    *,
+    tenant_id: str,
+    case_tenant_id: str,
+    cfi_id: str,
+    source_case_id: str,
+    batch_id: str,
+    outcome: str,
+    closed_at: str,
+) -> CfiSiteReviewReference:
+    """Schedule the tenant-configured, deterministic CFI site-review event."""
+    request = CfiSiteReviewRequest.model_validate(
+        {
+            "tenant_id": tenant_id,
+            "case_tenant_id": case_tenant_id,
+            "cfi_id": cfi_id,
+            "source_case_id": source_case_id,
+            "batch_id": batch_id,
+            "outcome": outcome,
+            "closed_at": closed_at,
+        }
+    )
+    record = _cfi_artifact_record(
+        tenant_id=request.tenant_id,
+        case_tenant_id=request.case_tenant_id,
+        cfi_id=request.cfi_id,
+        source_case_id=request.source_case_id,
+        batch_id=request.batch_id,
+        outcome=request.outcome,
+    )
+    if record.closed_at != request.closed_at:
+        raise ValueError("closed_at does not match the durable CFI close time.")
+    return persist_site_review(
+        tenant_id=record.tenant_id,
+        cfi_id=record.cfi_id,
+        source_case_id=record.source_case_id,
+        batch_id=record.batch_id,
+        outcome=record.outcome.value,
+        closed_at=record.closed_at,
+    )
+
+
+def cfi_report_write(
+    *,
+    tenant_id: str,
+    case_tenant_id: str,
+    cfi_id: str,
+    title: str,
+    body: str,
+) -> CfiReportWriteResult:
+    """File only the deterministic report for the durable closed CFI."""
+    request = CfiReportWriteRequest.model_validate(
+        {
+            "tenant_id": tenant_id,
+            "case_tenant_id": case_tenant_id,
+            "cfi_id": cfi_id,
+            "title": title,
+            "body": body,
+        }
+    )
+    record = _closed_cfi_for_tenant(
+        tenant_id=request.tenant_id,
+        case_tenant_id=request.case_tenant_id,
+        cfi_id=request.cfi_id,
+    )
+    expected_title = build_cfi_report_title(record)
+    expected_body = build_cfi_report_body(record)
+    if request.title != expected_title or request.body != expected_body:
+        raise CfiReportWriteError(
+            "CFI report content does not match the deterministic durable CFI "
+            "record; model-authored report text is not accepted."
+        )
+    return persist_cfi_report(
+        tenant_id=record.tenant_id,
+        cfi_id=record.cfi_id,
+        title=expected_title,
+        body=expected_body,
+    )
+
+
+def cfi_start_tick(
+    *,
+    now: str,
+    lease_seconds: int,
+    max_starts: int,
+    max_attempts: int,
+) -> CfiLaunchTickResult:
+    """Claim bounded pending CFI Runtime starts for the scheduler.
+
+    This is a scheduler-only control-plane operation. It returns only typed
+    CFI pointers and never the durable investigation payload. Cloud SQL
+    ``FOR UPDATE SKIP LOCKED``/the equivalent local test lock makes two
+    overlapping ticks unable to claim the same launch lease.
+    """
+    try:
+        stamp = datetime.datetime.fromisoformat(now.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"now is not an RFC-3339 datetime: {now!r}.") from exc
+    if stamp.tzinfo is None:
+        raise ValueError("now must include a timezone.")
+    if not 1 <= lease_seconds <= 3600:
+        raise ValueError("lease_seconds must be between 1 and 3600.")
+    if not 1 <= max_starts <= 100:
+        raise ValueError("max_starts must be between 1 and 100.")
+    if not 1 <= max_attempts <= 10:
+        raise ValueError("max_attempts must be between 1 and 10.")
+
+    from app.domain.cfi_store import get_cfi_store
+
+    return CfiLaunchTickResult(
+        items=get_cfi_store().claim_pending_starts(
+            now=stamp.astimezone(datetime.UTC),
+            lease_seconds=lease_seconds,
+            limit=max_starts,
+            max_attempts=max_attempts,
+        )
+    )
+
+
+def cfi_launch_result(
+    *,
+    tenant_id: str,
+    case_tenant_id: str,
+    cfi_id: str,
+    launch_status: str,
+    runtime_invocation_id: str | None = None,
+    launch_error: str | None = None,
+) -> CfiLaunchResult:
+    """Persist one scheduler launch result, tenant-locked and idempotent."""
+    _check_cfi_tenant(tenant_id, case_tenant_id)
+    try:
+        status = CfiLaunchStatus(launch_status)
+    except ValueError as exc:
+        raise ValueError(f"Unsupported CFI launch status {launch_status!r}.") from exc
+    from app.domain.cfi_store import get_cfi_store
+
+    store = get_cfi_store()
+    if status is CfiLaunchStatus.STARTED:
+        if not runtime_invocation_id:
+            raise ValueError("started launch result requires runtime_invocation_id.")
+        item = store.mark_launch_started(
+            tenant_id=tenant_id,
+            cfi_id=cfi_id,
+            invocation_id=runtime_invocation_id,
+        )
+    elif status is CfiLaunchStatus.FAILED:
+        if not launch_error or not launch_error.strip():
+            raise ValueError("failed launch result requires launch_error.")
+        item = store.mark_launch_failed(
+            tenant_id=tenant_id,
+            cfi_id=cfi_id,
+            error=launch_error,
+        )
+    else:
+        raise ValueError(
+            "Scheduler may record only 'started' or 'failed' launch results."
+        )
+    return CfiLaunchResult(
+        cfi_id=item.cfi_id,
+        tenant_id=item.tenant_id,
+        launch_status=item.launch_status,
+        runtime_invocation_id=runtime_invocation_id
+        if status is CfiLaunchStatus.STARTED
+        else None,
+        launch_error=launch_error if status is CfiLaunchStatus.FAILED else None,
+    )
 
 
 class CfiInterviewTenantMismatch(Exception):

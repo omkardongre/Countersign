@@ -42,7 +42,9 @@ from app.domain.department_tools import (
     ALLOWED_DEPARTMENT_TOOLS,
     CASE_MEMORY_TOOLS,
     CASE_STATUS_TOOLS,
+    CFI_ARTIFACT_TOOLS,
     CFI_INTERVIEW_TOOLS,
+    CFI_SCHEDULER_TOOLS,
     CFI_TOOLS,
     DRIVE_TOOLS,
     GUIDANCE_TOOLS,
@@ -460,16 +462,31 @@ async def call_sponsor_tool(name: str, arguments: dict[str, Any]) -> dict[str, A
 
 
 async def call_cfi_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
-    """Call ``cfi_get``/``cfi_save`` over MCP. CFI Runtime side only.
+    """Call core CFI store/trend tools over MCP. CFI Runtime side only.
 
-    Same reason as ``call_sterility_tool``: an Agent Identity principal
-    cannot hold the Cloud SQL IAM credential ``cfi_investigation`` needs.
+    Artifact writes use ``call_cfi_artifact_tool`` below so a caller cannot
+    accidentally broaden the core CFI allow-list when adding a Calendar or
+    Docs integration.
     """
     if name not in CFI_TOOLS:
         raise DepartmentToolCallError(
             f"Callers may not call {name!r}; allowed={sorted(CFI_TOOLS)}"
         )
     return await call_mcp_tool(name, arguments)
+
+
+async def call_cfi_artifact_tool(
+    name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """Call one tenant-bound post-closure CFI artifact tool over MCP."""
+    if name not in CFI_ARTIFACT_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(CFI_ARTIFACT_TOOLS)}"
+        )
+    payload = await call_mcp_tool(name, arguments)
+    if not payload:
+        raise DepartmentToolCallError(f"{name} returned no structured content.")
+    return payload
 
 
 async def call_sibling_batch_tool(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -500,6 +517,17 @@ async def call_mcp_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any] 
             f"{name} returned a non-object structured content payload."
         )
     return payload
+
+
+async def call_cfi_scheduler_tool(
+    name: str, arguments: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Call a scheduler-only CFI control-plane tool over MCP."""
+    if name not in CFI_SCHEDULER_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(CFI_SCHEDULER_TOOLS)}"
+        )
+    return await call_mcp_tool(name, arguments)
 
 
 async def call_cfi_interview_tool(

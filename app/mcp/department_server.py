@@ -43,17 +43,26 @@ from app.domain.case_memory_models import (
     CaseMemoryQueryResult,
 )
 from app.domain.case_status_models import CaseStatusRecord
+from app.domain.cfi_artifact_models import (
+    CfiReportWriteResult,
+    CfiSiteReviewReference,
+)
 from app.domain.cfi_interview_chat import CfiChatError
 from app.domain.cfi_interview_models import (
     CfiInterviewRecord,
     CfiInterviewTickResult,
 )
 from app.domain.cfi_interview_store import CfiInterviewConcurrencyError
+from app.domain.cfi_launch_models import (
+    CfiLaunchResult,
+    CfiLaunchTickResult,
+)
 from app.domain.cfi_models import CfiInvestigation, SiblingBatchQueryResult
 from app.domain.cfi_store import (
     CfiConcurrencyError,
     CfiNotFoundError,
 )
+from app.domain.cfi_trend_models import CfiTrendResult
 from app.domain.department_models import (
     CoaSnapshot,
     DriveEvidencePayload,
@@ -62,10 +71,15 @@ from app.domain.department_models import (
 )
 from app.domain.department_tools import (
     CASE_STATUS_UPSERT,
+    CFI_CALENDAR_SITE_REVIEW,
     CFI_GET,
     CFI_INTERVIEW_TICK,
+    CFI_LAUNCH_RESULT,
     CFI_OPEN,
+    CFI_REPORT_WRITE,
     CFI_SAVE,
+    CFI_START_TICK,
+    CFI_TREND_QUERY,
     CHAT_READ_REPLIES,
     CHAT_SEND_QUESTION,
     COA_FETCH,
@@ -84,8 +98,10 @@ from app.domain.department_tools import (
     STERILITY_START,
     CaseMemoryTenantMismatch,
     CaseStatusTenantMismatch,
+    CfiCalendarError,
     CfiInterviewScopeError,
     CfiInterviewTenantMismatch,
+    CfiReportWriteError,
     CfiTenantMismatch,
     ControlledGuidanceTenantMismatch,
     DepartmentRecordMissing,
@@ -98,16 +114,31 @@ from app.domain.department_tools import (
     case_status_upsert as run_case_status_upsert,
 )
 from app.domain.department_tools import (
+    cfi_calendar_site_review as run_cfi_calendar_site_review,
+)
+from app.domain.department_tools import (
     cfi_get as run_cfi_get,
 )
 from app.domain.department_tools import (
     cfi_interview_tick as run_cfi_interview_tick,
 )
 from app.domain.department_tools import (
+    cfi_launch_result as run_cfi_launch_result,
+)
+from app.domain.department_tools import (
     cfi_open as run_cfi_open,
 )
 from app.domain.department_tools import (
+    cfi_report_write as run_cfi_report_write,
+)
+from app.domain.department_tools import (
     cfi_save as run_cfi_save,
+)
+from app.domain.department_tools import (
+    cfi_start_tick as run_cfi_start_tick,
+)
+from app.domain.department_tools import (
+    cfi_trend_query as run_cfi_trend_query,
 )
 from app.domain.department_tools import (
     chat_read_replies as run_chat_read_replies,
@@ -718,6 +749,167 @@ def build_department_mcp(
             CfiTenantMismatch,
             ValueError,
         ) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CFI_TREND_QUERY,
+        title="CFI trend correlation query",
+        description=(
+            "Read-only, tenant-locked historical trend comparison for one "
+            "CFI: environmental-monitoring parameter comparison, LIMS test "
+            "comparison against a named sibling batch, or this tenant's own "
+            "prior-CFI recurrence count. Returns an association only, never "
+            "causation."
+        ),
+        annotations=_READ_ONLY,
+    )
+    def cfi_trend_query(
+        tenant_id: str,
+        batch_id: str,
+        cfi_id: str,
+        case_tenant_id: str,
+        kind: str,
+        compare_batch_id: str | None = None,
+        parameter: str | None = None,
+        test_code: str | None = None,
+    ) -> CfiTrendResult:
+        try:
+            return run_cfi_trend_query(
+                tenant_id=tenant_id,
+                batch_id=batch_id,
+                cfi_id=cfi_id,
+                case_tenant_id=case_tenant_id,
+                kind=kind,
+                compare_batch_id=compare_batch_id,
+                parameter=parameter,
+                test_code=test_code,
+            )
+        except (CfiTenantMismatch, ValueError) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CFI_CALENDAR_SITE_REVIEW,
+        title="Schedule CFI site review",
+        description=(
+            "Create or return the tenant-configured Google Calendar site-"
+            "review event for a durably closed CFI. The server derives the "
+            "calendar, attendees, delay, and duration; the caller cannot "
+            "choose those values. Idempotent by CFI id and never a batch "
+            "disposition or release decision."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def cfi_calendar_site_review(
+        tenant_id: str,
+        case_tenant_id: str,
+        cfi_id: str,
+        source_case_id: str,
+        batch_id: str,
+        outcome: str,
+        closed_at: str,
+    ) -> CfiSiteReviewReference:
+        try:
+            return run_cfi_calendar_site_review(
+                tenant_id=tenant_id,
+                case_tenant_id=case_tenant_id,
+                cfi_id=cfi_id,
+                source_case_id=source_case_id,
+                batch_id=batch_id,
+                outcome=outcome,
+                closed_at=closed_at,
+            )
+        except (CfiCalendarError, CfiTenantMismatch, ValueError) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CFI_REPORT_WRITE,
+        title="File CFI report",
+        description=(
+            "Create or update the deterministic Google Doc report for a "
+            "durably closed CFI. The department server validates the title "
+            "and body against the stored aggregate; model-authored report "
+            "content is rejected. Idempotent by tenant and CFI id, and the "
+            "artifact has no decision or release authority."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def cfi_report_write(
+        tenant_id: str,
+        case_tenant_id: str,
+        cfi_id: str,
+        title: str,
+        body: str,
+    ) -> CfiReportWriteResult:
+        try:
+            return run_cfi_report_write(
+                tenant_id=tenant_id,
+                case_tenant_id=case_tenant_id,
+                cfi_id=cfi_id,
+                title=title,
+                body=body,
+            )
+        except (CfiReportWriteError, CfiTenantMismatch, ValueError) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CFI_START_TICK,
+        title="Claim pending CFI Runtime starts",
+        description=(
+            "Scheduler-only control-plane operation. Claim a bounded batch "
+            "of pending or retryable CFI Runtime handoffs using durable "
+            "leases. Returns CFI pointers only; the caller must start the "
+            "separate CFI Runtime and record the result."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def cfi_start_tick(
+        now: str,
+        lease_seconds: int,
+        max_starts: int,
+        max_attempts: int,
+    ) -> CfiLaunchTickResult:
+        _require_cfi_tick_caller(mcp)
+        try:
+            return run_cfi_start_tick(
+                now=now,
+                lease_seconds=lease_seconds,
+                max_starts=max_starts,
+                max_attempts=max_attempts,
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=CFI_LAUNCH_RESULT,
+        title="Record CFI Runtime launch result",
+        description=(
+            "Scheduler-only control-plane operation. Persist a started or "
+            "failed result for one previously claimed CFI Runtime handoff. "
+            "Started results are idempotently bound to one invocation id; "
+            "failed results remain visible and retryable up to the configured "
+            "attempt cap."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def cfi_launch_result(
+        tenant_id: str,
+        case_tenant_id: str,
+        cfi_id: str,
+        launch_status: str,
+        runtime_invocation_id: str | None = None,
+        launch_error: str | None = None,
+    ) -> CfiLaunchResult:
+        _require_cfi_tick_caller(mcp)
+        try:
+            return run_cfi_launch_result(
+                tenant_id=tenant_id,
+                case_tenant_id=case_tenant_id,
+                cfi_id=cfi_id,
+                launch_status=launch_status,
+                runtime_invocation_id=runtime_invocation_id,
+                launch_error=launch_error,
+            )
+        except (CfiConcurrencyError, CfiNotFoundError, CfiTenantMismatch, ValueError) as exc:
             raise ToolError(str(exc)) from exc
 
     @mcp.tool(
