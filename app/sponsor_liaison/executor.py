@@ -136,6 +136,6 @@ class SponsorLiaisonAgentExecutor(AgentExecutor):
         )
 
     async def cancel(
-        self, request: RequestContext, event_queue: EventQueue
-    ) -> Task | None:
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
         raise UnsupportedOperationError("Cancellation is not supported.")

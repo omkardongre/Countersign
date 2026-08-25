@@ -50,7 +50,7 @@ def probe_http_get(url: str) -> str:
             return f"status={response.status} body_preview={body!r}"
     except urllib.error.HTTPError as exc:
         return f"http_error status={exc.code} reason={exc.reason}"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return f"request_failed error={type(exc).__name__}: {exc}"
 
 

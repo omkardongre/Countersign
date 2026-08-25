@@ -52,7 +52,7 @@ from a2a.types import (
     AgentInterface,
     AgentSkill,
 )
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 
 from app.sponsor_liaison.agent import SPONSOR_LIAISON_AGENT_NAME
 from app.sponsor_liaison.auth import authenticate_sponsor_caller

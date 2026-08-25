@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -158,7 +158,7 @@ def _delete_engine(client: object, name: str) -> None:
     try:
         client.agent_engines.delete(name=name)  # type: ignore[attr-defined]
         print("  deleted")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"  delete warning: {exc}")
 
 
@@ -230,7 +230,7 @@ def main() -> int:
 
         os.environ["MODEL_NAME"] = args.model
         os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
-        from agent.agent import root_agent  # noqa: WPS433 — must import after staging
+        from agent.agent import root_agent
 
         app = AdkApp(agent=root_agent, enable_tracing=True)
 
@@ -309,7 +309,7 @@ def main() -> int:
         "deploy_mode": "sdk_adkapp_source",
         "is_a2a": False,
         "agent_directory": "infra/geap/hello_runtime/agent",
-        "deployment_timestamp": datetime.now(timezone.utc).isoformat(),
+        "deployment_timestamp": datetime.now(UTC).isoformat(),
         "effective_identity": effective,
         "agent_gateway": args.agent_gateway,
         "project_number": _project_number(args.project),
