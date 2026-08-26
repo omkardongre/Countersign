@@ -44,7 +44,7 @@ class CfiToolBudgetExceeded(RuntimeError):
     """The round's ``max_tool_calls_per_round`` cap was exceeded."""
 
 SCOPE_EXPANSION_AGENT_NAME = "scope_expansion_agent"
-SCOPE_EXPANSION_MODEL = "gemini-3.6-flash"
+SCOPE_EXPANSION_MODEL = "gemini-3.5-flash-lite"
 
 _INSTRUCTION = """\
 You investigate one hypothesis in a GMP Cross-Functional Investigation by \

@@ -45,7 +45,7 @@ from app.domain.investigation_gate import departments_ready
 from app.domain.investigation_models import InvestigationDraft, InvestigationDraftResult
 
 INVESTIGATION_AGENT_NAME = "deviation_investigator"
-INVESTIGATION_MODEL = "gemini-3.6-flash"
+INVESTIGATION_MODEL = "gemini-3.5-flash-lite"
 _PRIOR_ART_TOP_K = 5
 
 _INSTRUCTION = """\

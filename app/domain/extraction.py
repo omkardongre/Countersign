@@ -70,7 +70,7 @@ EXTRACTOR_AGENT_NAME = "bmr_evidence_extractor"
 # QP's review of that reading must refer to the same version; MasterControl's
 # locked-weights practice is the reference here. An unpinned model silently
 # invalidates prior verification work.
-EXTRACTOR_MODEL = "gemini-3.6-flash"
+EXTRACTOR_MODEL = "gemini-3.5-flash-lite"
 
 _INSTRUCTION_PREAMBLE = """\
 You transcribe pharmaceutical manufacturing records. You are a reading

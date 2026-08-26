@@ -37,7 +37,7 @@ from google.genai import types
 from app.domain.cfi_models import CfiEnquiryPlan, CfiInvestigation
 
 CFI_LEAD_AGENT_NAME = "cfi_lead_agent"
-CFI_LEAD_MODEL = "gemini-3.6-flash"
+CFI_LEAD_MODEL = "gemini-3.5-flash-lite"
 
 _INSTRUCTION = """\
 You plan the next step of a GMP Cross-Functional Investigation (CFI). You \

@@ -82,7 +82,7 @@ So Countersign is built on one non-negotiable rule:
 | Gateway | Agent Gateway, Agent-to-Anywhere (egress) mode |
 | Content guardrail | Model Armor as a `CONTENT_AUTHZ` authorization extension |
 | **Domain policy** | **Countersign TQA `ext_proc` extension — ours** |
-| Runtime | Agent Runtime, `gemini-3.6-flash` via Vertex AI |
+| Runtime | Agent Runtime, `gemini-3.5-flash-lite` via Vertex AI |
 | Durable state | Cloud SQL Postgres via ADK `DatabaseSessionService` |
 | Case memory | Firestore + embeddings (provenance and tenant filtering that Memory Bank cannot round-trip), or BigQuery `VECTOR_SEARCH` (doc `12` T1-4) behind the same interface — explicit opt-in per deployment, unset keeps Firestore |
 | Controlled guidance | Vertex AI RAG Engine via department MCP: separate tenant-scoped SOP and public-guidance corpora, manifest-verified citations, deterministic SOP gate |
@@ -753,7 +753,7 @@ The control plane is verified by a gate that cannot pass falsely.
 ```
 
 Current result, captured from the `hello_runtime` probe agent (its default model has since been
-updated to `gemini-3.6-flash` to match the rest of the fleet; this transcript is left verbatim as
+updated to `gemini-3.5-flash-lite` to match the rest of the fleet; this transcript is left verbatim as
 the actual run record rather than edited to match):
 
 ```
@@ -878,7 +878,7 @@ granted `roles/iap.egressor`.
 ./infra/geap/register_platform_endpoints.sh
 ```
 
-Note `gemini-3.6-flash` resolves via the **global** Vertex hostnames. `GOOGLE_CLOUD_LOCATION`
+Note `gemini-3.5-flash-lite` resolves via the **global** Vertex hostnames. `GOOGLE_CLOUD_LOCATION`
 is `global` on the Runtime instance while the Runtime region stays `us-central1`.
 
 ### 6. Verify, then enforce

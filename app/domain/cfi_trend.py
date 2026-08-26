@@ -42,7 +42,7 @@ class CfiTrendToolBudgetExceeded(RuntimeError):
 
 
 TREND_CORRELATION_AGENT_NAME = "trend_correlation_agent"
-TREND_CORRELATION_MODEL = "gemini-3.6-flash"
+TREND_CORRELATION_MODEL = "gemini-3.5-flash-lite"
 
 _INSTRUCTION = """\
 You investigate one hypothesis in a GMP Cross-Functional Investigation by \

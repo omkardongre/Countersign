@@ -31,7 +31,7 @@ from app.domain.cfi_interview_models import CfiInterviewQuestionDraft
 from app.domain.cfi_models import CfiInvestigation
 
 INTERVIEW_AGENT_NAME = "interview_agent"
-INTERVIEW_AGENT_MODEL = "gemini-3.6-flash"
+INTERVIEW_AGENT_MODEL = "gemini-3.5-flash-lite"
 
 _INSTRUCTION = """\
 You draft one question for a qualified human investigator in a GMP

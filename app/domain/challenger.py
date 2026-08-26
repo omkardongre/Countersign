@@ -37,7 +37,7 @@ from app.domain.investigation_models import (
 )
 
 CHALLENGER_AGENT_NAME = "investigation_challenger"
-CHALLENGER_MODEL = "gemini-3.6-flash"
+CHALLENGER_MODEL = "gemini-3.5-flash-lite"
 
 _INSTRUCTION = """\
 You challenge a draft GMP deviation investigation. You did not write it.

@@ -46,7 +46,7 @@ from app.sponsor_liaison.mcp_client import (
 )
 
 SPONSOR_LIAISON_AGENT_NAME = "sponsor_liaison_agent"
-SPONSOR_LIAISON_MODEL = "gemini-3.6-flash"
+SPONSOR_LIAISON_MODEL = "gemini-3.5-flash-lite"
 
 _INSTRUCTION = """\
 You are the sponsor liaison agent for a contract manufacturer (CDMO). You

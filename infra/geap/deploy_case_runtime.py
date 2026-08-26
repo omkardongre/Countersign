@@ -85,7 +85,7 @@ def main() -> int:
         ),
     )
     parser.add_argument("--staging-bucket", default=None)
-    parser.add_argument("--model", default="gemini-3.6-flash")
+    parser.add_argument("--model", default="gemini-3.5-flash-lite")
     parser.add_argument(
         "--mcp-url",
         required=True,

@@ -43,7 +43,7 @@ from app.domain.qp_models import QpReviewedPackage
 from app.mcp.client import call_qms_write_tool
 
 QA_QMS_WRITE_AGENT_NAME = "qa_qms_write_agent"
-QA_QMS_WRITE_MODEL = "gemini-3.6-flash"
+QA_QMS_WRITE_MODEL = "gemini-3.5-flash-lite"
 
 _QA_QMS_WRITE_INSTRUCTION = """\
 You are the QA/QMS filing agent for one GMP deviation case.

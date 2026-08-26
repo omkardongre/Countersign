@@ -109,13 +109,13 @@ from app.mcp.client import (
 )
 
 MANUFACTURING_AGENT_NAME = "manufacturing_evidence_agent"
-MANUFACTURING_MODEL = "gemini-3.6-flash"
+MANUFACTURING_MODEL = "gemini-3.5-flash-lite"
 QC_AGENT_NAME = "qc_lab_agent"
-QC_MODEL = "gemini-3.6-flash"
+QC_MODEL = "gemini-3.5-flash-lite"
 EM_AGENT_NAME = "environmental_monitoring_agent"
-EM_MODEL = "gemini-3.6-flash"
+EM_MODEL = "gemini-3.5-flash-lite"
 SUPPLY_AGENT_NAME = "supply_assurance_agent"
-SUPPLY_MODEL = "gemini-3.6-flash"
+SUPPLY_MODEL = "gemini-3.5-flash-lite"
 
 _MANUFACTURING_INSTRUCTION = """\
 You are the manufacturing-evidence department agent for one GMP deviation

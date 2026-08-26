@@ -38,7 +38,7 @@ from app.domain.cfi_report_mcp import McpCfiReportWriter
 from app.domain.cfi_store_mcp import McpCfiStore
 
 CFI_REPORTER_AGENT_NAME = "cfi_reporter_agent"
-CFI_REPORTER_MODEL = "gemini-3.6-flash"
+CFI_REPORTER_MODEL = "gemini-3.5-flash-lite"
 
 _INSTRUCTION = """\
 You are the CFI report filing agent for one durably closed investigation.
