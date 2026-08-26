@@ -24,21 +24,6 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [pickerBusy, setPickerBusy] = useState(false);
 
-  async function onPickDriveFile() {
-    setPickerError(null);
-    setPickerBusy(true);
-    try {
-      const picked = await openDrivePicker();
-      if (picked) {
-        setDriveFileId(picked.id);
-        setDriveFileName(picked.name);
-      }
-    } catch (err) {
-      setPickerError(err instanceof Error ? err.message : "Could not open Drive picker.");
-    } finally {
-      setPickerBusy(false);
-    }
-  }
   const [form, setForm] = useState({
     tenant_id: "aurex",
     batch_id: "",
@@ -55,10 +40,23 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
     prior_occurrences_90d: 0,
   });
 
-  const preview = useMemo(() => {
-    const intake = toIntake(form);
-    return classifySeverity(intake);
-  }, [form]);
+  const preview = useMemo(() => classifySeverity(toIntake(form)), [form]);
+
+  async function onPickDriveFile() {
+    setPickerError(null);
+    setPickerBusy(true);
+    try {
+      const picked = await openDrivePicker();
+      if (picked) {
+        setDriveFileId(picked.id);
+        setDriveFileName(picked.name);
+      }
+    } catch (err) {
+      setPickerError(err instanceof Error ? err.message : "Could not open Drive picker.");
+    } finally {
+      setPickerBusy(false);
+    }
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -88,60 +86,62 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
     }
   }
 
+  const severityTone =
+    preview.severity === "critical" ? "text-critical bg-critical-bg" :
+    preview.severity === "major" ? "text-major bg-major-bg" :
+    "text-minor bg-minor-bg";
+
   return (
-    <form onSubmit={onSubmit} className="max-w-2xl space-y-5">
-      <p className="text-sm text-ink-muted">
-        Structured intake only. Classification is the same deterministic rule
-        as <span className="font-mono">app/domain/classification.py</span>.
-      </p>
-      <fieldset className="border border-line bg-paper-raised px-4 py-3">
-        <legend className="px-1 text-[12px] uppercase text-ink-muted">
-          Execution
-        </legend>
-        <label htmlFor="use_live" className="flex items-start gap-2 text-sm">
+    <form onSubmit={onSubmit} className="space-y-5">
+      {/* Execution mode */}
+      <Section
+        title="Execution"
+        description="Where this case runs. Live mode invokes the deployed graph on Agent Runtime."
+      >
+        <label
+          htmlFor="use_live"
+          className={`flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors ${
+            useLive ? "border-brand bg-brand-soft" : "border-line hover:border-line-strong"
+          } ${!liveEngine ? "cursor-not-allowed opacity-60" : ""}`}
+        >
           <input
             id="use_live"
             type="checkbox"
             checked={useLive}
             disabled={!liveEngine}
             onChange={(e) => setUseLive(e.target.checked)}
-            className="mt-1"
+            className="mt-0.5 h-4 w-4 accent-[var(--color-brand)]"
           />
           <span>
-            Run on the deployed Agent Runtime
-            <span className="mt-0.5 block text-[12px] text-ink-muted">
+            <span className="block text-sm font-semibold text-ink">
+              Run on the deployed Agent Runtime
+            </span>
+            <span className="mt-1 block text-[13px] leading-relaxed text-ink-muted">
               {liveEngine
-                ? "Starts the real deviation-case graph: departments over MCP, investigation, challenger, Annex 16, QP pause. Desk polls session state."
+                ? "Starts the real deviation-case graph: departments over MCP, investigation, challenger, Annex 16, then the QP pause."
                 : "Unavailable — COUNTERSIGN_CASE_ENGINE_URL is not set. Unchecked opens a local classified case only."}
             </span>
           </span>
         </label>
+
         {useLive && (
-          <div className="mt-3">
-            <span className="block text-[12px] uppercase text-ink-muted">
-              Google Drive file (scanned BMR page)
-            </span>
-            <div className="mt-1 flex items-center gap-3">
+          <div className="mt-4 rounded-lg border border-line bg-surface/50 p-4">
+            <p className="label">Google Drive evidence file</p>
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={onPickDriveFile}
                 disabled={pickerBusy}
-                className="border border-line bg-paper px-3 py-2 text-sm disabled:opacity-50"
+                className="rounded-lg border border-line-strong bg-paper-raised px-3.5 py-2 text-[13px] font-medium text-ink shadow-sm transition-colors hover:bg-surface disabled:opacity-50"
               >
-                {pickerBusy
-                  ? "Opening picker…"
-                  : driveFileId
-                    ? "Choose a different file"
-                    : "Choose from Drive"}
+                {pickerBusy ? "Opening picker…" : driveFileId ? "Choose a different file" : "Choose from Drive"}
               </button>
               {driveFileName && (
-                <span className="truncate text-sm text-ink-muted" title={driveFileName}>
+                <span className="truncate text-[13px] text-ink-soft" title={driveFileName}>
                   {driveFileName}
                 </span>
               )}
             </div>
-            {/* Hidden required field so native form validation still blocks
-                submit until a file is picked, without a visible text input. */}
             <input
               id="drive_file_id"
               required
@@ -151,178 +151,230 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
               tabIndex={-1}
               aria-hidden="true"
             />
-            {pickerError && (
-              <p className="mt-1 text-[12px] text-critical">{pickerError}</p>
-            )}
-            <p className="mt-1 text-[12px] text-ink-muted">
-              Required. There is no placeholder evidence — the manufacturing
-              branch pulls this exact file from Drive. The file must be
-              shared read-only with the department MCP service account.
+            {pickerError && <p className="mt-2 text-[13px] text-critical">{pickerError}</p>}
+            <p className="mt-2 text-[12px] leading-relaxed text-ink-faint">
+              Required. The manufacturing branch pulls this exact file from Drive,
+              so it must be shared read-only with the department MCP service account.
             </p>
           </div>
         )}
-      </fieldset>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Text
-          id="tenant_id"
-          label="Tenant"
-          value={form.tenant_id}
-          onChange={(v) => setForm({ ...form, tenant_id: v })}
-        />
-        <Text
-          id="batch_id"
-          label="Batch"
-          value={form.batch_id}
-          onChange={(v) => setForm({ ...form, batch_id: v })}
-        />
-        <Text
-          id="product_name"
-          label="Product"
-          className="sm:col-span-2"
-          value={form.product_name}
-          onChange={(v) => setForm({ ...form, product_name: v })}
-        />
-        <div>
-          <label htmlFor="doc_type" className="block text-[12px] uppercase text-ink-muted">
-            Document type
-          </label>
-          <select
-            id="doc_type"
-            value={form.doc_type}
-            onChange={(e) =>
-              setForm({ ...form, doc_type: e.target.value as DocType })
-            }
-            className="mt-1 w-full border border-line bg-paper-raised px-3 py-2 text-sm"
-          >
-            {DOCS.map((d) => (
-              <option key={d.value} value={d.value}>
-                {d.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <Text
-          id="reported_by"
-          label="Reported by"
-          value={form.reported_by}
-          onChange={(v) => setForm({ ...form, reported_by: v })}
-        />
-      </div>
-      <div>
-        <label htmlFor="description" className="block text-[12px] uppercase text-ink-muted">
-          Description
-        </label>
-        <textarea
-          id="description"
-          required
-          rows={3}
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          className="mt-1 w-full border border-line bg-paper-raised px-3 py-2 text-sm"
-        />
-        <p className="mt-1 text-[12px] text-ink-muted">
-          Human summary. Not parsed for classification.
-        </p>
-      </div>
-      <Text
-        id="evidence_refs"
-        label="Evidence refs"
-        value={form.evidence_refs}
-        onChange={(v) => setForm({ ...form, evidence_refs: v })}
-      />
-      <fieldset className="space-y-2 border border-line bg-paper-raised px-4 py-3">
-        <legend className="px-1 text-[12px] uppercase text-ink-muted">
-          Classification signals
-        </legend>
-        <Check
-          label="Patient safety impact"
-          checked={form.patient_safety_impact}
-          onChange={(v) => setForm({ ...form, patient_safety_impact: v })}
-        />
-        <Check
-          label="Sterility assurance impact"
-          checked={form.sterility_assurance_impact}
-          onChange={(v) => setForm({ ...form, sterility_assurance_impact: v })}
-        />
-        <Check
-          label="Affects release criteria"
-          checked={form.affects_release_criteria}
-          onChange={(v) => setForm({ ...form, affects_release_criteria: v })}
-        />
-        <Check
-          label="Regulatory reportable"
-          checked={form.regulatory_reportable}
-          onChange={(v) => setForm({ ...form, regulatory_reportable: v })}
-        />
-        <div className="grid gap-3 sm:grid-cols-2">
+      </Section>
+
+      {/* Batch identity */}
+      <Section title="Batch identity">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Text id="tenant_id" label="Tenant" value={form.tenant_id} onChange={(v) => setForm({ ...form, tenant_id: v })} />
+          <Text id="batch_id" label="Batch" placeholder="AX-2291" value={form.batch_id} onChange={(v) => setForm({ ...form, batch_id: v })} />
+          <Text id="product_name" label="Product" className="sm:col-span-2" placeholder="AXR450 Sterile Injectable" value={form.product_name} onChange={(v) => setForm({ ...form, product_name: v })} />
           <div>
-            <label htmlFor="pqi" className="block text-[12px] uppercase text-ink-muted">
-              Product quality impact
-            </label>
+            <label htmlFor="doc_type" className="label">Document type</label>
+            <select
+              id="doc_type"
+              value={form.doc_type}
+              onChange={(e) => setForm({ ...form, doc_type: e.target.value as DocType })}
+              className="field"
+            >
+              {DOCS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </select>
+          </div>
+          <Text id="reported_by" label="Reported by" placeholder="M. Chen" value={form.reported_by} onChange={(v) => setForm({ ...form, reported_by: v })} />
+        </div>
+      </Section>
+
+      {/* Deviation detail */}
+      <Section title="Deviation detail">
+        <div>
+          <label htmlFor="description" className="label">Description</label>
+          <textarea
+            id="description"
+            required
+            rows={3}
+            placeholder="What was observed, where, and when."
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+            className="field resize-y"
+          />
+          <p className="mt-1.5 text-[12px] text-ink-faint">
+            Human summary. Not parsed for classification.
+          </p>
+        </div>
+        <div className="mt-4">
+          <Text
+            id="evidence_refs"
+            label="Evidence references"
+            placeholder="drive://... (space or comma separated)"
+            value={form.evidence_refs}
+            onChange={(v) => setForm({ ...form, evidence_refs: v })}
+          />
+        </div>
+      </Section>
+
+      {/* Classification signals */}
+      <Section
+        title="Classification signals"
+        description="These fields drive the deterministic severity rule."
+      >
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          <Check label="Patient safety impact" checked={form.patient_safety_impact} onChange={(v) => setForm({ ...form, patient_safety_impact: v })} />
+          <Check label="Sterility assurance impact" checked={form.sterility_assurance_impact} onChange={(v) => setForm({ ...form, sterility_assurance_impact: v })} />
+          <Check label="Affects release criteria" checked={form.affects_release_criteria} onChange={(v) => setForm({ ...form, affects_release_criteria: v })} />
+          <Check label="Regulatory reportable" checked={form.regulatory_reportable} onChange={(v) => setForm({ ...form, regulatory_reportable: v })} />
+        </div>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div>
+            <label htmlFor="pqi" className="label">Product quality impact</label>
             <select
               id="pqi"
               value={form.product_quality_impact}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  product_quality_impact: e.target.value as ProductQualityImpact,
-                })
-              }
-              className="mt-1 w-full border border-line bg-paper px-3 py-2 text-sm"
+              onChange={(e) => setForm({ ...form, product_quality_impact: e.target.value as ProductQualityImpact })}
+              className="field"
             >
-              <option value="none">none</option>
-              <option value="potential">potential</option>
-              <option value="confirmed">confirmed</option>
+              <option value="none">None</option>
+              <option value="potential">Potential</option>
+              <option value="confirmed">Confirmed</option>
             </select>
           </div>
           <div>
-            <label htmlFor="prior" className="block text-[12px] uppercase text-ink-muted">
-              Prior occurrences (90d)
-            </label>
+            <label htmlFor="prior" className="label">Prior occurrences (90 days)</label>
             <input
               id="prior"
               type="number"
               min={0}
               value={form.prior_occurrences_90d}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  prior_occurrences_90d: Number(e.target.value),
-                })
-              }
-              className="mt-1 w-full border border-line bg-paper px-3 py-2 text-sm"
+              onChange={(e) => setForm({ ...form, prior_occurrences_90d: Number(e.target.value) })}
+              className="field tabular"
             />
           </div>
         </div>
-      </fieldset>
-      <p className="border border-line bg-paper-raised px-4 py-3 text-sm">
-        Preview severity{" "}
-        <span className="font-mono uppercase">{preview.severity}</span>
-        <span className="mt-1 block font-mono text-[12px] text-ink-muted">
+      </Section>
+
+      {/* Severity preview */}
+      <div className="rounded-xl border border-line bg-paper-raised p-5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-[12px] font-semibold uppercase tracking-wider text-ink-muted">
+            Computed severity
+          </p>
+          <span className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] font-semibold uppercase ${severityTone}`}>
+            {preview.severity}
+          </span>
+        </div>
+        <p className="mt-2 font-mono text-[12px] leading-relaxed text-ink-muted">
           {preview.rationale}
-        </span>
-      </p>
-      {error && <p className="text-sm text-critical">{error}</p>}
-      <button
-        type="submit"
-        disabled={pending}
-        className="bg-teal-deep px-4 py-2 text-sm text-paper-raised disabled:opacity-50"
-      >
-        {pending
-          ? useLive
-            ? "Running graph on Agent Runtime…"
-            : "Opening…"
-          : useLive
-            ? "Open case on Agent Runtime"
-            : "Open classified case"}
-      </button>
-      {useLive && (
-        <p className="text-[12px] text-ink-muted">
-          First run reaches the QP pause or the sterility hold, whichever comes
-          first. This may take up to a minute.
+        </p>
+      </div>
+
+      {error && (
+        <p className="rounded-lg border border-critical/20 bg-critical-bg px-4 py-3 text-sm text-critical">
+          {error}
         </p>
       )}
+
+      {/* Submit */}
+      <div className="flex flex-wrap items-center gap-4 pt-1">
+        <button
+          type="submit"
+          disabled={pending}
+          className="flex items-center gap-2 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-dark disabled:opacity-50"
+        >
+          {pending && (
+            <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
+          {pending
+            ? useLive ? "Running on Agent Runtime…" : "Opening…"
+            : useLive ? "Open case on Agent Runtime" : "Open classified case"}
+        </button>
+        {useLive && (
+          <p className="text-[12px] text-ink-faint">
+            First run reaches the QP pause or the sterility hold. May take up to a minute.
+          </p>
+        )}
+      </div>
     </form>
+  );
+}
+
+function Section({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-xl border border-line bg-paper-raised p-5 shadow-sm">
+      <div className="mb-4">
+        <h2 className="text-sm font-semibold text-ink">{title}</h2>
+        {description && (
+          <p className="mt-0.5 text-[13px] text-ink-muted">{description}</p>
+        )}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Text({
+  id,
+  label,
+  value,
+  onChange,
+  className = "",
+  placeholder,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  return (
+    <div className={className}>
+      <label htmlFor={id} className="label">{label}</label>
+      <input
+        id={id}
+        required={id !== "evidence_refs"}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="field"
+      />
+    </div>
+  );
+}
+
+function Check({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  const id = label.replaceAll(" ", "-").toLowerCase();
+  return (
+    <label
+      htmlFor={id}
+      className={`flex cursor-pointer items-center gap-2.5 rounded-lg border px-3.5 py-2.5 text-[13px] transition-colors ${
+        checked ? "border-brand bg-brand-soft font-medium text-ink" : "border-line text-ink-soft hover:border-line-strong"
+      }`}
+    >
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-4 w-4 accent-[var(--color-brand)]"
+      />
+      {label}
+    </label>
   );
 }
 
@@ -348,10 +400,7 @@ function toIntake(form: {
     doc_type: form.doc_type,
     description: form.description.trim(),
     reported_by: form.reported_by.trim(),
-    evidence_refs: form.evidence_refs
-      .split(/[\s,]+/)
-      .map((s) => s.trim())
-      .filter(Boolean),
+    evidence_refs: form.evidence_refs.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
     detected_at: new Date().toISOString(),
     patient_safety_impact: form.patient_safety_impact,
     sterility_assurance_impact: form.sterility_assurance_impact,
@@ -360,56 +409,4 @@ function toIntake(form: {
     regulatory_reportable: form.regulatory_reportable,
     prior_occurrences_90d: form.prior_occurrences_90d,
   };
-}
-
-function Text({
-  id,
-  label,
-  value,
-  onChange,
-  className = "",
-}: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  className?: string;
-}) {
-  return (
-    <div className={className}>
-      <label htmlFor={id} className="block text-[12px] uppercase text-ink-muted">
-        {label}
-      </label>
-      <input
-        id={id}
-        required={id !== "evidence_refs"}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full border border-line bg-paper-raised px-3 py-2 text-sm"
-      />
-    </div>
-  );
-}
-
-function Check({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  const id = label.replaceAll(" ", "-").toLowerCase();
-  return (
-    <label htmlFor={id} className="flex items-center gap-2 text-sm">
-      <input
-        id={id}
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      {label}
-    </label>
-  );
 }

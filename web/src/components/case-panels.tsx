@@ -11,14 +11,12 @@ function Card({
   aside?: React.ReactNode;
 }) {
   return (
-    <section className="border border-line bg-paper-raised">
-      <header className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-2.5">
-        <h2 className="text-[13px] font-semibold tracking-wide uppercase text-ink-muted">
-          {title}
-        </h2>
-        {aside}
+    <section className="overflow-hidden rounded-xl border border-line bg-paper-raised shadow-sm">
+      <header className="flex items-center justify-between gap-3 border-b border-line px-5 py-3">
+        <h2 className="text-[13px] font-semibold text-ink-soft">{title}</h2>
+        {aside && <span className="text-[11px] text-ink-faint">{aside}</span>}
       </header>
-      <div className="px-4 py-3">{children}</div>
+      <div className="px-5 py-4">{children}</div>
     </section>
   );
 }
@@ -29,7 +27,7 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
     <div className="grid gap-4 lg:grid-cols-3">
       <div className="space-y-4 lg:col-span-2">
         <Card title="Intake signals">
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3">
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
             <Field k="Tenant" v={classified.tenant_id} mono />
             <Field k="Batch" v={classified.batch_id} mono />
             <Field k="Product" v={classified.product_name} />
@@ -61,8 +59,10 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
               v={String(record.intake.prior_occurrences_90d)}
             />
           </dl>
-          <p className="mt-3 text-sm text-ink-muted">{record.intake.description}</p>
-          <p className="mt-2 font-mono text-[12px] text-ink">
+          <p className="mt-4 border-t border-line pt-4 text-sm leading-relaxed text-ink-soft">
+            {record.intake.description}
+          </p>
+          <p className="mt-2.5 rounded-lg bg-surface px-3 py-2 font-mono text-[12px] text-ink-soft">
             Rule: {classified.rationale}
           </p>
         </Card>
@@ -76,25 +76,27 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
               </span>
             }
           >
-            <table className="w-full text-left text-sm">
-              <thead className="text-[11px] uppercase tracking-wide text-ink-muted">
-                <tr>
-                  <th className="py-1 font-medium">Field</th>
-                  <th className="py-1 font-medium">Value</th>
-                  <th className="py-1 font-medium">Confidence</th>
-                  <th className="py-1 font-medium">Route</th>
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-line">
+                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-soft">Field</th>
+                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-soft">Value</th>
+                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-soft">Confidence</th>
+                  <th className="pb-2 text-[11px] font-semibold uppercase tracking-wider text-ink-soft">Route</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-line">
                 {record.extracted_fields.map((f) => (
-                  <tr key={f.field_name} className="border-t border-line">
-                    <td className="py-1.5">{f.label}</td>
-                    <td className="py-1.5 font-mono text-[13px]">{f.value}</td>
-                    <td className="tabular py-1.5 font-mono text-[13px]">
+                  <tr key={f.field_name}>
+                    <td className="py-2.5 text-sm text-ink">{f.label}</td>
+                    <td className="py-2.5 font-mono text-[13px] font-medium text-ink">{f.value}</td>
+                    <td className="tabular py-2.5 font-mono text-[13px] text-ink-soft">
                       {f.confidence.toFixed(2)}
                     </td>
-                    <td className="py-1.5 text-[12px]">
-                      {f.needs_review ? "Needs review" : "Acceptable"}
+                    <td className="py-2.5">
+                      <span className={`text-[12px] font-medium ${f.needs_review ? "text-warn" : "text-minor"}`}>
+                        {f.needs_review ? "Needs review" : "Acceptable"}
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -108,17 +110,17 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
             <ul className="space-y-3">
               {record.findings.map((f) => (
                 <li key={f.finding_id} className="border-b border-line pb-3 last:border-0 last:pb-0">
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <span className="font-mono text-[11px] uppercase text-ink-muted">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-warn-bg px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-warn">
                       {f.finding_type.replaceAll("_", " ")}
                     </span>
-                    <span className="text-sm font-medium">{f.label}</span>
-                    <span className="font-mono text-[11px] text-ink-muted">
+                    <span className="text-sm font-medium text-ink">{f.label}</span>
+                    <span className="font-mono text-[11px] text-ink-faint">
                       {f.root_cause_category}
                     </span>
                   </div>
-                  <p className="mt-1 text-sm">{f.description}</p>
-                  <p className="mt-1 font-mono text-[12px] text-ink-muted">
+                  <p className="mt-2 text-sm leading-relaxed text-ink-soft">{f.description}</p>
+                  <p className="mt-2 font-mono text-[12px] text-ink-faint">
                     {f.observed_value ?? "—"} vs {f.expected_value ?? "—"}
                     {f.anchor ? ` · ${f.anchor.source_uri} p.${f.anchor.page_number}` : ""}
                   </p>
@@ -138,22 +140,21 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
             }
           >
             {record.draft.hypotheses.map((h) => (
-              <div key={h.statement} className="mb-3 last:mb-0">
-                <p className="text-sm">
-                  <span className="font-mono text-[11px] uppercase text-ink-muted">
+              <div key={h.statement} className="mb-4 last:mb-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full bg-surface px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
                     {h.category}
-                  </span>{" "}
-                  {h.statement}
-                </p>
-                <p className="mt-1 font-mono text-[12px] text-ink-muted">
-                  confidence {h.confidence.toFixed(2)} · not a determination
-                </p>
-                <ul className="mt-2 space-y-1">
+                  </span>
+                  <span className="font-mono text-[11px] text-ink-faint">
+                    confidence {h.confidence.toFixed(2)} · not a determination
+                  </span>
+                </div>
+                <p className="mt-2 text-sm leading-relaxed text-ink">{h.statement}</p>
+                <ul className="mt-2.5 space-y-2 border-l-2 border-line pl-3">
                   {h.supporting_claims.map((c) => (
-                    <li key={c.claim} className="text-[13px]">
-                      <span className="text-ink-muted">Cite · </span>
+                    <li key={c.claim} className="text-[13px] text-ink-soft">
                       {c.claim}
-                      <span className="mt-0.5 block font-mono text-[11px] text-ink-muted">
+                      <span className="mt-0.5 block font-mono text-[11px] text-ink-faint">
                         {c.source_uris.join(" · ")}
                       </span>
                     </li>
@@ -178,14 +179,14 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
 
         {record.challenger && record.challenger.attacks.length > 0 && (
           <Card title="Challenger">
-            <ul className="space-y-2 text-sm">
+            <ul className="space-y-3">
               {record.challenger.attacks.map((a) => (
                 <li key={a.detail}>
-                  <span className="font-mono text-[11px] uppercase text-ink-muted">
+                  <span className="rounded-full bg-surface px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
                     {a.attack_type.replaceAll("_", " ")}
                   </span>
-                  <p>{a.detail}</p>
-                  <p className="font-mono text-[12px] text-ink-muted">{a.target}</p>
+                  <p className="mt-1.5 text-sm leading-relaxed text-ink">{a.detail}</p>
+                  <p className="mt-0.5 font-mono text-[11px] text-ink-faint">{a.target}</p>
                 </li>
               ))}
             </ul>
@@ -196,17 +197,25 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
       <div className="space-y-4">
         {record.sterility_hold && (
           <Card title="Sterility hold">
-            <p className="text-sm">
+            <p className="text-lg font-semibold text-hold">
               {record.sterility_hold.incubation_days}-day incubation
             </p>
-            <p className="mt-1 font-mono text-[12px] text-ink-muted">
-              started {formatWhen(record.sterility_hold.started_at)}
-            </p>
-            <p className="font-mono text-[12px] text-ink-muted">
-              due {formatWhen(record.sterility_hold.due_at)}
-            </p>
-            <p className="mt-2 text-[13px] text-hold">
-              Graph is parked. Do not hold an SSE stream across this wait.
+            <dl className="mt-3 space-y-1.5">
+              <div className="flex justify-between gap-2">
+                <dt className="text-[12px] font-medium text-ink-soft">Started</dt>
+                <dd className="font-mono text-[12px] text-ink">
+                  {formatWhen(record.sterility_hold.started_at)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt className="text-[12px] font-medium text-ink-soft">Due</dt>
+                <dd className="font-mono text-[12px] text-ink">
+                  {formatWhen(record.sterility_hold.due_at)}
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-3 rounded-lg bg-hold-bg px-3 py-2 text-[12px] leading-relaxed text-hold">
+              Graph is parked. Resumed by the scheduler, not by a held stream.
             </p>
           </Card>
         )}
@@ -223,11 +232,11 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
             <ul className="space-y-3">
               {record.prior_art.map((f) => (
                 <li key={f.fact_id}>
-                  <p className="text-sm">{f.fact}</p>
-                  <p className="mt-1 font-mono text-[11px] text-ink-muted">
+                  <p className="text-sm leading-relaxed text-ink">{f.fact}</p>
+                  <p className="mt-1.5 font-mono text-[11px] text-ink-faint">
                     {f.tenant_id} · {f.batch_id} · {f.confidence.toFixed(2)}
                   </p>
-                  <p className="font-mono text-[11px] text-ink-muted">{f.source_uri}</p>
+                  <p className="break-all font-mono text-[11px] text-ink-faint">{f.source_uri}</p>
                 </li>
               ))}
             </ul>
@@ -236,11 +245,15 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
 
         {record.branches.length > 0 && (
           <Card title="Departments">
-            <ul className="space-y-2 text-sm">
+            <ul className="divide-y divide-line">
               {record.branches.map((b) => (
-                <li key={b.department} className="flex justify-between gap-2">
-                  <span className="capitalize">{b.department}</span>
-                  <span className="font-mono text-[12px] uppercase text-ink-muted">
+                <li key={b.department} className="flex items-center justify-between gap-2 py-2 first:pt-0 last:pb-0">
+                  <span className="text-[13px] capitalize text-ink">
+                    {b.department.replaceAll("_", " ")}
+                  </span>
+                  <span className={`font-mono text-[11px] font-semibold uppercase ${
+                    b.status === "ok" ? "text-minor" : "text-warn"
+                  }`}>
                     {b.status}
                   </span>
                 </li>
@@ -259,20 +272,24 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
             }
           >
             {record.release_gate.blocked_reasons.length > 0 && (
-              <ul className="mb-3 space-y-1 text-[13px] text-critical">
+              <ul className="mb-4 space-y-1.5 rounded-lg border border-critical/20 bg-critical-bg px-3.5 py-3">
                 {record.release_gate.blocked_reasons.map((r) => (
-                  <li key={r}>{r}</li>
+                  <li key={r} className="text-[13px] leading-relaxed text-critical">{r}</li>
                 ))}
               </ul>
             )}
-            <ul className="max-h-[28rem] space-y-2 overflow-auto pr-1">
+            <ul className="max-h-[28rem] divide-y divide-line overflow-auto pr-1">
               {record.release_gate.items.map((item) => (
-                <li key={item.annex_ref} className="text-[13px]">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="font-mono text-[11px]">{item.annex_ref}</span>
+                <li key={item.annex_ref} className="py-2.5 first:pt-0 last:pb-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-[11px] font-semibold text-ink-soft">
+                      {item.annex_ref}
+                    </span>
                     <ItemStatus value={item.status} />
                   </div>
-                  <p className={item.required_for_confirmation ? "" : "text-ink-muted"}>
+                  <p className={`mt-0.5 text-[13px] leading-relaxed ${
+                    item.required_for_confirmation ? "text-ink" : "text-ink-faint"
+                  }`}>
                     {item.title}
                     {item.required_for_confirmation ? "" : " (not scored)"}
                   </p>
@@ -297,8 +314,12 @@ function Field({
 }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wide text-ink-muted">{k}</dt>
-      <dd className={mono ? "font-mono text-[13px]" : "text-sm"}>{v}</dd>
+      <dt className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+        {k}
+      </dt>
+      <dd className={mono ? "mt-1 font-mono text-[13px] text-ink" : "mt-1 text-[13px] text-ink"}>
+        {v}
+      </dd>
     </div>
   );
 }

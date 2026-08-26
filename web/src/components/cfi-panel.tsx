@@ -15,14 +15,12 @@ function Card({
   aside?: React.ReactNode;
 }) {
   return (
-    <section className="border border-line bg-paper-raised">
-      <header className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-2.5">
-        <h3 className="text-[13px] font-semibold tracking-wide uppercase text-ink-muted">
-          {title}
-        </h3>
-        {aside}
+    <section className="overflow-hidden rounded-xl border border-line bg-paper-raised shadow-sm">
+      <header className="flex items-center justify-between gap-3 border-b border-line px-5 py-3">
+        <h3 className="text-[13px] font-semibold text-ink-soft">{title}</h3>
+        {aside && <span className="text-[11px] text-ink-faint">{aside}</span>}
       </header>
-      <div className="px-4 py-3">{children}</div>
+      <div className="px-5 py-4">{children}</div>
     </section>
   );
 }
@@ -32,22 +30,26 @@ export function CfiPanel({ record }: { record: CaseDeskRecord }) {
   if (!cfi) return null;
 
   return (
-    <section className="border border-teal-deep bg-paper-raised">
-      <header className="border-b border-line px-4 py-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <div>
-            <h2 className="text-[13px] font-semibold tracking-wide uppercase text-teal-deep">
-              Cross-functional investigation
-            </h2>
-            <p className="mt-1 text-[13px] text-ink-muted">
-              Separate durable investigation record. It does not release a
-              batch, change the Annex 16 gate, or replace QP confirmation.
-            </p>
+    <section className="overflow-hidden rounded-xl border border-brand bg-paper-raised shadow-sm">
+      <header className="border-b border-line bg-brand/5 px-5 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand/10">
+              <svg className="h-4 w-4 text-brand" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-brand">Cross-Functional Investigation</h2>
+              <p className="text-[11px] text-ink-muted">
+                Separate durable record. Does not release a batch or replace QP confirmation.
+              </p>
+            </div>
           </div>
           <CfiStatus value={cfi.outcome} launchStatus={cfi.launch_status} />
         </div>
       </header>
-      <div className="grid gap-4 p-4 lg:grid-cols-2">
+      <div className="grid gap-4 p-5 lg:grid-cols-2">
         <CfiIdentity cfi={cfi} />
         <CfiBudget cfi={cfi} />
         <CfiHypotheses cfi={cfi} />
@@ -345,9 +347,11 @@ function CfiStatus({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-line bg-paper px-3 py-2">
-      <p className="text-[11px] uppercase tracking-wide text-ink-muted">{label}</p>
-      <p className="mt-1 font-mono text-lg tabular">{value}</p>
+    <div className="rounded-lg border border-line bg-surface/50 px-3.5 py-3">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+        {label}
+      </p>
+      <p className="mt-1 text-xl font-semibold tabular text-ink">{value}</p>
     </div>
   );
 }
@@ -355,8 +359,12 @@ function Metric({ label, value }: { label: string; value: string }) {
 function Field({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <div>
-      <dt className="text-[11px] uppercase tracking-wide text-ink-muted">{k}</dt>
-      <dd className={mono ? "break-all font-mono text-[12px]" : "text-[13px]"}>{v}</dd>
+      <dt className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+        {k}
+      </dt>
+      <dd className={mono ? "mt-1 break-all font-mono text-[12px] text-ink" : "mt-1 text-[13px] text-ink"}>
+        {v}
+      </dd>
     </div>
   );
 }
