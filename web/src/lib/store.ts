@@ -13,11 +13,21 @@ type GlobalStore = {
   cases: Map<string, CaseDeskRecord>;
 };
 
+/**
+ * Demo fixtures are a local/dev aid only. Real deployments must show only
+ * cases opened through intake or the deployed Agent Runtime, so seeding is
+ * off unless explicitly opted into via this env var.
+ */
+export function fixturesEnabled(): boolean {
+  return process.env.COUNTERSIGN_ENABLE_FIXTURES === "true";
+}
+
 function globalStore(): GlobalStore {
   const g = globalThis as typeof globalThis & { __countersignDesk?: GlobalStore };
   if (!g.__countersignDesk) {
+    const seed = fixturesEnabled() ? SEED_CASES : [];
     g.__countersignDesk = {
-      cases: new Map(SEED_CASES.map((c) => [c.classified.case_id, structuredClone(c)])),
+      cases: new Map(seed.map((c) => [c.classified.case_id, structuredClone(c)])),
     };
   }
   return g.__countersignDesk;

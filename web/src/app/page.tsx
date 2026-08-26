@@ -1,12 +1,15 @@
 import { AppShell } from "@/components/app-shell";
 import { QueueRow } from "@/components/queue-row";
 import { listAllCases, liveEngineConfigured } from "@/lib/desk";
+import { fixturesEnabled } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 export default function Home() {
   const cases = listAllCases();
   const live = liveEngineConfigured();
+  const showOrigin = fixturesEnabled();
+  const columnCount = showOrigin ? 8 : 7;
 
   const pendingQp = cases.filter((c) => c.desk_stage === "pending_qp").length;
   const onHold = cases.filter((c) => c.desk_stage === "sterility_hold").length;
@@ -57,19 +60,21 @@ export default function Home() {
                 <Th>Severity</Th>
                 <Th>Stage</Th>
                 <Th>Gate</Th>
-                <Th>Source</Th>
+                {showOrigin ? <Th>Source</Th> : null}
                 <th className="w-8" aria-hidden />
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
               {cases.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-14 text-center text-sm text-ink-muted">
+                  <td colSpan={columnCount} className="px-5 py-14 text-center text-sm text-ink-muted">
                     No cases in the queue.
                   </td>
                 </tr>
               ) : (
-                cases.map((c) => <QueueRow key={c.case_id} c={c} />)
+                cases.map((c) => (
+                  <QueueRow key={c.case_id} c={c} showOrigin={showOrigin} />
+                ))
               )}
             </tbody>
           </table>

@@ -5,7 +5,13 @@ import type { KeyboardEvent, MouseEvent } from "react";
 import { GatePill, SeverityPill, StagePill } from "@/components/status-pill";
 import type { CaseQueueItem } from "@/lib/types";
 
-export function QueueRow({ c }: { c: CaseQueueItem }) {
+export function QueueRow({
+  c,
+  showOrigin,
+}: {
+  c: CaseQueueItem;
+  showOrigin: boolean;
+}) {
   const router = useRouter();
   const href = `/cases/${c.case_id}`;
 
@@ -42,15 +48,17 @@ export function QueueRow({ c }: { c: CaseQueueItem }) {
       <td className="px-5 py-4"><SeverityPill value={c.severity} /></td>
       <td className="px-5 py-4"><StagePill value={c.desk_stage} /></td>
       <td className="px-5 py-4"><GatePill value={c.gate_status} /></td>
-      <td className="px-5 py-4">
-        <span
-          className={`font-mono text-[11px] uppercase ${
-            c.origin === "live" ? "font-semibold text-brand" : "text-ink-faint"
-          }`}
-        >
-          {c.origin === "live" ? "live" : c.origin}
-        </span>
-      </td>
+      {showOrigin ? (
+        <td className="px-5 py-4">
+          <span
+            className={`font-mono text-[11px] uppercase ${
+              c.origin === "live" ? "font-semibold text-brand" : "text-ink-faint"
+            }`}
+          >
+            {c.origin === "live" ? "live" : c.origin}
+          </span>
+        </td>
+      ) : null}
       <td className="pr-4 text-right text-ink-faint opacity-0 transition-opacity group-hover:opacity-100">
         <svg className="inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
