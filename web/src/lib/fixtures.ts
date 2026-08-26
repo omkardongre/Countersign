@@ -5,34 +5,42 @@ import type {
   ComplianceFinding,
 } from "./types";
 
-const BMR_URI = "drive://synthetic/bmr/AX-2291/page-14";
-const LIMS_URI = "cloudsql://synthetic/lims/AX-2291";
-const EM_URI = "bigquery://synthetic/em/AX-2291";
-const COA_URI = "drive://synthetic/coa/AX-2291";
+// Evidence URIs are derived per batch. A citation must resolve to the batch it
+// is filed against — ARCHITECTURE.md: "Every claim carries its source." A
+// fixture that cited another batch's BMR page would show a QP evidence for a
+// batch they are not reviewing, so nothing here is shared across batches.
+const bmrUri = (batch: string) => `drive://synthetic/bmr/${batch}/page-14`;
+const limsUri = (batch: string) => `cloudsql://synthetic/lims/${batch}`;
+const emUri = (batch: string) => `bigquery://synthetic/em/${batch}`;
+const coaUri = (batch: string) => `drive://synthetic/coa/${batch}`;
+
 const SPEC_SHA =
   "labelled-synthetic-annex16-v1-not-a-live-hash";
 
-const blendFinding: ComplianceFinding = {
-  finding_id: "fnd-ax2291-blend",
-  finding_type: "out_of_trend",
-  field_name: "blend_speed_rpm",
-  label: "Blend speed",
-  root_cause_category: "method",
-  description:
-    "Blend speed 48 rpm sits inside specification (40–60) but is 3.1σ from the AXR450 trend baseline.",
-  anchor: {
-    artifact_filename: "AX-2291-bmr-page-14.png",
-    artifact_version: 1,
-    artifact_sha256: "synthetic-page-sha256",
-    source_uri: BMR_URI,
-    page_number: 14,
-    transcribed_context: "Blend speed: 48 rpm  (spec 40–60)",
-  },
-  observed_value: "48 rpm",
-  expected_value: "trend mean 52.4 rpm ± 1.2",
-  oos_phase: null,
-  sigma_distance: 3.1,
-};
+/** The blend-speed OOT finding, anchored to the batch's own BMR page. */
+function blendFinding(batch: string): ComplianceFinding {
+  return {
+    finding_id: `fnd-${batch.toLowerCase().replace("-", "")}-blend`,
+    finding_type: "out_of_trend",
+    field_name: "blend_speed_rpm",
+    label: "Blend speed",
+    root_cause_category: "method",
+    description:
+      "Blend speed 48 rpm sits inside specification (40–60) but is 3.1σ from the AXR450 trend baseline.",
+    anchor: {
+      artifact_filename: `${batch}-bmr-page-14.png`,
+      artifact_version: 1,
+      artifact_sha256: "synthetic-page-sha256",
+      source_uri: bmrUri(batch),
+      page_number: 14,
+      transcribed_context: "Blend speed: 48 rpm  (spec 40–60)",
+    },
+    observed_value: "48 rpm",
+    expected_value: "trend mean 52.4 rpm ± 1.2",
+    oos_phase: null,
+    sigma_distance: 3.1,
+  };
+}
 
 function annex(
   ref: string,
@@ -61,7 +69,7 @@ const unevaluated = (ref: string, title: string) =>
     false,
   );
 
-function ax2291Annex(ready: boolean): ChecklistItemResult[] {
+function annexChecklist(batch: string, ready: boolean): ChecklistItemResult[] {
   return [
     unevaluated("1.7.1", "Manufacture and testing conducted in accordance with GMP."),
     unevaluated(
@@ -86,7 +94,7 @@ function ax2291Annex(ready: boolean): ChecklistItemResult[] {
       "pass",
       "Supply branch collected; no materials findings.",
       true,
-      [COA_URI],
+      [coaUri(batch)],
     ),
     unevaluated(
       "1.7.7",
@@ -110,7 +118,7 @@ function ax2291Annex(ready: boolean): ChecklistItemResult[] {
       "pass",
       "Manufacturing branch collected; no completeness findings.",
       true,
-      [BMR_URI],
+      [bmrUri(batch)],
     ),
     unevaluated(
       "1.7.12",
@@ -122,7 +130,7 @@ function ax2291Annex(ready: boolean): ChecklistItemResult[] {
       "pass",
       "QC branch collected; no OOS findings.",
       true,
-      [LIMS_URI],
+      [limsUri(batch)],
     ),
     unevaluated(
       "1.7.14",
@@ -140,7 +148,7 @@ function ax2291Annex(ready: boolean): ChecklistItemResult[] {
         ? "Investigation gate passed; OOT finding cited on the BMR page."
         : "Open investigation remains on the batch (OOT blend speed).",
       true,
-      [BMR_URI],
+      [bmrUri(batch)],
     ),
     annex(
       "1.7.17",
@@ -148,7 +156,7 @@ function ax2291Annex(ready: boolean): ChecklistItemResult[] {
       ready ? "pass" : "fail",
       ready
         ? "No open batch issues remain on the joined case."
-        : "This deviation is still open against AX-2291.",
+        : `This deviation is still open against ${batch}.`,
       true,
     ),
     annex(
@@ -175,148 +183,164 @@ function ax2291Annex(ready: boolean): ChecklistItemResult[] {
   ];
 }
 
-const ax2291Base = {
-  data_class: "labelled_synthetic" as const,
-  intake: {
-    tenant_id: "aurex",
-    batch_id: "AX-2291",
-    product_name: "AXR450 Sterile Injectable",
-    doc_type: "batch_record" as const,
-    description:
-      "Blend-speed excursion recorded on BMR page 14 during compounding of AX-2291.",
-    reported_by: "M. Chen (compounding, synthetic)",
-    evidence_refs: [BMR_URI],
-    detected_at: "2026-08-12T09:14:00.000Z",
-    patient_safety_impact: false,
-    sterility_assurance_impact: true,
-    product_quality_impact: "potential" as const,
-    affects_release_criteria: true,
-    regulatory_reportable: false,
-    prior_occurrences_90d: 1,
-  },
-  aggregated_status: "sufficient_for_investigation" as const,
-  branches: [
-    {
-      department: "manufacturing" as const,
-      status: "ok" as const,
-      error: null,
-      source_uris: [BMR_URI],
-      findings: [blendFinding],
-      decision_authority: "none" as const,
-    },
-    {
-      department: "qc" as const,
-      status: "ok" as const,
-      error: null,
-      source_uris: [LIMS_URI],
-      findings: [],
-      decision_authority: "none" as const,
-    },
-    {
-      department: "environmental_monitoring" as const,
-      status: "ok" as const,
-      error: null,
-      source_uris: [EM_URI],
-      findings: [],
-      decision_authority: "none" as const,
-    },
-    {
-      department: "supply" as const,
-      status: "ok" as const,
-      error: null,
-      source_uris: [COA_URI],
-      findings: [],
-      decision_authority: "none" as const,
-    },
-  ],
-  findings: [blendFinding],
-  prior_art: [
-    {
-      fact_id: "mem-aurex-2188",
+/**
+ * The shared shape of an AXR450 blend-speed case, built per batch.
+ *
+ * Deliberately a factory rather than one object spread across batches: every
+ * evidence URI, finding id, and cited claim has to name the batch it belongs
+ * to. Spreading a single literal silently gave one batch another batch's
+ * citations, which is exactly what the citation gate exists to prevent.
+ */
+function caseBase(batch: string) {
+  const finding = blendFinding(batch);
+  const bmr = bmrUri(batch);
+  const caseId = `case-${batch.toLowerCase()}`;
+
+  return {
+    data_class: "labelled_synthetic" as const,
+    intake: {
       tenant_id: "aurex",
-      case_id: "case-ax-2188",
-      batch_id: "AX-2188",
-      fact: "Prior AXR450 compounding OOT on blend speed was closed as method (set-point drift on mixer M-12).",
-      source_uri: "qms://synthetic/deviations/AX-2188",
-      confidence: 0.81,
-      observed_at: "2026-05-03T16:00:00.000Z",
-      redacted: false,
+      batch_id: batch,
+      product_name: "AXR450 Sterile Injectable",
+      doc_type: "batch_record" as const,
+      description: `Blend-speed excursion recorded on BMR page 14 during compounding of ${batch}.`,
+      reported_by: "M. Chen (compounding, synthetic)",
+      evidence_refs: [bmr],
+      detected_at: "2026-08-12T09:14:00.000Z",
+      patient_safety_impact: false,
+      sterility_assurance_impact: true,
+      product_quality_impact: "potential" as const,
+      affects_release_criteria: true,
+      regulatory_reportable: false,
+      prior_occurrences_90d: 1,
     },
-  ],
-  prior_art_embedded: true,
-  extracted_fields: [
-    {
-      field_name: "batch_id",
-      label: "Batch",
-      value: "AX-2291",
-      confidence: 0.99,
-      needs_review: false,
-    },
-    {
-      field_name: "blend_speed_rpm",
-      label: "Blend speed",
-      value: "48 rpm",
-      confidence: 0.71,
-      needs_review: true,
-    },
-    {
-      field_name: "operator_signoff",
-      label: "Operator sign-off",
-      value: "M. Chen",
-      confidence: 0.94,
-      needs_review: false,
-    },
-  ],
-  draft: {
-    tenant_id: "aurex",
-    case_id: "case-ax-2291",
-    batch_id: "AX-2291",
-    hypotheses: [
+    aggregated_status: "sufficient_for_investigation" as const,
+    branches: [
       {
-        category: "method" as const,
-        statement:
-          "Blend-speed excursion on the BMR is the leading process deviation to investigate.",
-        supporting_claims: [
-          {
-            claim: "Manufacturing ingested BMR page 14 with blend speed 48 rpm.",
-            source_uris: [BMR_URI],
-            finding_ids: ["fnd-ax2291-blend"],
-          },
-        ],
-        confidence: 0.62,
+        department: "manufacturing" as const,
+        status: "ok" as const,
+        error: null,
+        source_uris: [bmr],
+        findings: [finding],
+        decision_authority: "none" as const,
+      },
+      {
+        department: "qc" as const,
+        status: "ok" as const,
+        error: null,
+        source_uris: [limsUri(batch)],
+        findings: [],
+        decision_authority: "none" as const,
+      },
+      {
+        department: "environmental_monitoring" as const,
+        status: "ok" as const,
+        error: null,
+        source_uris: [emUri(batch)],
+        findings: [],
+        decision_authority: "none" as const,
+      },
+      {
+        department: "supply" as const,
+        status: "ok" as const,
+        error: null,
+        source_uris: [coaUri(batch)],
+        findings: [],
+        decision_authority: "none" as const,
       },
     ],
-    product_impact: {
-      statement:
-        "Patient-safety impact is not determined by this draft. Sterility-assurance impact is on the classified case.",
-      supporting_claims: [
+    findings: [finding],
+    prior_art: [
+      {
+        fact_id: "mem-aurex-2188",
+        tenant_id: "aurex",
+        case_id: "case-ax-2188",
+        batch_id: "AX-2188",
+        fact: "Prior AXR450 compounding OOT on blend speed was closed as method (set-point drift on mixer M-12).",
+        source_uri: "qms://synthetic/deviations/AX-2188",
+        confidence: 0.81,
+        observed_at: "2026-05-03T16:00:00.000Z",
+        redacted: false,
+      },
+    ],
+    prior_art_embedded: true,
+    extracted_fields: [
+      {
+        field_name: "batch_id",
+        label: "Batch",
+        value: batch,
+        confidence: 0.99,
+        needs_review: false,
+      },
+      {
+        field_name: "blend_speed_rpm",
+        label: "Blend speed",
+        value: "48 rpm",
+        confidence: 0.71,
+        needs_review: true,
+      },
+      {
+        field_name: "operator_signoff",
+        label: "Operator sign-off",
+        value: "M. Chen",
+        confidence: 0.94,
+        needs_review: false,
+      },
+    ],
+    draft: {
+      tenant_id: "aurex",
+      case_id: caseId,
+      batch_id: batch,
+      hypotheses: [
         {
-          claim: "Sterility-assurance impact was set at intake, not inferred.",
-          source_uris: [BMR_URI],
-          finding_ids: [],
+          category: "method" as const,
+          statement:
+            "Blend-speed excursion on the BMR is the leading process deviation to investigate.",
+          supporting_claims: [
+            {
+              claim: "Manufacturing ingested BMR page 14 with blend speed 48 rpm.",
+              source_uris: [bmr],
+              finding_ids: [finding.finding_id],
+            },
+          ],
+          confidence: 0.62,
         },
       ],
-      patient_safety_touch: false,
-    },
-    open_questions: [
-      "Was mixer M-12 set-point verified after the previous AX-2188 close-out?",
-    ],
-    decision_authority: "none" as const,
-  },
-  challenger: {
-    attacks: [
-      {
-        attack_type: "alternative_cause" as const,
-        target: "method / mixer set-point",
-        detail:
-          "A measurement error on the tachometer would also explain 48 rpm without a process change.",
+      product_impact: {
+        statement:
+          "Patient-safety impact is not determined by this draft. Sterility-assurance impact is on the classified case.",
+        supporting_claims: [
+          {
+            claim: "Sterility-assurance impact was set at intake, not inferred.",
+            source_uris: [bmr],
+            finding_ids: [],
+          },
+        ],
+        patient_safety_touch: false,
       },
-    ],
+      open_questions: [
+        "Was mixer M-12 set-point verified after the previous AX-2188 close-out?",
+      ],
+      decision_authority: "none" as const,
+    },
+    challenger: {
+      attacks: [
+        {
+          attack_type: "alternative_cause" as const,
+          target: "method / mixer set-point",
+          detail:
+            "A measurement error on the tachometer would also explain 48 rpm without a process change.",
+        },
+      ],
+      decision_authority: "none" as const,
+    },
+    cfi: null,
     decision_authority: "none" as const,
-  },
-  cfi: null,
-  decision_authority: "none" as const,
-};
+  };
+}
+
+const ax2291Base = caseBase("AX-2291");
+const ax2402Base = caseBase("AX-2402");
 
 const ax2402Cfi: CfiDeskState = {
   cfi_id: "cfi-fixture-ax-2402",
@@ -530,7 +554,7 @@ export const SEED_CASES: CaseDeskRecord[] = [
       severity: "critical",
       lifecycle_state: "pending_qp",
       decision_authority: "none",
-      evidence_refs: [BMR_URI],
+      evidence_refs: [bmrUri("AX-2291")],
       rationale: "sterility_assurance_impact=true",
       classified_at: "2026-08-12T09:14:12.000Z",
     },
@@ -544,7 +568,7 @@ export const SEED_CASES: CaseDeskRecord[] = [
       spec_id: "annex16_qp_checklist",
       spec_version: "1.0.0",
       spec_sha256: SPEC_SHA,
-      items: ax2291Annex(false),
+      items: annexChecklist("AX-2291", false),
       blocked_reasons: [
         "1.7.16 investigations remain open on the batch.",
         "1.7.17 this deviation is still open against AX-2291.",
@@ -556,15 +580,13 @@ export const SEED_CASES: CaseDeskRecord[] = [
     qp_confirmation: null,
   },
   {
-    ...ax2291Base,
+    ...ax2402Base,
     origin: "fixture",
     desk_stage: "pending_qp",
     intake: {
-      ...ax2291Base.intake,
-      batch_id: "AX-2402",
+      ...ax2402Base.intake,
       description:
         "Closed investigation pack for AX-2402 (labelled synthetic). Same product family as AX-2291.",
-      evidence_refs: ["drive://synthetic/bmr/AX-2402/page-14"],
     },
     classified: {
       case_id: "case-ax-2402",
@@ -575,14 +597,12 @@ export const SEED_CASES: CaseDeskRecord[] = [
       severity: "critical",
       lifecycle_state: "pending_qp",
       decision_authority: "none",
-      evidence_refs: ["drive://synthetic/bmr/AX-2402/page-14"],
+      evidence_refs: [bmrUri("AX-2402")],
       rationale: "sterility_assurance_impact=true",
       classified_at: "2026-07-22T11:02:00.000Z",
     },
     draft: {
-      ...ax2291Base.draft!,
-      case_id: "case-ax-2402",
-      batch_id: "AX-2402",
+      ...ax2402Base.draft,
       open_questions: [],
     },
     challenger: {
@@ -599,11 +619,7 @@ export const SEED_CASES: CaseDeskRecord[] = [
       spec_id: "annex16_qp_checklist",
       spec_version: "1.0.0",
       spec_sha256: SPEC_SHA,
-      items: ax2291Annex(true).map((item) =>
-        item.annex_ref === "1.7.16" || item.annex_ref === "1.7.17"
-          ? { ...item, evidence_uris: ["drive://synthetic/bmr/AX-2402/page-14"] }
-          : item,
-      ),
+      items: annexChecklist("AX-2402", true),
       blocked_reasons: [],
       decision_authority: "none",
     },
