@@ -38,6 +38,7 @@ const NODE = {
   intake: "intake_and_bind_evidence",
   collectManufacturing: "collect_manufacturing",
   collectQc: "collect_qc",
+  collectEnvironmentalMonitoring: "collect_environmental_monitoring",
   collectSupply: "collect_supply",
   reconcile: "reconcile_departments",
   priorArt: "retrieve_prior_art",
@@ -474,6 +475,7 @@ export function projectLiveEvents(
     switch (author) {
       case NODE.collectManufacturing:
       case NODE.collectQc:
+      case NODE.collectEnvironmentalMonitoring:
       case NODE.collectSupply: {
         const branch = output as unknown as BranchOutcome;
         branchByDept.set(branch.department, branch);

@@ -30,7 +30,11 @@ export type RootCauseCategory =
   | "personnel"
   | "environment"
   | "unclassified";
-export type Department = "manufacturing" | "qc" | "supply";
+export type Department =
+  | "manufacturing"
+  | "qc"
+  | "environmental_monitoring"
+  | "supply";
 export type BranchStatus = "ok" | "failed";
 export type ChecklistItemStatus = "pass" | "fail" | "not_evaluated";
 export type ReleaseGateStatus = "ready_for_qp_review" | "not_ready";

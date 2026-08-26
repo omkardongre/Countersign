@@ -7,6 +7,7 @@ import type {
 
 const BMR_URI = "drive://synthetic/bmr/AX-2291/page-14";
 const LIMS_URI = "cloudsql://synthetic/lims/AX-2291";
+const EM_URI = "bigquery://synthetic/em/AX-2291";
 const COA_URI = "drive://synthetic/coa/AX-2291";
 const SPEC_SHA =
   "labelled-synthetic-annex16-v1-not-a-live-hash";
@@ -208,6 +209,14 @@ const ax2291Base = {
       status: "ok" as const,
       error: null,
       source_uris: [LIMS_URI],
+      findings: [],
+      decision_authority: "none" as const,
+    },
+    {
+      department: "environmental_monitoring" as const,
+      status: "ok" as const,
+      error: null,
+      source_uris: [EM_URI],
       findings: [],
       decision_authority: "none" as const,
     },
