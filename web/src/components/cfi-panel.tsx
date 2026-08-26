@@ -1,3 +1,5 @@
+import { SourceRef } from "@/components/source-ref";
+import { labelForSourceUri } from "@/lib/source-uri";
 import type {
   CaseDeskRecord,
   CfiDeskState,
@@ -204,7 +206,14 @@ function CfiInterviews({ interviews }: { interviews: CfiInterviewSummary[] }) {
               </div>
               {interview.question && <p className="mt-1 text-sm">Q: {interview.question}</p>}
               <p className="mt-1 font-mono text-[11px] text-ink-muted">
-                {interview.thread_name ?? "thread not available"}
+                {interview.thread_name ? (
+                  <SourceRef
+                    uri={interview.thread_name}
+                    className="inline font-mono text-[11px] text-ink-muted"
+                  />
+                ) : (
+                  "thread not available"
+                )}
                 {interview.deadline_at ? ` · deadline ${formatWhen(interview.deadline_at)}` : ""}
               </p>
               {interview.replies.length > 0 && (
@@ -245,7 +254,7 @@ function CfiEvidence({ cfi }: { cfi: CfiDeskState }) {
                 <span className="font-mono text-[11px] text-ink-muted">round {item.round_number}</span>
               </div>
               <p className="mt-1 text-[13px]">{item.fact}</p>
-              <p className="mt-1 break-all font-mono text-[11px] text-ink-muted">{item.source_uri}</p>
+              <SourceRef uri={item.source_uri} className="mt-1 font-mono text-[11px] text-ink-muted" />
               <p className="font-mono text-[11px] text-ink-muted">captured {formatWhen(item.captured_at)}</p>
             </li>
           ))}
@@ -386,7 +395,14 @@ function ExternalRef({ value }: { value: string }) {
       </a>
     );
   }
-  return <span className="break-all font-mono text-[12px] text-ink-muted">{value}</span>;
+  return (
+    <details className="font-mono text-[12px] text-ink-muted">
+      <summary className="cursor-pointer list-none marker:content-none">
+        {labelForSourceUri(value)}
+      </summary>
+      <span className="mt-0.5 block break-all">{value}</span>
+    </details>
+  );
 }
 
 function formatWhen(iso: string) {

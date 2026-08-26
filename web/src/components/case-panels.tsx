@@ -1,3 +1,4 @@
+import { SourceRef, SourceRefList } from "@/components/source-ref";
 import { ItemStatus } from "@/components/status-pill";
 import type { CaseDeskRecord } from "@/lib/types";
 
@@ -122,7 +123,16 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
                   <p className="mt-2 text-sm leading-relaxed text-ink-soft">{f.description}</p>
                   <p className="mt-2 font-mono text-[12px] text-ink-faint">
                     {f.observed_value ?? "—"} vs {f.expected_value ?? "—"}
-                    {f.anchor ? ` · ${f.anchor.source_uri} p.${f.anchor.page_number}` : ""}
+                    {f.anchor && (
+                      <>
+                        {" · "}
+                        <SourceRef
+                          uri={f.anchor.source_uri}
+                          className="inline font-mono text-[12px] text-ink-faint"
+                        />
+                        {` p.${f.anchor.page_number}`}
+                      </>
+                    )}
                   </p>
                 </li>
               ))}
@@ -154,9 +164,7 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
                   {h.supporting_claims.map((c) => (
                     <li key={c.claim} className="text-[13px] text-ink-soft">
                       {c.claim}
-                      <span className="mt-0.5 block font-mono text-[11px] text-ink-faint">
-                        {c.source_uris.join(" · ")}
-                      </span>
+                      <SourceRefList uris={c.source_uris} />
                     </li>
                   ))}
                 </ul>
@@ -236,7 +244,7 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
                   <p className="mt-1.5 font-mono text-[11px] text-ink-faint">
                     {f.tenant_id} · {f.batch_id} · {f.confidence.toFixed(2)}
                   </p>
-                  <p className="break-all font-mono text-[11px] text-ink-faint">{f.source_uri}</p>
+                  <SourceRef uri={f.source_uri} />
                 </li>
               ))}
             </ul>
