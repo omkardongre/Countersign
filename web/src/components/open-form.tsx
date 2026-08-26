@@ -62,6 +62,13 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    const holdDays = Number.parseInt(form.sterility_hold_days, 10);
+    if (!Number.isFinite(holdDays) || holdDays <= 0) {
+      setError(
+        "Sterility incubation hold (days) is required. There is no platform default.",
+      );
+      return;
+    }
     setPending(true);
     try {
       const res = await fetch("/api/cases", {
@@ -222,26 +229,26 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
           <Check label="Regulatory reportable" checked={form.regulatory_reportable} onChange={(v) => setForm({ ...form, regulatory_reportable: v })} />
         </div>
 
-        {form.sterility_assurance_impact && (
-          <div className="mt-4">
-            <label htmlFor="sterility-hold-days" className="label">
-              Sterility incubation hold (days)
-            </label>
-            <input
-              id="sterility-hold-days"
-              type="number"
-              min={1}
-              placeholder="14 (platform default)"
-              value={form.sterility_hold_days}
-              onChange={(e) => setForm({ ...form, sterility_hold_days: e.target.value })}
-              className="field tabular sm:w-48"
-            />
-            <p className="mt-1 text-[12px] text-ink-muted">
-              Product-specific pharmacopeia sterility test duration. Leave blank
-              to use the platform default of 14 days.
-            </p>
-          </div>
-        )}
+        <div className="mt-4">
+          <label htmlFor="sterility-hold-days" className="label">
+            Sterility incubation hold (days)
+          </label>
+          <input
+            id="sterility-hold-days"
+            type="number"
+            min={1}
+            required
+            placeholder="e.g. 14"
+            value={form.sterility_hold_days}
+            onChange={(e) => setForm({ ...form, sterility_hold_days: e.target.value })}
+            className="field tabular sm:w-48"
+          />
+          <p className="mt-1 text-[12px] text-ink-muted">
+            Required. Product-specific pharmacopeia sterility test duration
+            for this batch. There is no platform default — QA sets the exact
+            hold here for every case.
+          </p>
+        </div>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <div>
@@ -428,10 +435,11 @@ function toIntake(form: {
     detected_at: new Date().toISOString(),
     patient_safety_impact: form.patient_safety_impact,
     sterility_assurance_impact: form.sterility_assurance_impact,
+    // Required; onSubmit blocks the request before this reaches the server
+    // if it is not a positive integer. The severity preview above tolerates
+    // an incomplete in-progress value (defaults to 1) since it never submits.
     sterility_hold_days:
-      form.sterility_assurance_impact && Number.isFinite(parsedHoldDays) && parsedHoldDays > 0
-        ? parsedHoldDays
-        : null,
+      Number.isFinite(parsedHoldDays) && parsedHoldDays > 0 ? parsedHoldDays : 1,
     product_quality_impact: form.product_quality_impact,
     affects_release_criteria: form.affects_release_criteria,
     regulatory_reportable: form.regulatory_reportable,

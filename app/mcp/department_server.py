@@ -405,9 +405,10 @@ def build_department_mcp(
         title="Start sterility incubation",
         description=(
             "Start (or return the existing) sterility incubation clock for "
-            "one tenant and batch, defaulting to 14 days unless a case- "
-            "specific hold_seconds is given. Idempotent. This is a lab "
-            "clock, not a batch disposition."
+            "one tenant and batch. hold_seconds is required (there is no "
+            "platform default) unless the deployment's demo-compression "
+            "env var is set. Idempotent. This is a lab clock, not a batch "
+            "disposition."
         ),
         annotations=_IDEMPOTENT_WRITE,
     )

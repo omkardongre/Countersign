@@ -79,5 +79,6 @@ def sterility_released() -> None:
         batch_id="AX-2291",
         case_id="pre-released",
         workflow_version="test",
+        hold_seconds=14 * 24 * 60 * 60,
     )
     store.complete("aurex", "AX-2291")

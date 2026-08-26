@@ -134,8 +134,8 @@ def main() -> int:
         "--sterility-hold-seconds",
         default=None,
         help=(
-            "Compress the 14-day incubation for a demo run. Records are "
-            "labelled compressed_for_demo when this is set."
+            "Compress the QA-specified incubation duration for a demo/dev "
+            "run. Records are labelled compressed_for_demo when this is set."
         ),
     )
     args = parser.parse_args()

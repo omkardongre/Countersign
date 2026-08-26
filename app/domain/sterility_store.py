@@ -28,7 +28,6 @@ from app.domain.sterility_models import (
     SterilityResumeHandle,
 )
 
-DEFAULT_HOLD = datetime.timedelta(days=14)
 HOLD_SECONDS_ENV = "COUNTERSIGN_STERILITY_HOLD_SECONDS"
 STORE_PATH_ENV = "COUNTERSIGN_STERILITY_DB"
 
@@ -38,12 +37,12 @@ def incubation_hold(
 ) -> tuple[datetime.timedelta, bool]:
     """Return (hold, compressed_for_demo).
 
-    ``COUNTERSIGN_STERILITY_HOLD_SECONDS`` always wins when set: it exists
-    only to compress a demo/test run, and must still be able to force-shorten
-    even a QA-specified case duration. Otherwise a case-specific duration
-    (``case_hold_seconds``, threaded from ``CaseIntake.sterility_hold_days``)
-    is used when given, falling back to the fixed 14-day ``DEFAULT_HOLD``
-    only when neither is provided.
+    There is no platform-wide default: pharmacopeia sterility test durations
+    are product-specific, and QA sets the real duration at intake
+    (``CaseIntake.sterility_hold_days``). ``COUNTERSIGN_STERILITY_HOLD_SECONDS``
+    always wins when set — it exists only to compress a local/dev run, and
+    must still be able to force-shorten even a QA-specified duration.
+    Otherwise ``case_hold_seconds`` is required.
     """
     raw = os.environ.get(HOLD_SECONDS_ENV)
     if raw is not None and raw != "":
@@ -56,13 +55,16 @@ def incubation_hold(
         if seconds <= 0:
             raise ValueError(f"{HOLD_SECONDS_ENV} must be > 0, not {seconds}.")
         return datetime.timedelta(seconds=seconds), True
-    if case_hold_seconds is not None:
-        if case_hold_seconds <= 0:
-            raise ValueError(
-                f"case_hold_seconds must be > 0, not {case_hold_seconds}."
-            )
-        return datetime.timedelta(seconds=case_hold_seconds), False
-    return DEFAULT_HOLD, False
+    if case_hold_seconds is None:
+        raise ValueError(
+            "No sterility hold duration was provided. QA must set "
+            "CaseIntake.sterility_hold_days at intake; there is no "
+            f"platform default. (Set {HOLD_SECONDS_ENV} only to compress a "
+            "local/dev run.)"
+        )
+    if case_hold_seconds <= 0:
+        raise ValueError(f"case_hold_seconds must be > 0, not {case_hold_seconds}.")
+    return datetime.timedelta(seconds=case_hold_seconds), False
 
 
 def _utcnow() -> datetime.datetime:

@@ -53,6 +53,7 @@ def _park(
         batch_id="AX-2291",
         case_id="case-1",
         workflow_version="deviation_case.1",
+        hold_seconds=14 * 24 * 60 * 60,
         now=started_at or datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
     )
     if handle:

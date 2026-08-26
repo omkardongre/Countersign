@@ -245,6 +245,7 @@ def _case_payload(**intake_overrides) -> dict:
         "reported_by": "qa-shift-lead",
         "evidence_refs": ["drive://synthetic/bmr/AX-2291/page-14"],
         "sterility_assurance_impact": True,
+        "sterility_hold_days": 14,
     }
     intake.update(intake_overrides)
     return {

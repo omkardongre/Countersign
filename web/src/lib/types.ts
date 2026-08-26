@@ -66,7 +66,7 @@ export type CaseIntake = {
   detected_at: string;
   patient_safety_impact: boolean;
   sterility_assurance_impact: boolean;
-  sterility_hold_days: number | null;
+  sterility_hold_days: number;
   product_quality_impact: ProductQualityImpact;
   affects_release_criteria: boolean;
   regulatory_reportable: boolean;
@@ -79,7 +79,7 @@ export type ClassifiedCase = {
   batch_id: string;
   product_name: string;
   doc_type: DocType;
-  sterility_hold_days: number | null;
+  sterility_hold_days: number;
   severity: DeviationSeverity;
   lifecycle_state: LifecycleState;
   decision_authority: typeof DECISION_AUTHORITY;

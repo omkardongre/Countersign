@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""14-day sterility incubation records. External state, not an LLM."""
+"""Sterility incubation records. External state, not an LLM.
+
+QA sets the hold duration per case at intake; there is no fixed platform-wide
+duration (pharmacopeia sterility test durations are product-specific).
+"""
 
 from __future__ import annotations
 

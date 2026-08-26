@@ -29,6 +29,7 @@ def _make_intake(**overrides) -> CaseIntake:
         "doc_type": DocType.BATCH_RECORD,
         "description": "unit test intake",
         "reported_by": "test-operator",
+        "sterility_hold_days": 14,
     }
     defaults.update(overrides)
     return CaseIntake(**defaults)

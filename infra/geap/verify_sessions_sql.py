@@ -56,6 +56,7 @@ def main() -> int:
         batch_id=batch,
         case_id="sql-probe",
         workflow_version="deviation_case.1",
+        hold_seconds=14 * 24 * 60 * 60,
     )
     done = store.complete("aurex", batch)
     assert done.status.value == "complete"

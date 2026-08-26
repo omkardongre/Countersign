@@ -56,6 +56,7 @@ class TestCrossTenantScoping:
                 case_id="case-1",
                 workflow_version="v1",
                 case_tenant_id="novara",
+                hold_seconds=14 * 24 * 60 * 60,
             )
 
     def test_sterility_get_rejects_mismatched_case_tenant(self) -> None:
@@ -64,6 +65,7 @@ class TestCrossTenantScoping:
             batch_id="AX-2291",
             case_id="case-1",
             workflow_version="v1",
+            hold_seconds=14 * 24 * 60 * 60,
         )
         with pytest.raises(SterilityTenantMismatch):
             sterility_get(
@@ -78,6 +80,7 @@ class TestCrossTenantScoping:
             batch_id="AX-2291",
             case_id="case-1",
             workflow_version="v1",
+            hold_seconds=14 * 24 * 60 * 60,
         )
         handle = SterilityResumeHandle(
             app_name="app",
@@ -105,6 +108,7 @@ class TestCrossTenantScoping:
             case_id="case-1",
             workflow_version="v1",
             case_tenant_id="aurex",
+            hold_seconds=14 * 24 * 60 * 60,
         )
         assert record.tenant_id == "aurex"
         assert (
@@ -125,6 +129,7 @@ class TestAtomicTick:
             batch_id="AX-2291",
             case_id="case-1",
             workflow_version="v1",
+            hold_seconds=14 * 24 * 60 * 60,
             now=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         ).due_at
 
@@ -142,6 +147,7 @@ class TestAtomicTick:
             batch_id="AX-2291",
             case_id="case-1",
             workflow_version="v1",
+            hold_seconds=14 * 24 * 60 * 60,
             now=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         ).due_at
 
@@ -159,6 +165,7 @@ class TestAtomicTick:
             batch_id="AX-2291",
             case_id="case-1",
             workflow_version="v1",
+            hold_seconds=14 * 24 * 60 * 60,
             now=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         ).due_at
 
@@ -206,6 +213,7 @@ class TestResumeErrorRecoverability:
             batch_id="AX-2291",
             case_id="case-1",
             workflow_version="v1",
+            hold_seconds=14 * 24 * 60 * 60,
             now=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         )
         store.bind_resume_handle(

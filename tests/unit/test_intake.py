@@ -50,6 +50,7 @@ def _intake_payload(**overrides) -> dict:
         "description": "unit test intake",
         "reported_by": "test-operator",
         "evidence_refs": ["drive://file/123"],
+        "sterility_hold_days": 14,
     }
     payload.update(overrides)
     return payload

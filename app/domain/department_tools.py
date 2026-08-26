@@ -640,8 +640,9 @@ def sterility_start(
     this clock through this tool rather than opening Cloud SQL itself.
 
     ``hold_seconds`` carries the QA-specified, product-specific sterility
-    duration from ``CaseIntake.sterility_hold_days``; ``None`` falls back to
-    the platform default (or the demo-compression env var) inside the store.
+    duration from ``CaseIntake.sterility_hold_days``. There is no platform
+    default: the store raises if neither this nor the demo-compression env
+    var is set.
     """
     _check_case_tenant(tenant_id, case_tenant_id)
     from app.domain.sterility_store import get_sterility_store

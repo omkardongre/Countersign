@@ -125,26 +125,41 @@ def test_await_node_reruns_on_resume() -> None:
     assert await_sterility_incubation.name == "await_sterility_incubation"
 
 
-def test_start_is_idempotent_and_defaults_to_fourteen_days() -> None:
+def test_start_is_idempotent_and_uses_the_qa_specified_hold() -> None:
     store = get_sterility_store()
+    fourteen_days_in_seconds = 14 * 24 * 60 * 60
     first = store.start(
         tenant_id="aurex",
         batch_id="AX-2291",
         case_id="case-1",
         workflow_version="deviation_case.1",
+        hold_seconds=fourteen_days_in_seconds,
     )
     second = store.start(
         tenant_id="aurex",
         batch_id="AX-2291",
         case_id="case-2",
         workflow_version="deviation_case.1",
+        hold_seconds=999999,  # ignored: start() is idempotent per batch
     )
     assert first.case_id == "case-1"
     assert second.started_at == first.started_at
     assert first.status is SterilityIncubationStatus.PENDING
-    assert first.hold_seconds == 14 * 24 * 60 * 60
+    assert first.hold_seconds == fourteen_days_in_seconds
     assert first.compressed_for_demo is False
     assert first.decision_authority == "none"
+
+
+def test_start_without_a_hold_duration_raises() -> None:
+    """No platform default: a case-specific duration is required."""
+    store = get_sterility_store()
+    with pytest.raises(ValueError, match="No sterility hold duration"):
+        store.start(
+            tenant_id="aurex",
+            batch_id="AX-2291",
+            case_id="case-1",
+            workflow_version="deviation_case.1",
+        )
 
 
 def test_tick_is_idempotent_and_waits_until_due() -> None:
@@ -154,6 +169,7 @@ def test_tick_is_idempotent_and_waits_until_due() -> None:
         batch_id="AX-2291",
         case_id="case-1",
         workflow_version="deviation_case.1",
+        hold_seconds=14 * 24 * 60 * 60,
         now=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
     )
     assert tick_due_incubations(
@@ -174,6 +190,7 @@ def test_sqlite_store_survives_a_new_connection(tmp_path) -> None:
         batch_id="AX-2291",
         case_id="case-1",
         workflow_version="deviation_case.1",
+        hold_seconds=14 * 24 * 60 * 60,
     )
     first.complete("aurex", "AX-2291")
     second = SqliteSterilityStore(path)
