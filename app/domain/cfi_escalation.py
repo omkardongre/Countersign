@@ -18,7 +18,7 @@ Deterministic only — no agent, no LLM call. Runs ``decide_cfi_required()``
 over the already-computed ``InvestigationCaseResult`` and, if a CFI is
 warranted, creates and persists the seed ``CfiInvestigation`` record. It
 does **not** run the CFI inline: the CFI graph is deployed as its own Agent
-Runtime (``13_cfi_extended_investigation_plan.md`` section 4.1) and is
+Runtime (``ARCHITECTURE.md`` section 7) and is
 resumed separately, by id, once escalation has happened here.
 
 This node does not alter, gate, or delay anything the case graph already

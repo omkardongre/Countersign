@@ -15,7 +15,7 @@
 """Parallel department collectors. Each always yields Event.output for JoinNode.
 
 QC and supply are real agent nodes (``qc_lab_agent`` / ``supply_assurance_agent``
-per ``final_reseach/10_gap_analysis_and_win_plan.md`` section 4.1): each is a
+per ``final_reseach/ARCHITECTURE.md`` section 5): each is a
 ``mode="single_turn"`` ``Agent`` bound to its own real MCP-backed tools. The
 agent decides to call its tools; the tool functions perform the actual MCP
 call and capture the typed snapshot in a closure. Deterministic checks
@@ -270,7 +270,7 @@ def _make_em_tool(bundle: CaseEvidenceBundle, captured: dict[str, Any]) -> Any:
     Separate from QC's closure because environmental monitoring is its own
     department with its own data system (BigQuery, not the LIMS Cloud SQL
     connector), per the target architecture in
-    ``final_reseach/10_gap_analysis_and_win_plan.md`` section 4.1.
+    ``final_reseach/ARCHITECTURE.md`` section 5.
     """
 
     async def query_environmental_monitoring() -> dict[str, Any]:

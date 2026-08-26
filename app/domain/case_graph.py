@@ -38,7 +38,7 @@ stall the join (ADK JoinNode caution).
 Manufacturing, QC lab, environmental monitoring, and supply are each a real
 single-turn ``Agent`` bound to its own MCP-backed tool(s)
 (``app/domain/branches.py``), per the target architecture in
-``final_reseach/10_gap_analysis_and_win_plan.md`` section 4.1. Each agent
+``final_reseach/ARCHITECTURE.md`` section 5. Each agent
 decides to call its own tool; deterministic checks
 (``resolve_compliance_result``/``check_lims``/``check_em``/``check_coa``) run
 only on the tool's captured typed snapshot, never on the agent's own text.

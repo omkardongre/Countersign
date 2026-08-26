@@ -236,8 +236,8 @@ QMS_WRITE_TOOLS = frozenset({QMS_REPORT_WRITE})
 
 # CFI (Cross-Functional Investigation): its own tool names and its own
 # Gateway allow-list, disjoint from the case workflow's — a CFI Runtime may
-# reach these; the case workflow never does (13_cfi_extended_investigation_
-# plan.md section 4.1). ``cfi_get``/``cfi_save`` reach the Cloud SQL
+# reach these; the case workflow never does (ARCHITECTURE.md section 7).
+# ``cfi_get``/``cfi_save`` reach the Cloud SQL
 # ``cfi_investigation`` table for the same credential-boundary reason as
 # every other tool in this module. ``sibling_batch_query`` is read-only,
 # tenant-locked, and reads across *batches* within one tenant only — never

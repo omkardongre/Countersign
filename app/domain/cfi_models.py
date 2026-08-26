@@ -48,7 +48,7 @@ class CfiTriggerReason(StrEnum):
     """Which GMPSOP QMS-130 section 4.2.1 condition fired.
 
     Each member corresponds to one row of the trigger table in
-    ``13_cfi_extended_investigation_plan.md`` section 3. Recorded, never
+    ``ARCHITECTURE.md`` section 7. Recorded, never
     inferred after the fact — ``decide_cfi_required`` in ``cfi_trigger.py``
     returns the exact reason(s) that fired alongside its boolean decision.
     """

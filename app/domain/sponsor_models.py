@@ -14,7 +14,7 @@
 
 """Cross-company batch-status types for the sponsor liaison.
 
-Per ``final_reseach/10_gap_analysis_and_win_plan.md`` section 3.5: the
+Per ``final_reseach/ARCHITECTURE.md`` section 2: the
 white-space this fleet fills is a sponsor's QA agent asking a CDMO's case
 agent for one batch's confirmation status, across a company boundary, where
 the CDMO's own gateway allows exactly one scoped question and denies

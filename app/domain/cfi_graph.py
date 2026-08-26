@@ -14,7 +14,7 @@
 
 """The CFI (Cross-Functional Investigation) graph. Its own ADK ``Workflow``,
 deployed as its own Agent Runtime — never a branch of ``case_graph.py``
-(``13_cfi_extended_investigation_plan.md`` section 4.1).
+(``ARCHITECTURE.md`` section 7).
 
     START -> load_cfi
           -> cfi_plan_round          AGENT: choose the next enquiry   ◀─┐

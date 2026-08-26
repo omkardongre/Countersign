@@ -14,7 +14,7 @@
 
 """Sponsor liaison agent: agent 8 of 8, real, single-turn, one tool.
 
-Per ``final_reseach/10_gap_analysis_and_win_plan.md`` section 4.1: "A2A
+Per ``final_reseach/ARCHITECTURE.md`` section 5: "A2A
 peer, separate service ... scoped read-only batch status ... TQA ``ext_proc``
 deny." A sponsor's own QA agent asks this agent one question about one
 batch; this agent may call exactly one tool, bound to that sponsor's

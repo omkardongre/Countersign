@@ -36,7 +36,7 @@ app = App(
 
 # The CFI investigation graph is deployed as its own Agent Runtime, with its
 # own Agent Identity and Gateway allow-list, disjoint from the case
-# workflow's (13_cfi_extended_investigation_plan.md section 4.1). It is a
+# workflow's (ARCHITECTURE.md section 7). It is a
 # second app in this same module, not a branch of `root_agent`/`app` above —
 # those stay byte-identical to before this graph existed.
 cfi_root_agent = build_cfi_workflow()

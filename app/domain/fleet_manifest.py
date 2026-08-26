@@ -77,7 +77,7 @@ def _case_memory_backend_name() -> str:
 
 class AgentKind(StrEnum):
     """Matches the ADK primitive actually used, per
-    ``final_reseach/10_gap_analysis_and_win_plan.md`` section 4.1/4.2.
+    ``final_reseach/ARCHITECTURE.md`` section 5.
     """
 
     WORKFLOW = "workflow"

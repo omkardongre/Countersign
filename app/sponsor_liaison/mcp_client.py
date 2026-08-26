@@ -17,7 +17,7 @@
 Deliberately does not import ``app.domain.sponsor_tools`` and call it
 in-process. The sponsor liaison is agent 8 of 8 — "A2A peer, **separate
 service**" per
-``final_reseach/10_gap_analysis_and_win_plan.md`` section 4.1 — and reaching
+``final_reseach/ARCHITECTURE.md`` section 5 — and reaching
 the status store directly would collapse that separation back into a shared
 process the same way the case workflow itself never opens Cloud SQL
 directly. This client calls the department MCP service the same way the
