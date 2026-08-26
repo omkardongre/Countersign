@@ -21,6 +21,16 @@ Agreement permits this party to assess this thing, at this lifecycle stage, for 
 > "single_turn")` nodes, each bound to its own MCP-backed tool(s), placed directly in the
 > `Workflow` graph. Deterministic checks still run only on each tool's captured typed
 > snapshot, never on an agent's own text. See [Real agent fleet](#real-agent-fleet).
+>
+> **2026-08-26 — model repin (temporary) and live fleet status.** Every agent is currently
+> pinned to `gemini-3.5-flash-lite` for fast/cheap iteration during testing — a deliberate,
+> temporary choice, not a final model decision; the plan is to repin to the strongest model
+> priced at or below `gemini-3.6-flash` (check current names/pricing at
+> [ai.google.dev/gemini-api/docs/models](https://ai.google.dev/gemini-api/docs/models)) before
+> the final proof run and demo. The same pass fixed a real bug in the live desk (the projector
+> was missing the `collect_environmental_monitoring` branch) and added `GET /fleet/status`, a
+> live Agent Registry read-back layered on the static fleet manifest — see
+> [Real agent fleet](#real-agent-fleet).
 
 ---
 
@@ -116,7 +126,8 @@ So Countersign is built on one non-negotiable rule:
 | Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; indexes `READY`; MCP Cloud Run `countersign-department-mcp` serves `prior_art_*` (`verify_mcp_case_memory.py`, embedded KNN). Runtime prior-art on a live case and Gateway 403 are not claimed |
 | Controlled SOP/public guidance RAG | Implemented, not live — Vertex RAG Engine retrieval, separate corpora, manifest verification, tenant CEL filtering, MCP isolation, and deterministic controlled-SOP citation gate. Manual corpus creation/import, Drive IAM, manifest population, MCP env configuration, redeploy, and live verification remain required |
 | **T1-7 public EudraGMDP/openFDA screening** | **Implemented, not live** — official EudraGMDP non-compliance HTML and openFDA drug-enforcement clients, strict parsing/provenance/bounded cache, dedicated read-only MCP boundary, typed `screening_unavailable`, advisory-only case/report fields, and private Cloud Run/Gateway artifacts. No deployment or Gateway application was performed; public CoA identity population and runtime IAM/URL configuration remain manual |
-| UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel, and the CFI desk panel for labelled fixture/live event state. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. The CFI panel consumes separate CFI Runtime events when supplied; it does not start or resume the CFI Runtime from the browser. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; architecture diagram and demo film not started |
+| UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel, and the CFI desk panel for labelled fixture/live event state. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. The CFI panel consumes separate CFI Runtime events when supplied; it does not start or resume the CFI Runtime from the browser. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; a second projector gap (missing `collect_environmental_monitoring` branch) was fixed 2026-08-26 — see [Real agent fleet](#real-agent-fleet). Architecture diagram and demo film not started |
+| **Fleet live status (`GET /fleet/status`)** | **Done (2026-08-26)** — layers a live Agent Registry read-back onto the static fleet manifest via the real `google.adk.integrations.agent_registry.AgentRegistry` client. See [Real agent fleet](#real-agent-fleet). |
 | Manufacturing evidence over Drive | Done live (2026-08-19) — `drive_fetch_evidence` MCP tool reads a real scanned BMR page from Google Drive; `collect_manufacturing` pulls it by file id instead of trusting pushed bytes. No placeholder evidence remains on the live path |
 | **P-L: real multi-day sterility hold (uncompressed)** | **Done live (2026-08-20)** — a disposable case (`aurex`/`LONGHOLD-PL-01`) opened on the deployed Runtime with no `COUNTERSIGN_STERILITY_HOLD_SECONDS` set. Confirmed from the live session event: `compressed_for_demo: false`, `hold_seconds: 1209600` (14 days exactly), `started_at: 2026-08-20T17:58:11Z`, `due_at: 2026-09-03T17:58:11Z`. Not to be ticked/resumed before `due_at` — it is the real wall-clock resume proof for the demo film. Details in `checklist.md` |
 | **P-A: real agent fleet conversion** | **Done live (8 of 8, 2026-08-23)** — all target agents are real: six tool-bound/structured ADK graph agents plus the separate sponsor A2A peer. Fleet manifest available at `GET /fleet/manifest` |
@@ -159,6 +170,19 @@ contains only the tool surface each agent actually receives: the lead and interv
 have none, scope expansion has `sibling_batch_query`, trend correlation has
 `cfi_trend_query`, and the reporter has only `cfi_report_write`. Calendar scheduling is a
 deterministic post-closure node, not a hidden reporter capability.
+
+`GET /fleet/status` (`app/domain/fleet_registry_status.py`) layers a live Agent Registry
+read-back onto the same static manifest: it reports whether the department MCP server
+(`COUNTERSIGN_MCP_URL`) and the sponsor A2A agent card (`COUNTERSIGN_SPONSOR_A2A_CARD_URL`)
+are currently cataloged in Agent Registry, using the same
+`google.adk.integrations.agent_registry.AgentRegistry` client already proven against this
+project in `infra/geap/verify_agent_registry.py` — no second, hand-rolled catalog. A Registry
+outage or missing configuration is reported honestly as `unreachable`/`not_configured` in the
+response body (never a 5xx, never a fabricated `registered`); every manifest agent still
+appears so the fleet view does not shrink to empty on a transient platform issue. There is
+deliberately no per-agent "last invocation" timestamp here: no durable per-agent invocation
+log exists in this codebase, and inventing one would be exactly the kind of fabricated status
+this build avoids.
 
 ### P1 — real department systems (live)
 
@@ -1031,6 +1055,11 @@ SSE stream. Live Agent Runtime `streamQuery` is not proxied yet (`501` if
   decision path.
 - ADK is pinned at **2.6.3**. The workflow replay and HITL modules it depends on are
   underscore-prefixed internals; a minor version bump could break resume.
+- `google-adk` is installed with the `[gcp,otel-gcp,agent-identity]` extras. The
+  `agent-identity` extra is required for `google.adk.integrations.agent_registry.AgentRegistry`
+  (used by `GET /fleet/status`) — without it, importing that client fails with
+  `ModuleNotFoundError: google.cloud.agentidentitycredentials_v1`. Found live during this
+  build; fixed by adding the extra rather than working around the import.
 - `integrations/agent_registry` is **read-only** — agents are registered there and read back,
   with a separate write path for status changes.
 - Custom authorization extensions do **not** validate the callout server's TLS certificate;
