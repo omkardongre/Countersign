@@ -128,6 +128,7 @@ function parseIntake(raw: unknown): CaseIntake | { error: string } {
       typeof o.detected_at === "string" ? o.detected_at : new Date().toISOString(),
     patient_safety_impact: Boolean(o.patient_safety_impact),
     sterility_assurance_impact: Boolean(o.sterility_assurance_impact),
+    sterility_hold_days: parseHoldDays(o.sterility_hold_days),
     product_quality_impact: (o.product_quality_impact as ProductQualityImpact) ?? "none",
     affects_release_criteria: Boolean(o.affects_release_criteria),
     regulatory_reportable: Boolean(o.regulatory_reportable),
@@ -137,4 +138,10 @@ function parseIntake(raw: unknown): CaseIntake | { error: string } {
 
 function str(v: unknown) {
   return typeof v === "string" ? v.trim() : "";
+}
+
+/** QA-set sterility hold in days; null means the platform default applies. */
+function parseHoldDays(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 }

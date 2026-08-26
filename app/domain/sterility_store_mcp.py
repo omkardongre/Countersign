@@ -79,6 +79,7 @@ class McpSterilityStore:
         batch_id: str,
         case_id: str,
         workflow_version: str,
+        hold_seconds: int | None = None,
     ) -> SterilityIncubationRecord:
         payload = await call_sterility_tool(
             STERILITY_START,
@@ -88,6 +89,7 @@ class McpSterilityStore:
                 "case_id": case_id,
                 "workflow_version": workflow_version,
                 "case_tenant_id": tenant_id,
+                "hold_seconds": hold_seconds,
             },
         )
         return SterilityIncubationRecord.model_validate(_unwrap(payload))

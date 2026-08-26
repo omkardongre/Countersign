@@ -113,6 +113,16 @@ class CaseIntake(BaseModel):
         default=False,
         description="Deviation affects sterility assurance (e.g. autoclave, aseptic fill).",
     )
+    sterility_hold_days: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "QA-specified sterility incubation hold, in days, for this batch's "
+            "product. Product-specific pharmacopeia sterility test durations "
+            "are not all 14 days; None falls back to the platform default "
+            "(14 days) rather than silently assuming every product matches."
+        ),
+    )
     product_quality_impact: str = Field(
         default="none",
         description='One of "none", "potential", "confirmed".',
@@ -147,6 +157,11 @@ class ClassifiedCase(BaseModel):
     lifecycle_state: LifecycleState = LifecycleState.CLASSIFIED
     decision_authority: str = "none"
     evidence_refs: list[str]
+    sterility_hold_days: int | None = Field(
+        default=None,
+        gt=0,
+        description="Carried from intake; None means the platform default hold applies.",
+    )
     rationale: str = Field(
         description="Which classification rule fired, for audit traceability."
     )

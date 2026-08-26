@@ -166,13 +166,14 @@ class PostgresSterilityStore:
         batch_id: str,
         case_id: str,
         workflow_version: str,
+        hold_seconds: int | None = None,
         now: datetime.datetime | None = None,
     ) -> SterilityIncubationRecord:
         existing = self.get(tenant_id, batch_id)
         if existing is not None:
             return existing
         stamp = now or _utcnow()
-        hold, compressed = incubation_hold()
+        hold, compressed = incubation_hold(hold_seconds)
         record = SterilityIncubationRecord(
             tenant_id=tenant_id,
             batch_id=batch_id,

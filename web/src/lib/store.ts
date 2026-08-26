@@ -53,6 +53,7 @@ export function buildClassifiedCase(intake: CaseIntake): ClassifiedCase {
     batch_id: intake.batch_id,
     product_name: intake.product_name,
     doc_type: intake.doc_type,
+    sterility_hold_days: intake.sterility_hold_days,
     severity,
     lifecycle_state: "classified",
     decision_authority: "none",

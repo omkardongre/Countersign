@@ -404,9 +404,10 @@ def build_department_mcp(
         name=STERILITY_START,
         title="Start sterility incubation",
         description=(
-            "Start (or return the existing) 14-day sterility incubation clock "
-            "for one tenant and batch. Idempotent. This is a lab clock, not a "
-            "batch disposition."
+            "Start (or return the existing) sterility incubation clock for "
+            "one tenant and batch, defaulting to 14 days unless a case- "
+            "specific hold_seconds is given. Idempotent. This is a lab "
+            "clock, not a batch disposition."
         ),
         annotations=_IDEMPOTENT_WRITE,
     )
@@ -416,6 +417,7 @@ def build_department_mcp(
         case_id: str,
         workflow_version: str,
         case_tenant_id: str,
+        hold_seconds: int | None = None,
     ) -> SterilityIncubationRecord:
         try:
             return run_sterility_start(
@@ -424,6 +426,7 @@ def build_department_mcp(
                 case_id=case_id,
                 workflow_version=workflow_version,
                 case_tenant_id=case_tenant_id,
+                hold_seconds=hold_seconds,
             )
         except SterilityTenantMismatch as exc:
             raise ToolError(str(exc)) from exc

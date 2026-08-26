@@ -630,6 +630,7 @@ def sterility_start(
     case_id: str,
     workflow_version: str,
     case_tenant_id: str,
+    hold_seconds: int | None = None,
 ):
     """Start (or return the existing) incubation clock. Idempotent.
 
@@ -637,6 +638,10 @@ def sterility_start(
     credential. An Agent Identity principal cannot be a Cloud SQL IAM
     database user (name/type constraints), so the Runtime workflow reaches
     this clock through this tool rather than opening Cloud SQL itself.
+
+    ``hold_seconds`` carries the QA-specified, product-specific sterility
+    duration from ``CaseIntake.sterility_hold_days``; ``None`` falls back to
+    the platform default (or the demo-compression env var) inside the store.
     """
     _check_case_tenant(tenant_id, case_tenant_id)
     from app.domain.sterility_store import get_sterility_store
@@ -646,6 +651,7 @@ def sterility_start(
         batch_id=batch_id,
         case_id=case_id,
         workflow_version=workflow_version,
+        hold_seconds=hold_seconds,
     )
 
 

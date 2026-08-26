@@ -34,6 +34,7 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
     evidence_refs: "",
     patient_safety_impact: false,
     sterility_assurance_impact: false,
+    sterility_hold_days: "" as string,
     product_quality_impact: "none" as ProductQualityImpact,
     affects_release_criteria: false,
     regulatory_reportable: false,
@@ -221,6 +222,27 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
           <Check label="Regulatory reportable" checked={form.regulatory_reportable} onChange={(v) => setForm({ ...form, regulatory_reportable: v })} />
         </div>
 
+        {form.sterility_assurance_impact && (
+          <div className="mt-4">
+            <label htmlFor="sterility-hold-days" className="label">
+              Sterility incubation hold (days)
+            </label>
+            <input
+              id="sterility-hold-days"
+              type="number"
+              min={1}
+              placeholder="14 (platform default)"
+              value={form.sterility_hold_days}
+              onChange={(e) => setForm({ ...form, sterility_hold_days: e.target.value })}
+              className="field tabular sm:w-48"
+            />
+            <p className="mt-1 text-[12px] text-ink-muted">
+              Product-specific pharmacopeia sterility test duration. Leave blank
+              to use the platform default of 14 days.
+            </p>
+          </div>
+        )}
+
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <div>
             <label htmlFor="pqi" className="label">Product quality impact</label>
@@ -388,11 +410,13 @@ function toIntake(form: {
   evidence_refs: string;
   patient_safety_impact: boolean;
   sterility_assurance_impact: boolean;
+  sterility_hold_days: string;
   product_quality_impact: ProductQualityImpact;
   affects_release_criteria: boolean;
   regulatory_reportable: boolean;
   prior_occurrences_90d: number;
 }): CaseIntake {
+  const parsedHoldDays = Number.parseInt(form.sterility_hold_days, 10);
   return {
     tenant_id: form.tenant_id.trim(),
     batch_id: form.batch_id.trim(),
@@ -404,6 +428,10 @@ function toIntake(form: {
     detected_at: new Date().toISOString(),
     patient_safety_impact: form.patient_safety_impact,
     sterility_assurance_impact: form.sterility_assurance_impact,
+    sterility_hold_days:
+      form.sterility_assurance_impact && Number.isFinite(parsedHoldDays) && parsedHoldDays > 0
+        ? parsedHoldDays
+        : null,
     product_quality_impact: form.product_quality_impact,
     affects_release_criteria: form.affects_release_criteria,
     regulatory_reportable: form.regulatory_reportable,

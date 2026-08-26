@@ -33,20 +33,36 @@ HOLD_SECONDS_ENV = "COUNTERSIGN_STERILITY_HOLD_SECONDS"
 STORE_PATH_ENV = "COUNTERSIGN_STERILITY_DB"
 
 
-def incubation_hold() -> tuple[datetime.timedelta, bool]:
-    """Return (hold, compressed_for_demo). Demo may shorten 14 days; label it."""
+def incubation_hold(
+    case_hold_seconds: int | None = None,
+) -> tuple[datetime.timedelta, bool]:
+    """Return (hold, compressed_for_demo).
+
+    ``COUNTERSIGN_STERILITY_HOLD_SECONDS`` always wins when set: it exists
+    only to compress a demo/test run, and must still be able to force-shorten
+    even a QA-specified case duration. Otherwise a case-specific duration
+    (``case_hold_seconds``, threaded from ``CaseIntake.sterility_hold_days``)
+    is used when given, falling back to the fixed 14-day ``DEFAULT_HOLD``
+    only when neither is provided.
+    """
     raw = os.environ.get(HOLD_SECONDS_ENV)
-    if raw is None or raw == "":
-        return DEFAULT_HOLD, False
-    try:
-        seconds = int(raw)
-    except ValueError as exc:
-        raise ValueError(
-            f"{HOLD_SECONDS_ENV} must be a positive integer of seconds."
-        ) from exc
-    if seconds <= 0:
-        raise ValueError(f"{HOLD_SECONDS_ENV} must be > 0, not {seconds}.")
-    return datetime.timedelta(seconds=seconds), True
+    if raw is not None and raw != "":
+        try:
+            seconds = int(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"{HOLD_SECONDS_ENV} must be a positive integer of seconds."
+            ) from exc
+        if seconds <= 0:
+            raise ValueError(f"{HOLD_SECONDS_ENV} must be > 0, not {seconds}.")
+        return datetime.timedelta(seconds=seconds), True
+    if case_hold_seconds is not None:
+        if case_hold_seconds <= 0:
+            raise ValueError(
+                f"case_hold_seconds must be > 0, not {case_hold_seconds}."
+            )
+        return datetime.timedelta(seconds=case_hold_seconds), False
+    return DEFAULT_HOLD, False
 
 
 def _utcnow() -> datetime.datetime:
@@ -89,6 +105,7 @@ class SterilityStore(Protocol):
         batch_id: str,
         case_id: str,
         workflow_version: str,
+        hold_seconds: int | None = None,
         now: datetime.datetime | None = None,
     ) -> SterilityIncubationRecord: ...
 
@@ -130,13 +147,14 @@ class InMemorySterilityStore:
         batch_id: str,
         case_id: str,
         workflow_version: str,
+        hold_seconds: int | None = None,
         now: datetime.datetime | None = None,
     ) -> SterilityIncubationRecord:
         existing = self.get(tenant_id, batch_id)
         if existing is not None:
             return existing
         stamp = now or _utcnow()
-        hold, compressed = incubation_hold()
+        hold, compressed = incubation_hold(hold_seconds)
         record = SterilityIncubationRecord(
             tenant_id=tenant_id,
             batch_id=batch_id,
@@ -302,13 +320,14 @@ class SqliteSterilityStore:
         batch_id: str,
         case_id: str,
         workflow_version: str,
+        hold_seconds: int | None = None,
         now: datetime.datetime | None = None,
     ) -> SterilityIncubationRecord:
         existing = self.get(tenant_id, batch_id)
         if existing is not None:
             return existing
         stamp = now or _utcnow()
-        hold, compressed = incubation_hold()
+        hold, compressed = incubation_hold(hold_seconds)
         record = SterilityIncubationRecord(
             tenant_id=tenant_id,
             batch_id=batch_id,
