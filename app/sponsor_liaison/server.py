@@ -14,7 +14,7 @@
 
 """Sponsor liaison FastAPI service: agent 8 of 8, its own process.
 
-Per ``final_reseach/10_gap_analysis_and_win_plan.md`` section 4.1, agent 8
+Per ``final_reseach/ARCHITECTURE.md`` section 5, agent 8
 is "A2A peer, **separate service**" — this module, not another node inside
 ``app/agent.py``'s ``Workflow``. It has its own agent card, its own
 authentication (``app/sponsor_liaison/auth.py``), and its own Gateway
@@ -71,7 +71,7 @@ def build_agent_card(*, app_url: str) -> AgentCard:
     """Hand-built, not ``AgentCardBuilder``-derived — see module docstring.
 
     ``AgentSkill`` names the one capability this service actually has:
-    exactly what ``final_reseach/10_gap_analysis_and_win_plan.md`` section
+    exactly what ``final_reseach/10_status_and_remaining_work.md`` section
     4.1 specifies for agent 8, "scoped read-only batch status," and nothing
     else. A sponsor reading this card before ever sending a message already
     sees the scope this agent will enforce.

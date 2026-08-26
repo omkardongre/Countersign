@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Live durability proof: independent-process resume of a parked case.
 
-P5 (`final_reseach/10_gap_analysis_and_win_plan.md`) asks for "delete the
+P5 (`final_reseach/10_status_and_remaining_work.md`) asks for "delete the
 running revision; cold start; re-invoke the same invocation_id; completed
 nodes fast-forward." That literal action does not exist for this deployment:
 the case workflow runs on Vertex AI Agent Runtime (a managed `reasoningEngine`

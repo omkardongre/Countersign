@@ -444,7 +444,7 @@ async def call_sponsor_tool(name: str, arguments: dict[str, Any]) -> dict[str, A
     """Call ``sponsor_batch_status`` over MCP. Sponsor-liaison side only.
 
     The sponsor liaison service is a separate process from the case
-    workflow (per ``final_reseach/10_gap_analysis_and_win_plan.md`` section
+    workflow (per ``final_reseach/10_status_and_remaining_work.md`` section
     4.1, agent 8 is "A2A peer, separate service"), so it goes through the
     same public entry point (``resolve_department_mcp_target``) rather than
     a private import of ``sponsor_tools`` — the Gateway's own tool-name

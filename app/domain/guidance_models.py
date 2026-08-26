@@ -21,7 +21,7 @@ Two corpora, never merged into one retrieval space:
 * ``PUBLIC_GUIDANCE`` — Annex 1, ICH Q9(R1), OOS guidance and similar public
   regulatory text. Advisory context only: it can never satisfy the
   controlled-SOP citation requirement and never grounds a batch fact, root
-  cause, or disposition (``final_reseach/12_integration_expansion_plan.md``
+  cause, or disposition (``final_reseach/10_status_and_remaining_work.md``
   T1-5 guardrail).
 
 Vertex AI RAG Engine's own retrieval output

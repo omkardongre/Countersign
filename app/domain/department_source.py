@@ -14,7 +14,7 @@
 
 """Where department reads actually come from: real systems, or the catalog.
 
-P1 in ``final_reseach/10_gap_analysis_and_win_plan.md``: QC lab moves onto a
+P1 in ``final_reseach/10_status_and_remaining_work.md``: QC lab moves onto a
 real Cloud SQL table and environmental monitoring onto a real BigQuery table,
 behind the department MCP tool boundary that already exists. The agents,
 their tool allow-lists, and the deterministic checks do not change — only the

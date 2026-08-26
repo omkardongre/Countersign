@@ -21,8 +21,8 @@ shape of ``app/domain/case_graph.py`` (which agents exist, what each is
 allowed to touch) and, for ``/status``, a live Agent Registry read-back —
 never any case data. No tenant, batch, or finding appears on either route.
 These are the endpoints the desk's fleet view and the demo film read from,
-per ``final_reseach/11_demo_and_proof_plan.md`` Beat 2b and
-``final_reseach/14_track3_hardening_and_stronger_domain_fit.md`` section 2.1.
+per ``final_reseach/11_demo_and_submission_plan.md`` Beat 2 and
+``final_reseach/10_status_and_remaining_work.md.
 """
 
 from __future__ import annotations
