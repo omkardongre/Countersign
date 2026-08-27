@@ -82,7 +82,7 @@ async def build_sterility_hold_brief(
     store: McpSterilityStore,
 ) -> SterilityHoldBrief:
     classified = investigation.case.classified
-    hold_seconds = classified.sterility_hold_days * 24 * 60 * 60
+    hold_seconds = classified.sterility_hold_seconds
     record = await store.start_async(
         tenant_id=classified.tenant_id,
         batch_id=classified.batch_id,

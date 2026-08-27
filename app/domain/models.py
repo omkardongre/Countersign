@@ -113,13 +113,17 @@ class CaseIntake(BaseModel):
         default=False,
         description="Deviation affects sterility assurance (e.g. autoclave, aseptic fill).",
     )
-    sterility_hold_days: int = Field(
+    sterility_hold_seconds: int = Field(
         gt=0,
         description=(
-            "QA-specified sterility incubation hold, in days, for this "
+            "QA-specified sterility incubation hold, in seconds, for this "
             "batch's product. Required: product-specific pharmacopeia "
             "sterility test durations are not all the same, so there is no "
-            "platform-wide default to fall back to. QA sets this at intake."
+            "platform-wide default to fall back to. QA sets this at intake, "
+            "entered on the intake UI as separate days/hours/minutes fields "
+            "and combined into one duration before it reaches this model — "
+            "a real case is set in whole days, a local/dev test case can be "
+            "set to just a few minutes without touching any global override."
         ),
     )
     product_quality_impact: str = Field(
@@ -156,7 +160,7 @@ class ClassifiedCase(BaseModel):
     lifecycle_state: LifecycleState = LifecycleState.CLASSIFIED
     decision_authority: str = "none"
     evidence_refs: list[str]
-    sterility_hold_days: int = Field(
+    sterility_hold_seconds: int = Field(
         gt=0,
         description="Carried from intake. QA sets the hold; there is no platform default.",
     )

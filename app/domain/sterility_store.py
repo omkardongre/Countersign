@@ -39,7 +39,7 @@ def incubation_hold(
 
     There is no platform-wide default: pharmacopeia sterility test durations
     are product-specific, and QA sets the real duration at intake
-    (``CaseIntake.sterility_hold_days``). ``COUNTERSIGN_STERILITY_HOLD_SECONDS``
+    (``CaseIntake.sterility_hold_seconds``). ``COUNTERSIGN_STERILITY_HOLD_SECONDS``
     always wins when set — it exists only to compress a local/dev run, and
     must still be able to force-shorten even a QA-specified duration.
     Otherwise ``case_hold_seconds`` is required.
@@ -58,7 +58,7 @@ def incubation_hold(
     if case_hold_seconds is None:
         raise ValueError(
             "No sterility hold duration was provided. QA must set "
-            "CaseIntake.sterility_hold_days at intake; there is no "
+            "CaseIntake.sterility_hold_seconds at intake; there is no "
             f"platform default. (Set {HOLD_SECONDS_ENV} only to compress a "
             "local/dev run.)"
         )

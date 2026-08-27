@@ -62,7 +62,7 @@ def _classified_case() -> CaseComplianceResult:
             description="Test deviation for report builder.",
             reported_by="Quality Control",
             sterility_assurance_impact=True,
-            sterility_hold_days=14,
+            sterility_hold_seconds=14 * 24 * 60 * 60,
         )
     )
     branch = BranchOutcome(

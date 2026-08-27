@@ -35,6 +35,8 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
     patient_safety_impact: false,
     sterility_assurance_impact: false,
     sterility_hold_days: "" as string,
+    sterility_hold_hours: "" as string,
+    sterility_hold_minutes: "" as string,
     product_quality_impact: "none" as ProductQualityImpact,
     affects_release_criteria: false,
     regulatory_reportable: false,
@@ -62,10 +64,11 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const holdDays = Number.parseInt(form.sterility_hold_days, 10);
-    if (!Number.isFinite(holdDays) || holdDays <= 0) {
+    const holdSeconds = holdSecondsFromForm(form);
+    if (holdSeconds === null || holdSeconds <= 0) {
       setError(
-        "Sterility incubation hold (days) is required. There is no platform default.",
+        "Sterility incubation hold (days / hours / minutes) is required. " +
+          "There is no platform default.",
       );
       return;
     }
@@ -230,23 +233,59 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
         </div>
 
         <div className="mt-4">
-          <label htmlFor="sterility-hold-days" className="label">
-            Sterility incubation hold (days)
-          </label>
-          <input
-            id="sterility-hold-days"
-            type="number"
-            min={1}
-            required
-            placeholder="e.g. 14"
-            value={form.sterility_hold_days}
-            onChange={(e) => setForm({ ...form, sterility_hold_days: e.target.value })}
-            className="field tabular sm:w-48"
-          />
+          <label className="label">Sterility incubation hold</label>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label htmlFor="sterility-hold-days" className="text-[11px] text-ink-muted">
+                Days
+              </label>
+              <input
+                id="sterility-hold-days"
+                type="number"
+                min={0}
+                placeholder="14"
+                value={form.sterility_hold_days}
+                onChange={(e) => setForm({ ...form, sterility_hold_days: e.target.value })}
+                className="field tabular w-24"
+              />
+            </div>
+            <div>
+              <label htmlFor="sterility-hold-hours" className="text-[11px] text-ink-muted">
+                Hours
+              </label>
+              <input
+                id="sterility-hold-hours"
+                type="number"
+                min={0}
+                max={23}
+                placeholder="0"
+                value={form.sterility_hold_hours}
+                onChange={(e) => setForm({ ...form, sterility_hold_hours: e.target.value })}
+                className="field tabular w-20"
+              />
+            </div>
+            <div>
+              <label htmlFor="sterility-hold-minutes" className="text-[11px] text-ink-muted">
+                Minutes
+              </label>
+              <input
+                id="sterility-hold-minutes"
+                type="number"
+                min={0}
+                max={59}
+                placeholder="0"
+                value={form.sterility_hold_minutes}
+                onChange={(e) => setForm({ ...form, sterility_hold_minutes: e.target.value })}
+                className="field tabular w-20"
+              />
+            </div>
+          </div>
           <p className="mt-1 text-[12px] text-ink-muted">
-            Required. Product-specific pharmacopeia sterility test duration
-            for this batch. There is no platform default — QA sets the exact
-            hold here for every case.
+            Required. Product-specific pharmacopeia sterility test duration for this
+            batch, in days. Real cases should be set in whole days — hours and minutes
+            exist so a local/dev test case can be set to a few minutes without touching
+            any global override. There is no platform default; the total across all
+            three fields must be greater than zero.
           </p>
         </div>
 
@@ -407,6 +446,41 @@ function Check({
   );
 }
 
+type SterilityHoldFormFields = {
+  sterility_hold_days: string;
+  sterility_hold_hours: string;
+  sterility_hold_minutes: string;
+};
+
+/**
+ * Combines the three separate days/hours/minutes inputs into one duration in
+ * seconds. Returns `null` if none of the three fields parse to a
+ * non-negative number (an empty form, not a real zero-length hold).
+ * Blank fields count as zero for the other two units — a user setting only
+ * "minutes" for a fast local test should not also have to type "0" days.
+ */
+function holdSecondsFromForm(form: SterilityHoldFormFields): number | null {
+  const days = form.sterility_hold_days.trim();
+  const hours = form.sterility_hold_hours.trim();
+  const minutes = form.sterility_hold_minutes.trim();
+  if (!days && !hours && !minutes) return null;
+
+  const parsedDays = days ? Number.parseInt(days, 10) : 0;
+  const parsedHours = hours ? Number.parseInt(hours, 10) : 0;
+  const parsedMinutes = minutes ? Number.parseInt(minutes, 10) : 0;
+  if (
+    !Number.isFinite(parsedDays) ||
+    !Number.isFinite(parsedHours) ||
+    !Number.isFinite(parsedMinutes) ||
+    parsedDays < 0 ||
+    parsedHours < 0 ||
+    parsedMinutes < 0
+  ) {
+    return null;
+  }
+  return parsedDays * 86400 + parsedHours * 3600 + parsedMinutes * 60;
+}
+
 function toIntake(form: {
   tenant_id: string;
   batch_id: string;
@@ -418,12 +492,14 @@ function toIntake(form: {
   patient_safety_impact: boolean;
   sterility_assurance_impact: boolean;
   sterility_hold_days: string;
+  sterility_hold_hours: string;
+  sterility_hold_minutes: string;
   product_quality_impact: ProductQualityImpact;
   affects_release_criteria: boolean;
   regulatory_reportable: boolean;
   prior_occurrences_90d: number;
 }): CaseIntake {
-  const parsedHoldDays = Number.parseInt(form.sterility_hold_days, 10);
+  const holdSeconds = holdSecondsFromForm(form);
   return {
     tenant_id: form.tenant_id.trim(),
     batch_id: form.batch_id.trim(),
@@ -436,10 +512,10 @@ function toIntake(form: {
     patient_safety_impact: form.patient_safety_impact,
     sterility_assurance_impact: form.sterility_assurance_impact,
     // Required; onSubmit blocks the request before this reaches the server
-    // if it is not a positive integer. The severity preview above tolerates
-    // an incomplete in-progress value (defaults to 1) since it never submits.
-    sterility_hold_days:
-      Number.isFinite(parsedHoldDays) && parsedHoldDays > 0 ? parsedHoldDays : 1,
+    // if it is not a positive number of seconds. The severity preview above
+    // tolerates an incomplete in-progress value (defaults to 1 second)
+    // since the preview never submits.
+    sterility_hold_seconds: holdSeconds !== null && holdSeconds > 0 ? holdSeconds : 1,
     product_quality_impact: form.product_quality_impact,
     affects_release_criteria: form.affects_release_criteria,
     regulatory_reportable: form.regulatory_reportable,
