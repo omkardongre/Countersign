@@ -31,6 +31,14 @@ Agreement permits this party to assess this thing, at this lifecycle stage, for 
 > was missing the `collect_environmental_monitoring` branch) and added `GET /fleet/status`, a
 > live Agent Registry read-back layered on the static fleet manifest — see
 > [Real agent fleet](#real-agent-fleet).
+>
+> **2026-08-27 — case-desk prod-level cleanup.** Three GUI-testing findings closed (see
+> `final_reseach/12_bug_fixes.md`, `checklist.md`): demo fixtures are now opt-in only
+> (`COUNTERSIGN_ENABLE_FIXTURES`, default off) instead of always seeded; the sterility
+> incubation hold is a required, QA-set per-case value with no platform default (removed the
+> prior 14-day fallback entirely); and every raw internal source URI shown in the case/CFI
+> panels now renders a human-readable label by default, with the exact URI still available on
+> demand for audit.
 
 ---
 
@@ -126,7 +134,7 @@ So Countersign is built on one non-negotiable rule:
 | Case Memory (Firestore + embeddings) | Done live — Native `(default)` in `us-central1`; indexes `READY`; MCP Cloud Run `countersign-department-mcp` serves `prior_art_*` (`verify_mcp_case_memory.py`, embedded KNN). Runtime prior-art on a live case and Gateway 403 are not claimed |
 | Controlled SOP/public guidance RAG | Implemented, not live — Vertex RAG Engine retrieval, separate corpora, manifest verification, tenant CEL filtering, MCP isolation, and deterministic controlled-SOP citation gate. Manual corpus creation/import, Drive IAM, manifest population, MCP env configuration, redeploy, and live verification remain required |
 | **T1-7 public EudraGMDP/openFDA screening** | **Implemented, not live** — official EudraGMDP non-compliance HTML and openFDA drug-enforcement clients, strict parsing/provenance/bounded cache, dedicated read-only MCP boundary, typed `screening_unavailable`, advisory-only case/report fields, and private Cloud Run/Gateway artifacts. No deployment or Gateway application was performed; public CoA identity population and runtime IAM/URL configuration remain manual |
-| UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel, and the CFI desk panel for labelled fixture/live event state. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. The CFI panel consumes separate CFI Runtime events when supplied; it does not start or resume the CFI Runtime from the browser. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; a second projector gap (missing `collect_environmental_monitoring` branch) was fixed 2026-08-26 — see [Real agent fleet](#real-agent-fleet). Architecture diagram and demo film not started |
+| UI, demo | Case desk in `web/` — queue, case, open intake, Annex 16 + QP panel, and the CFI desk panel for labelled fixture/live event state. Live Agent Runtime path wired and run live: `streamQuery` start, poll-based progress (no held SSE), `RequestInput` resume for QP confirm. Set `COUNTERSIGN_CASE_ENGINE_URL` + ADC. The CFI panel consumes separate CFI Runtime events when supplied; it does not start or resume the CFI Runtime from the browser. A projector bug that misread which node paused (fixed 2026-08-18) is why an earlier live run appeared stuck on `Classify`; a second projector gap (missing `collect_environmental_monitoring` branch) was fixed 2026-08-26 — see [Real agent fleet](#real-agent-fleet). **2026-08-27:** demo fixtures are opt-in only (`COUNTERSIGN_ENABLE_FIXTURES`, default off — production queues show only real cases); the sterility hold is a required per-case QA value with no platform default; raw internal source URIs render human-readable labels by default with the exact URI available on demand. Architecture diagram and demo film not started |
 | **Fleet live status (`GET /fleet/status`)** | **Done (2026-08-26)** — layers a live Agent Registry read-back onto the static fleet manifest via the real `google.adk.integrations.agent_registry.AgentRegistry` client. See [Real agent fleet](#real-agent-fleet). |
 | Manufacturing evidence over Drive | Done live (2026-08-19) — `drive_fetch_evidence` MCP tool reads a real scanned BMR page from Google Drive; `collect_manufacturing` pulls it by file id instead of trusting pushed bytes. No placeholder evidence remains on the live path |
 | **P-L: real multi-day sterility hold (uncompressed)** | **Done live (2026-08-20)** — a disposable case (`aurex`/`LONGHOLD-PL-01`) opened on the deployed Runtime with no `COUNTERSIGN_STERILITY_HOLD_SECONDS` set. Confirmed from the live session event: `compressed_for_demo: false`, `hold_seconds: 1209600` (14 days exactly), `started_at: 2026-08-20T17:58:11Z`, `due_at: 2026-09-03T17:58:11Z`. Not to be ticked/resumed before `due_at` — it is the real wall-clock resume proof for the demo film. Details in `checklist.md` |
@@ -1036,12 +1044,20 @@ tests/                                unit, integration, eval
 ### Case desk
 
 Next.js 16.3 App Router in `web/` (`npm run dev` from that directory). Queue, case
-review, and structured intake. Fixtures are labelled synthetic (`AX-2291` pack
-`not_ready`, `AX-2402` `ready_for_qp_review`, `HX-104` on 14-day sterility hold).
-Severity on new intake uses the same rules as `app/domain/classification.py`.
-QP confirm is refused while the pack is `not_ready`. The desk does not hold an
-SSE stream. Live Agent Runtime `streamQuery` is not proxied yet (`501` if
-`source: live`). Intake-opened cases are in-process and reset on restart.
+review, and structured intake. Labelled-synthetic fixtures (`AX-2291`, `AX-2402`, `HX-104`)
+are a local/dev aid only — seeded when `COUNTERSIGN_ENABLE_FIXTURES=true` is set, off by
+default, so a production deployment's queue shows only real cases opened through intake or the
+deployed Agent Runtime; the `Source` (fixture/intake/live) column is likewise only shown when
+fixtures are enabled. Severity on new intake uses the same rules as
+`app/domain/classification.py`. The sterility incubation hold is a required field QA sets per
+case at intake (`sterility_hold_days`) — there is no platform-wide default, since pharmacopeia
+sterility test durations are product-specific; `COUNTERSIGN_STERILITY_HOLD_SECONDS` remains
+available only to compress the clock for local/dev testing. QP confirm is refused while the
+pack is `not_ready`. Raw internal source URIs (Drive, Cloud SQL, BigQuery, Case Memory, Chat,
+fixture references) render a human-readable label by default in the case and CFI panels, with
+the exact URI available on demand for audit. The desk does not hold an SSE stream. Live Agent
+Runtime `streamQuery` is not proxied yet (`501` if `source: live`). Intake-opened cases are
+in-process and reset on restart.
 
 ---
 
