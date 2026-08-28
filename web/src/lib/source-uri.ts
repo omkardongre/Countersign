@@ -19,7 +19,17 @@ const SCHEME_LABELS: Record<string, SchemeLabeler> = {
   "google-chat": () => "Google Chat message",
   "google-chat-interview": () => "Google Chat interview record",
   "fixture": (path) => labelFixture(path),
+  "http": (path) => labelHttp(path),
+  "https": (path) => labelHttp(path),
 };
+
+/** SENAITE's source_uri is a real https?:// URL into its JSON API, not a
+ * custom scheme. Detect it by path shape so it still gets a human label
+ * instead of showing the raw API query string. */
+function labelHttp(path: string): string {
+  if (path.includes("@@API/senaite/")) return "SENAITE LIMS record";
+  return `${path.split("/")[0] ?? path} record`;
+}
 
 function lastSegment(path: string): string {
   const parts = path.split("/").filter(Boolean);

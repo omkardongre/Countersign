@@ -23,6 +23,8 @@ system the row is read from does.
 Backend selection is an explicit opt-in per department, never inferred:
 
 * ``COUNTERSIGN_LIMS_BACKEND=cloud_sql`` reads QC results from Cloud SQL.
+* ``COUNTERSIGN_LIMS_BACKEND=senaite`` reads QC results from a live SENAITE
+  LIMS over ``senaite.jsonapi`` (see ``department_source_senaite.py``).
 * ``COUNTERSIGN_EM_BACKEND=bigquery`` reads EM readings from BigQuery.
 * Anything else (including unset) keeps the pinned synthetic catalog.
 
@@ -69,6 +71,7 @@ DEFAULT_SIBLING_BATCH_TABLE = "batch_material_lots"
 
 BACKEND_CLOUD_SQL = "cloud_sql"
 BACKEND_BIGQUERY = "bigquery"
+BACKEND_SENAITE = "senaite"
 BACKEND_CATALOG = "synthetic_catalog"
 
 # SQL identifiers cannot be bound as query parameters, so any table/dataset
@@ -203,7 +206,7 @@ class CatalogDepartmentSource:
 
 @functools.cache
 def get_lims_source() -> LimsSource:
-    """QC lab reads. Cloud SQL only when explicitly switched on."""
+    """QC lab reads. Cloud SQL or SENAITE only when explicitly switched on."""
     requested = os.environ.get(LIMS_BACKEND_ENV, "").strip().lower()
     if requested == BACKEND_CLOUD_SQL:
         from app.app_utils.cloud_sql import instance_connection_name
@@ -216,6 +219,27 @@ def get_lims_source() -> LimsSource:
         from app.domain.department_source_postgres import PostgresLimsSource
 
         return PostgresLimsSource()
+    if requested == BACKEND_SENAITE:
+        from app.domain.department_source_senaite import (
+            SENAITE_PASSWORD_ENV,
+            SENAITE_URL_ENV,
+            SENAITE_USERNAME_ENV,
+            SenaiteLimsSource,
+        )
+
+        if not os.environ.get(SENAITE_URL_ENV, "").strip():
+            raise RuntimeError(
+                f"{LIMS_BACKEND_ENV}={BACKEND_SENAITE} requires "
+                f"{SENAITE_URL_ENV} to be set."
+            )
+        if not os.environ.get(SENAITE_USERNAME_ENV, "").strip() or not os.environ.get(
+            SENAITE_PASSWORD_ENV, ""
+        ):
+            raise RuntimeError(
+                f"{LIMS_BACKEND_ENV}={BACKEND_SENAITE} requires "
+                f"{SENAITE_USERNAME_ENV} and {SENAITE_PASSWORD_ENV} to be set."
+            )
+        return SenaiteLimsSource()
     return CatalogDepartmentSource()
 
 

@@ -1,0 +1,41 @@
+# SENAITE LIMS — real, self-hosted, open source. Deployed on a private-only
+# GCE VM in the countersign-tqa VPC (no public ingress; reachable only from
+# inside the VPC, e.g. the department MCP service over Direct VPC egress).
+#
+# Version pinned deliberately: SENAITE does not publish a `latest` tag
+# (https://www.senaite.com/docs/docker/), so the rolling `2.x` tag is not
+# used here — a specific release is pinned so a host reboot/redeploy cannot
+# silently pick up an untested version.
+#
+# senaite.jsonapi is the RESTful JSON API add-on our department MCP reads
+# over (https://senaitejsonapi.readthedocs.io/). It is installed after the
+# core senaite.lims:default profile finishes, not bundled into the initial
+# ADDONS install: bundling it at first-install time made the image's
+# collective.recipe.plonesite installer try to resolve
+# senaite.jsonapi:default as a GenericSetup profile dependency of
+# senaite.lims:default, which does not exist as a Plone profile (jsonapi is
+# a Zope-level route package, not a content-type add-on) and raised a
+# KeyError that aborted the senaite.lims:default profile partway through —
+# leaving the site with no bika_setup folder, no catalogs, and no portal
+# types. Installing senaite.jsonapi as a normal Plone add-on afterward,
+# once senaite.lims:default has already completed, avoids that failure
+# mode entirely.
+#
+# The admin password is not committed here — it is read from the
+# SENAITE_ADMIN_PASSWORD environment variable, itself sourced from Secret
+# Manager by the startup script that runs this compose file, never
+# hardcoded.
+services:
+  senaite:
+    image: senaite/senaite:v2.6.0
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - senaite-data:/data
+    environment:
+      - SITE=countersign
+      - PASSWORD=${SENAITE_ADMIN_PASSWORD}
+
+volumes:
+  senaite-data:
