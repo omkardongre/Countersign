@@ -138,8 +138,16 @@ function requestAccessToken(clientId: string): Promise<string> {
  *
  * Throws if NEXT_PUBLIC_GOOGLE_CLIENT_ID / NEXT_PUBLIC_GOOGLE_API_KEY are not
  * configured, or if the operator declines the Drive permission prompt.
+ *
+ * `onOpened` fires as soon as the picker UI is actually shown, independent
+ * of how/whether it later resolves. The Google Picker does not reliably
+ * fire a CANCEL callback when dismissed by clicking outside it (only when
+ * its own Cancel affordance is used), so a caller must not gate a "busy"
+ * UI state on this promise resolving — do that on `onOpened` instead.
  */
-export async function openDrivePicker(): Promise<PickedDriveFile | null> {
+export async function openDrivePicker(
+  onOpened?: () => void,
+): Promise<PickedDriveFile | null> {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
   if (!clientId || !apiKey) {
@@ -175,5 +183,6 @@ export async function openDrivePicker(): Promise<PickedDriveFile | null> {
     });
 
     builder.build().setVisible(true);
+    onOpened?.();
   });
 }

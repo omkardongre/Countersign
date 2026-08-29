@@ -3,7 +3,7 @@ import type { DeskStage, LifecycleState } from "@/lib/types";
 const STEPS: { id: DeskStage | "intake"; label: string; description: string }[] = [
   { id: "intake",          label: "Detect",    description: "Deviation recorded" },
   { id: "classified",      label: "Classify",  description: "Severity & impact" },
-  { id: "sterility_hold",  label: "Sterility", description: "14-day hold" },
+  { id: "sterility_hold",  label: "Sterility", description: "QA-set incubation hold" },
   { id: "pending_qp",      label: "Annex 16",  description: "QP review pack" },
   { id: "qp_recorded",     label: "QP",        description: "Disposition recorded" },
 ];
