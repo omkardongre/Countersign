@@ -64,6 +64,9 @@ CASE_REQUIREMENTS = [
     # dependency tree.
     "google-auth>=2.38.0,<3.0.0",
     "requests>=2.32.0,<3.0.0",
+    # calendar_tools.py imports googleapiclient directly for the CFI site
+    # review Calendar tool.
+    "google-api-python-client>=2.190.0,<3.0.0",
 ]
 
 DESCRIPTION = (

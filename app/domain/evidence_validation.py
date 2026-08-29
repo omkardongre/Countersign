@@ -434,6 +434,19 @@ def validate_extracted_evidence(
             )
 
     record_findings = apply_record_level_checks(validated)
+    batch_field = next(
+        (field for field in validated if field.field_name == "batch_number"), None
+    )
+    if (
+        batch_field is not None
+        and batch_field.status is FieldStatus.ACCEPTED
+        and batch_field.typed_value != evidence.batch_id
+    ):
+        record_findings.append(
+            "batch_scope_mismatch: extracted batch number "
+            f"{batch_field.typed_value!r} does not match case batch "
+            f"{evidence.batch_id!r}"
+        )
     for name in evidence.unspecified_field_names:
         record_findings.append(
             f"unspecified_field_discarded: extractor returned {name!r}, which "

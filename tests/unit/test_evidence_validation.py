@@ -73,6 +73,13 @@ def test_clean_page_is_accepted_without_human_review() -> None:
     assert all(f.status is FieldStatus.ACCEPTED for f in result.fields)
 
 
+def test_extracted_batch_must_match_case_scope() -> None:
+    result = _validate(_perturbed("batch_number", value_text="AX-2292"))
+
+    assert result.status is EvidenceStatus.HUMAN_REVIEW_REQUIRED
+    assert any("batch_scope_mismatch" in finding for finding in result.record_findings)
+
+
 def test_every_accepted_field_carries_a_source_anchor() -> None:
     """A fact with no pointer back to the record is not usable evidence."""
     result = _validate(make_extracted_evidence())

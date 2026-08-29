@@ -1,0 +1,31 @@
+# Sibling policy to mcp-case-workflow-tools-allow.yaml, split solely because
+# a single AuthzPolicy caps out at 10 MCP methods (Gateway API hard limit,
+# found live 2026-08-29). Same identity (case_workflow), same host scope —
+# this just carries the tool-name rules that didn't fit in the first file.
+#
+# bind_to: case_workflow
+# do_not_bind_to: qc_probe, hello_runtime
+name: countersign-mcp-case-workflow-tools-2
+target:
+  resources:
+    - "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: REQUEST_AUTHZ
+action: ALLOW
+httpRules:
+  - to:
+      operations:
+        - hosts:
+            - exact: "countersign-department-mcp-777448403573.us-central1.run.app"
+          mcp:
+            baseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
+            methods:
+              - name: "tools/list"
+              - name: "tools/call"
+                params:
+                  - exact: "controlled_guidance_query"
+              - name: "tools/call"
+                params:
+                  - exact: "case_status_upsert"
+              - name: "tools/call"
+                params:
+                  - exact: "qms_report_write"

@@ -140,6 +140,52 @@
         "retest_date": "2027-01-15",
         "gmp_certificate_current": true
       }
+    },
+    {
+      "tenant_id": "ACME01",
+      "batch_id": "BATCH-2026-001",
+      "product_code": "AXR450",
+      "lims": {
+        "system": "senaite",
+        "source_uri": "senaite://ACME01/BATCH-2026-001",
+        "rows": [
+          {
+            "test_code": "ASSAY01",
+            "label": "Assay",
+            "result_value": 98.4,
+            "unit": "%LC",
+            "spec_min": 95.0,
+            "spec_max": 105.0,
+            "sample_id": "FP-0002"
+          }
+        ]
+      },
+      "em": {
+        "system": "bigquery",
+        "source_uri": "bq://countersign_em.em_readings?tenant_id=ACME01&batch_id=BATCH-2026-001",
+        "rows": [
+          {
+            "location_id": "FILL-R1",
+            "parameter": "viable_air_cfu",
+            "label": "Viable air count",
+            "value": 2.0,
+            "unit": "cfu/m3",
+            "alert_limit": 5.0,
+            "action_limit": 10.0,
+            "recorded_at": "2026-08-28T10:00:00+00:00"
+          }
+        ]
+      },
+      "coa": {
+        "system": "drive",
+        "source_uri": "drive://synthetic/coa/ACME01-BATCH-2026-001.pdf",
+        "supplier_id": "SUP-441",
+        "material_lot": "LOT-88",
+        "dispensed_lot": "LOT-88",
+        "signed": true,
+        "retest_date": "2027-01-15",
+        "gmp_certificate_current": true
+      }
     }
   ]
 }

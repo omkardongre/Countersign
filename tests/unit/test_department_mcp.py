@@ -100,6 +100,17 @@ async def test_em_and_coa_tools_return_connector_shapes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_senaite_demo_batch_has_supporting_catalog_coa() -> None:
+    coa = CoaSnapshot.model_validate(
+        await call_department_tool(
+            COA_FETCH, tenant_id="ACME01", batch_id="BATCH-2026-001"
+        )
+    )
+    assert coa.system == "drive"
+    assert coa.signed is True
+
+
+@pytest.mark.asyncio
 async def test_unknown_catalog_row_is_tool_error() -> None:
     mcp = build_department_mcp()
     async with create_connected_server_and_client_session(mcp) as session:

@@ -79,6 +79,18 @@ WHERE NOT EXISTS (
 );
 SQL
 
+bq --project_id="${PROJECT_ID}" query --use_legacy_sql=false --nouse_cache <<SQL
+INSERT INTO \`${PROJECT_ID}.${EM_DATASET}.${EM_TABLE}\`
+  (tenant_id, batch_id, location_id, parameter, label, value, unit, alert_limit, action_limit, recorded_at)
+SELECT 'ACME01', 'BATCH-2026-001', 'FILL-R1', 'viable_air_cfu', 'Viable air count', 2.0, 'cfu/m3', 5.0, 10.0, TIMESTAMP('2026-08-28T10:00:00Z')
+FROM (SELECT 1)
+WHERE NOT EXISTS (
+  SELECT 1 FROM \`${PROJECT_ID}.${EM_DATASET}.${EM_TABLE}\`
+  WHERE tenant_id = 'ACME01' AND batch_id = 'BATCH-2026-001' AND location_id = 'FILL-R1'
+    AND parameter = 'viable_air_cfu'
+);
+SQL
+
 # BigQuery Data Viewer + Job User only: read-only, same discipline as the
 # Cloud SQL SELECT-only grant above. No agent path can write a reading.
 # Granted to the department MCP service account, the process that actually

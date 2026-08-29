@@ -46,6 +46,15 @@
 #
 # MATCH_BASE_PROTOCOL_METHODS is required or initialize/ping are denied
 # and no MCP session can be established (07_geap_platform_notes.md §10.5).
+#
+# A single AuthzPolicy caps out at 10 MCP methods (Gateway API hard limit,
+# found live 2026-08-29 — `import` rejects anything above with
+# INVALID_ARGUMENT). This file holds tools/list + the first 9 tools/call
+# rules; controlled_guidance_query/case_status_upsert/qms_report_write moved
+# to the sibling policy mcp-case-workflow-tools-allow-2.yaml
+# (countersign-mcp-case-workflow-tools-2), same identity/host scope. Both
+# must be applied for the case_workflow identity to have every tool it needs
+# — see mcp-tool-policy-bindings.yaml.
 name: countersign-mcp-case-workflow-tools
 target:
   resources:
@@ -88,12 +97,3 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "prior_art_write"
-              - name: "tools/call"
-                params:
-                  - exact: "controlled_guidance_query"
-              - name: "tools/call"
-                params:
-                  - exact: "case_status_upsert"
-              - name: "tools/call"
-                params:
-                  - exact: "qms_report_write"
