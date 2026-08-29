@@ -129,9 +129,6 @@ function parseIntake(raw: unknown): CaseIntake | { error: string } {
     doc_type: o.doc_type as DocType,
     description,
     reported_by,
-    evidence_refs: Array.isArray(o.evidence_refs)
-      ? o.evidence_refs.map(String)
-      : [],
     detected_at:
       typeof o.detected_at === "string" ? o.detected_at : new Date().toISOString(),
     patient_safety_impact: Boolean(o.patient_safety_impact),

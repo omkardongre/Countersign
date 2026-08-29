@@ -31,7 +31,6 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
     doc_type: "batch_record" as DocType,
     description: "",
     reported_by: "",
-    evidence_refs: "",
     patient_safety_impact: false,
     sterility_assurance_impact: false,
     sterility_hold_days: "" as string,
@@ -49,7 +48,7 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
     setPickerError(null);
     setPickerBusy(true);
     try {
-      const picked = await openDrivePicker();
+      const picked = await openDrivePicker(() => setPickerBusy(false));
       if (picked) {
         setDriveFileId(picked.id);
         setDriveFileName(picked.name);
@@ -208,15 +207,6 @@ export function OpenForm({ liveEngine }: { liveEngine: boolean }) {
           <p className="mt-1.5 text-[12px] text-ink-faint">
             Human summary. Not parsed for classification.
           </p>
-        </div>
-        <div className="mt-4">
-          <Text
-            id="evidence_refs"
-            label="Evidence references"
-            placeholder="drive://... (space or comma separated)"
-            value={form.evidence_refs}
-            onChange={(v) => setForm({ ...form, evidence_refs: v })}
-          />
         </div>
       </Section>
 
@@ -407,7 +397,7 @@ function Text({
       <label htmlFor={id} className="label">{label}</label>
       <input
         id={id}
-        required={id !== "evidence_refs"}
+        required
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
@@ -488,7 +478,6 @@ function toIntake(form: {
   doc_type: DocType;
   description: string;
   reported_by: string;
-  evidence_refs: string;
   patient_safety_impact: boolean;
   sterility_assurance_impact: boolean;
   sterility_hold_days: string;
@@ -507,7 +496,6 @@ function toIntake(form: {
     doc_type: form.doc_type,
     description: form.description.trim(),
     reported_by: form.reported_by.trim(),
-    evidence_refs: form.evidence_refs.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
     detected_at: new Date().toISOString(),
     patient_safety_impact: form.patient_safety_impact,
     sterility_assurance_impact: form.sterility_assurance_impact,

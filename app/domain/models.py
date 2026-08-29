@@ -96,10 +96,6 @@ class CaseIntake(BaseModel):
         description="Human-entered summary; not parsed for classification."
     )
     reported_by: str
-    evidence_refs: list[str] = Field(
-        default_factory=list,
-        description="Pointers to source records (Drive file id, LIMS row, etc.).",
-    )
     detected_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.UTC)
     )
@@ -159,7 +155,6 @@ class ClassifiedCase(BaseModel):
     severity: DeviationSeverity
     lifecycle_state: LifecycleState = LifecycleState.CLASSIFIED
     decision_authority: str = "none"
-    evidence_refs: list[str]
     sterility_hold_seconds: int = Field(
         gt=0,
         description="Carried from intake. QA sets the hold; there is no platform default.",

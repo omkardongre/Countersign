@@ -49,7 +49,6 @@ def _intake_payload(**overrides) -> dict:
         "doc_type": DocType.BATCH_RECORD.value,
         "description": "unit test intake",
         "reported_by": "test-operator",
-        "evidence_refs": ["drive://file/123"],
         "sterility_hold_seconds": 14 * 24 * 60 * 60,
     }
     payload.update(overrides)
@@ -91,7 +90,6 @@ async def test_intake_node_produces_classified_case() -> None:
     assert case.severity == "critical"
     assert case.lifecycle_state == LifecycleState.CLASSIFIED
     assert case.decision_authority == "none"
-    assert case.evidence_refs == ["drive://file/123"]
 
 
 @pytest.mark.asyncio

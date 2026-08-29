@@ -123,7 +123,6 @@ def _open_case(
             "doc_type": "batch_record",
             "description": "P5 durability proof: independent-process resume.",
             "reported_by": "Quality Control",
-            "evidence_refs": [batch_id],
             "sterility_assurance_impact": True,
             "product_quality_impact": "confirmed",
         },

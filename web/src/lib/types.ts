@@ -62,7 +62,6 @@ export type CaseIntake = {
   doc_type: DocType;
   description: string;
   reported_by: string;
-  evidence_refs: string[];
   detected_at: string;
   patient_safety_impact: boolean;
   sterility_assurance_impact: boolean;
@@ -83,7 +82,6 @@ export type ClassifiedCase = {
   severity: DeviationSeverity;
   lifecycle_state: LifecycleState;
   decision_authority: typeof DECISION_AUTHORITY;
-  evidence_refs: string[];
   rationale: string;
   classified_at: string;
 };

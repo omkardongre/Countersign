@@ -49,7 +49,6 @@ def classify_intake(intake: CaseIntake) -> ClassifiedCase:
         doc_type=intake.doc_type,
         severity=severity,
         lifecycle_state=LifecycleState.CLASSIFIED,
-        evidence_refs=intake.evidence_refs,
         sterility_hold_seconds=intake.sterility_hold_seconds,
         rationale=rationale,
     )

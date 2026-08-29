@@ -20,7 +20,7 @@ from app.domain.case_models import CaseComplianceResult
 
 
 def allowed_source_uris(case: CaseComplianceResult) -> set[str]:
-    uris: set[str] = set(case.classified.evidence_refs)
+    uris: set[str] = set()
     for branch in case.branches:
         uris.update(branch.source_uris)
         for finding in branch.findings:

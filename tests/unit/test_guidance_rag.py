@@ -56,7 +56,6 @@ def _classified(**overrides) -> ClassifiedCase:
         "product_name": "AXR450 Sterile Injectable",
         "doc_type": DocType.BATCH_RECORD,
         "severity": DeviationSeverity.MAJOR,
-        "evidence_refs": ["drive://synthetic/bmr/AX-2291/page-14"],
         "sterility_hold_seconds": 14 * 24 * 60 * 60,
         "rationale": "Sterility assurance impact triggers MAJOR.",
     }
@@ -84,7 +83,7 @@ def _draft(case: CaseComplianceResult, *, sop_uri: str | None) -> InvestigationD
     from app.domain.investigation_models import RootCauseHypothesis
     from app.domain.master_data import RootCauseCategory
 
-    source_uris = [case.classified.evidence_refs[0]]
+    source_uris = ["drive://synthetic/bmr/AX-2291/page-14"]
     if sop_uri:
         source_uris.append(sop_uri)
     return InvestigationDraft(

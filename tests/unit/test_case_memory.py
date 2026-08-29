@@ -62,7 +62,6 @@ def _classified(**overrides) -> ClassifiedCase:
         "product_name": "AXR450 Sterile Injectable",
         "doc_type": DocType.BATCH_RECORD,
         "severity": DeviationSeverity.MAJOR,
-        "evidence_refs": ["drive://synthetic/bmr/AX-2291/page-14"],
         "sterility_hold_seconds": 14 * 24 * 60 * 60,
         "rationale": "Sterility assurance impact triggers MAJOR.",
     }

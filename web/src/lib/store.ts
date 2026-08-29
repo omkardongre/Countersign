@@ -67,7 +67,6 @@ export function buildClassifiedCase(intake: CaseIntake): ClassifiedCase {
     severity,
     lifecycle_state: "classified",
     decision_authority: "none",
-    evidence_refs: intake.evidence_refs,
     rationale,
     classified_at: new Date().toISOString(),
   };

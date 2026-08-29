@@ -45,7 +45,6 @@ def _case(*, status: ComplianceStatus = ComplianceStatus.SUFFICIENT_FOR_INVESTIG
         doc_type=DocType.BATCH_RECORD,
         severity=DeviationSeverity.CRITICAL,
         lifecycle_state=LifecycleState.CLASSIFIED,
-        evidence_refs=["drive://synthetic/bmr/AX-2291/page-14"],
         sterility_hold_seconds=14 * 24 * 60 * 60,
         rationale="sterility_assurance_impact",
     )
@@ -87,13 +86,13 @@ def _draft(case: CaseComplianceResult, uri: str | None = None) -> InvestigationD
             RootCauseHypothesis(
                 category=RootCauseCategory.METHOD,
                 statement="Blend-speed excursion is the leading process deviation.",
-                supporting_claims=[_claim(uri or case.classified.evidence_refs[0])],
+                supporting_claims=[_claim(uri or "drive://synthetic/bmr/AX-2291/page-14")],
                 confidence=0.6,
             )
         ],
         product_impact=ProductImpactDraft(
             statement="Impact remains unassigned pending QP review.",
-            supporting_claims=[_claim(uri or case.classified.evidence_refs[0])],
+            supporting_claims=[_claim(uri or "drive://synthetic/bmr/AX-2291/page-14")],
         ),
         decision_authority="none",
     )

@@ -243,7 +243,6 @@ def _case_payload(**intake_overrides) -> dict:
         "doc_type": DocType.BATCH_RECORD.value,
         "description": "Blend-speed excursion flagged at in-process check.",
         "reported_by": "qa-shift-lead",
-        "evidence_refs": ["drive://synthetic/bmr/AX-2291/page-14"],
         "sterility_assurance_impact": True,
         "sterility_hold_seconds": 14 * 24 * 60 * 60,
     }
