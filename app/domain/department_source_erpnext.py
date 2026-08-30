@@ -21,7 +21,7 @@ from app.domain.capa_models import (
     QualityActionWriteRequest,
     QualityActionWriteResult,
 )
-from app.domain.department_models import CoaSnapshot
+from app.domain.department_models import CoaSnapshot, MaintenanceAssetBinding
 from app.domain.department_source import BACKEND_ERPNEXT, DepartmentRecordMissing
 
 ERPNEXT_CREDENTIALS_ENV = "COUNTERSIGN_ERPNEXT_CREDENTIALS_JSON"
@@ -30,7 +30,11 @@ ERPNEXT_TIMEOUT_ENV = "COUNTERSIGN_ERPNEXT_TIMEOUT_SECONDS"
 ERPNEXT_SCHEMA_VERSION = "countersign.erpnext.supply.v1"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _MAX_RESPONSE_BYTES = 512 * 1024
-_METHODS = frozenset({"get_coa_snapshot", "get_batches_sharing_material_lot"})
+_METHODS = frozenset({
+    "get_coa_snapshot",
+    "get_batches_sharing_material_lot",
+    "get_maintenance_asset_binding",
+})
 _WRITE_METHODS = frozenset({"create_non_conformance", "create_quality_action"})
 _API_PREFIX = "/api/method/countersign_erpnext.api.v1."
 _TENANT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -144,6 +148,21 @@ class _CoaEnvelope(_StrictModel):
 
 class _SiblingEnvelope(_StrictModel):
     message: _SiblingApiResponse
+
+
+class _MaintenanceBindingApiResponse(_StrictModel):
+    schema_version: Literal[ERPNEXT_SCHEMA_VERSION]
+    tenant_id: str = Field(min_length=1, max_length=128)
+    batch_id: str = Field(min_length=1, max_length=256)
+    asset_code: str = Field(min_length=1, max_length=128)
+    work_order_id: str = Field(min_length=1, max_length=256)
+    source_uri: str = Field(min_length=1, max_length=4096)
+    batch_window_started_at: datetime.datetime
+    batch_window_ended_at: datetime.datetime
+
+
+class _MaintenanceBindingEnvelope(_StrictModel):
+    message: _MaintenanceBindingApiResponse
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -456,7 +475,8 @@ def _validate_write_uri(
 
 _COA_URI_PREFIX = "/app/countersign-coa-verification/"
 _STOCK_ENTRY_URI_PREFIX = "/app/stock-entry/"
-_SOURCE_URI_PREFIXES = (_COA_URI_PREFIX, _STOCK_ENTRY_URI_PREFIX)
+_WORK_ORDER_URI_PREFIX = "/app/work-order/"
+_SOURCE_URI_PREFIXES = (_COA_URI_PREFIX, _STOCK_ENTRY_URI_PREFIX, _WORK_ORDER_URI_PREFIX)
 
 
 def _validate_source_uri(
@@ -603,6 +623,55 @@ class ErpNextSupplySource:
                 (sibling.batch_id, sibling.material_lot, sibling.source_uri)
             )
         return response.material_lot, siblings
+
+    def maintenance_asset_binding(
+        self, *, tenant_id: str, batch_id: str
+    ) -> MaintenanceAssetBinding:
+        """Resolve one approved batch's equipment from ERPNext genealogy.
+
+        The custom endpoint validates the API user's tenant access and the
+        submitted Work Order; this adapter validates the returned contract and
+        its source URL before passing the asset identifier to openMAINT.
+        """
+        try:
+            envelope = _MaintenanceBindingEnvelope.model_validate(
+                self._request_json(
+                    tenant_id=tenant_id,
+                    method="get_maintenance_asset_binding",
+                    params={"batch_id": batch_id},
+                )
+            )
+        except ValidationError as exc:
+            raise ERPNextApiError(
+                "ERPNext maintenance-binding response schema is invalid."
+            ) from exc
+        response = envelope.message
+        if response.tenant_id != tenant_id or response.batch_id != batch_id:
+            raise ERPNextApiError(
+                "ERPNext maintenance-binding scope does not match the request."
+            )
+        if response.batch_window_ended_at < response.batch_window_started_at:
+            raise ERPNextApiError("ERPNext maintenance batch window is invalid.")
+        credentials = erpnext_credentials_for_tenant(tenant_id)
+        _validate_source_uri(
+            response.source_uri,
+            credentials.base_url,
+            allowed_prefixes=(_WORK_ORDER_URI_PREFIX,),
+        )
+        expected_path = _WORK_ORDER_URI_PREFIX + urllib.parse.quote(
+            response.work_order_id, safe=""
+        )
+        if urllib.parse.urlsplit(response.source_uri).path != expected_path:
+            raise ERPNextApiError(
+                "ERPNext maintenance-binding Work Order URL does not match the response."
+            )
+        return MaintenanceAssetBinding(
+            asset_code=response.asset_code,
+            work_order_id=response.work_order_id,
+            source_uri=response.source_uri,
+            batch_window_started_at=response.batch_window_started_at,
+            batch_window_ended_at=response.batch_window_ended_at,
+        )
 
     def create_non_conformance(
         self, *, request: NonConformanceWriteRequest

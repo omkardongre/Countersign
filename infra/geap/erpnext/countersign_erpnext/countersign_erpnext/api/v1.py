@@ -218,6 +218,39 @@ _SIBLING_SELECT = """
     LIMIT 1002
 """
 
+# The manufacturing link is deliberately resolved inside ERPNext, rather than
+# accepting an asset id from Countersign.  Work Order is the controlled
+# genealogy record; Work Order Operation supplies the workstation and the
+# Workstation carries the controlled external CMMS asset code.
+_MAINTENANCE_BINDING_SELECT = """
+    SELECT
+        access.name AS access_id,
+        access.tenant_id,
+        access.company,
+        work_order.name AS work_order_id,
+        work_order.docstatus AS work_order_docstatus,
+        work_order.status AS work_order_status,
+        work_order.countersign_finished_batch AS finished_batch,
+        work_order.actual_start_date,
+        work_order.actual_end_date,
+        operation.workstation AS workstation_id,
+        workstation.countersign_openmaint_asset_code AS asset_code
+    FROM `tabCountersign Sponsor Tenant Access` access
+    JOIN `tabWork Order` work_order
+      ON work_order.company = access.company
+     AND work_order.countersign_finished_batch = %(batch_id)s
+    JOIN `tabWork Order Operation` operation
+      ON operation.parent = work_order.name
+     AND operation.parenttype = 'Work Order'
+     AND operation.parentfield = 'operations'
+    JOIN `tabWorkstation` workstation ON workstation.name = operation.workstation
+    WHERE access.user = %(user)s
+      AND access.enabled = 1
+      AND work_order.docstatus = 1
+    ORDER BY work_order.name, operation.idx
+    LIMIT 3
+"""
+
 
 def _deny():
     frappe.throw(_("The requested supply evidence is unavailable."), frappe.PermissionError)
@@ -353,6 +386,15 @@ def _stock_entry_uri(stock_entry_id):
     return source_uri
 
 
+def _work_order_uri(work_order_id):
+    path = f"/app/work-order/{urllib.parse.quote(work_order_id, safe='')}"
+    source_uri = get_url(path)
+    parsed = urllib.parse.urlsplit(source_uri)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        _deny()
+    return source_uri
+
+
 def _nullable(value):
     value = str(value or "").strip()
     return value or None
@@ -449,6 +491,52 @@ def get_batches_sharing_material_lot(batch_id=None):
             }
             for row in rows
         ],
+    }
+
+
+@frappe.whitelist(allow_guest=False, methods=["GET"])
+def get_maintenance_asset_binding(batch_id=None):
+    """Resolve a submitted batch's CMMS asset via Work Order -> Workstation.
+
+    This is a read-only, tenant-locked contract. It fails closed unless there
+    is exactly one submitted Work Order operation and it has a controlled
+    openMAINT asset code plus a valid actual batch window.
+    """
+    user = _require_api_caller()
+    batch_id = _batch_id(batch_id)
+    rows = frappe.db.sql(
+        _MAINTENANCE_BINDING_SELECT,
+        {"user": user, "batch_id": batch_id},
+        as_dict=True,
+    )
+    if len(rows) != 1:
+        _deny()
+    row = rows[0]
+    valid = (
+        row.access_id
+        and row.tenant_id
+        and row.company
+        and row.work_order_id
+        and row.finished_batch == batch_id
+        and row.work_order_docstatus == 1
+        and row.work_order_status in {"In Process", "Completed"}
+        and row.workstation_id
+        and row.asset_code
+        and row.actual_start_date
+        and row.actual_end_date
+        and row.actual_end_date >= row.actual_start_date
+    )
+    if not valid:
+        _deny()
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "tenant_id": row.tenant_id,
+        "batch_id": batch_id,
+        "asset_code": row.asset_code,
+        "work_order_id": row.work_order_id,
+        "source_uri": _work_order_uri(row.work_order_id),
+        "batch_window_started_at": row.actual_start_date,
+        "batch_window_ended_at": row.actual_end_date,
     }
 
 

@@ -1,0 +1,29 @@
+[
+  {
+    "doctype": "Custom Field",
+    "name": "Work Order-countersign_finished_batch",
+    "dt": "Work Order",
+    "fieldname": "countersign_finished_batch",
+    "label": "Countersign Finished Batch",
+    "fieldtype": "Link",
+    "options": "Batch",
+    "insert_after": "production_item",
+    "allow_on_submit": 1,
+    "read_only": 1,
+    "is_system_generated": 0,
+    "module": "Countersign ERPNext"
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Workstation-countersign_openmaint_asset_code",
+    "dt": "Workstation",
+    "fieldname": "countersign_openmaint_asset_code",
+    "label": "openMAINT Asset Code",
+    "fieldtype": "Data",
+    "insert_after": "workstation_name",
+    "unique": 1,
+    "reqd": 1,
+    "is_system_generated": 0,
+    "module": "Countersign ERPNext"
+  }
+]
