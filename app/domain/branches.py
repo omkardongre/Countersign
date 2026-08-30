@@ -51,7 +51,12 @@ from google.genai import types
 from pydantic import BaseModel, Field, ValidationError
 
 from app.domain.compliance import resolve_compliance_result
-from app.domain.department_checks import check_coa, check_em, check_lims
+from app.domain.department_checks import (
+    check_coa,
+    check_em,
+    check_lims,
+    check_maintenance,
+)
 from app.domain.department_models import (
     BranchOutcome,
     BranchStatus,
@@ -61,12 +66,14 @@ from app.domain.department_models import (
     DriveEvidencePayload,
     EmSnapshot,
     LimsSnapshot,
+    MaintenanceSnapshot,
 )
 from app.domain.department_tools import (
     COA_FETCH,
     DRIVE_FETCH_EVIDENCE,
     EM_QUERY,
     LIMS_QUERY,
+    MAINTENANCE_QUERY,
 )
 from app.domain.evidence_models import (
     EvidenceIngestRequest,
@@ -116,6 +123,8 @@ EM_AGENT_NAME = "environmental_monitoring_agent"
 EM_MODEL = "gemini-3.5-flash-lite"
 SUPPLY_AGENT_NAME = "supply_assurance_agent"
 SUPPLY_MODEL = "gemini-3.5-flash-lite"
+MAINTENANCE_AGENT_NAME = "maintenance_engineering_agent"
+MAINTENANCE_MODEL = "gemini-3.5-flash-lite"
 
 _MANUFACTURING_INSTRUCTION = """\
 You are the manufacturing-evidence department agent for one GMP deviation
@@ -168,6 +177,13 @@ three tool calls. You do not decide whether the certificate passes; that is a
 downstream deterministic check.
 """
 
+_MAINTENANCE_INSTRUCTION = """\
+You are the engineering and maintenance department agent for one GMP
+deviation case. Call `query_maintenance_history` exactly once. You do not
+decide whether a calibration or work order affects release; deterministic
+checks run after the tool call.
+"""
+
 
 class ManufacturingAgentSummary(BaseModel):
     """The manufacturing agent's own account of what it fetched. Not used
@@ -198,6 +214,11 @@ class SupplyAgentSummary(BaseModel):
     coa_reviewed: bool = False
     eudragmdp_screened: bool = False
     openfda_screened: bool = False
+    notes: str = Field(default="")
+
+
+class MaintenanceAgentSummary(BaseModel):
+    maintenance_reviewed: bool = False
     notes: str = Field(default="")
 
 
@@ -316,6 +337,40 @@ def _make_supply_tool(bundle: CaseEvidenceBundle, captured: dict[str, Any]) -> A
         }
 
     return fetch_supplier_coa
+
+
+def _make_maintenance_tool(bundle: CaseEvidenceBundle, captured: dict[str, Any]) -> Any:
+    async def query_maintenance_history() -> dict[str, Any]:
+        """Retrieve maintenance history for this batch's ERPNext-bound asset."""
+        snapshot = MaintenanceSnapshot.model_validate(
+            await call_department_tool(
+                MAINTENANCE_QUERY,
+                tenant_id=bundle.tenant_id,
+                batch_id=bundle.batch_id,
+                lifecycle_state=bundle.lifecycle_state,
+                case_tenant_id=bundle.tenant_id,
+            )
+        )
+        captured["maintenance"] = snapshot
+        return {
+            "source_uri": snapshot.source_uri,
+            "asset_code": snapshot.asset_code,
+            "open_corrective_count": snapshot.open_corrective_count,
+        }
+
+    return query_maintenance_history
+
+
+def get_maintenance_agent(maintenance_tool: Any) -> Agent:
+    return Agent(
+        name=MAINTENANCE_AGENT_NAME,
+        model=Gemini(model=MAINTENANCE_MODEL, retry_options=types.HttpRetryOptions(attempts=3)),
+        mode="single_turn",
+        include_contents="none",
+        instruction=_MAINTENANCE_INSTRUCTION,
+        tools=[FunctionTool(maintenance_tool)],
+        output_schema=MaintenanceAgentSummary,
+    )
 
 
 def _screening_query(
@@ -887,3 +942,33 @@ async def collect_supply(ctx: Context, node_input: CaseEvidenceBundle) -> Event:
         )
     except Exception as exc:
         return _failed(Department.SUPPLY, _exc_message(exc))
+
+
+@node(name="collect_maintenance", rerun_on_resume=True)
+async def collect_maintenance(ctx: Context, node_input: CaseEvidenceBundle) -> Event:
+    """Collect one tenant/batch-locked openMAINT snapshot through MCP."""
+    try:
+        bundle = _bundle(node_input)
+        captured: dict[str, Any] = {}
+        maintenance_tool = _make_maintenance_tool(bundle, captured)
+        content = types.Content(
+            role="user",
+            parts=[types.Part(text=(
+                f"Review maintenance history for batch {bundle.batch_id}, "
+                f"tenant {bundle.tenant_id}. Call your tool."
+            ))],
+        )
+        await ctx.run_node(get_maintenance_agent(maintenance_tool), node_input=content)
+        if "maintenance" not in captured:
+            return _failed(Department.MAINTENANCE, "Maintenance agent did not call its required tool.")
+        snapshot = captured["maintenance"]
+        return Event(
+            output=BranchOutcome(
+                department=Department.MAINTENANCE,
+                status=BranchStatus.OK,
+                source_uris=[snapshot.source_uri],
+                findings=check_maintenance(snapshot),
+            ).model_dump(mode="json")
+        )
+    except Exception as exc:
+        return _failed(Department.MAINTENANCE, _exc_message(exc))

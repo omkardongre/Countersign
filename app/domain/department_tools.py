@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import datetime
 import hashlib
-import json
 import os
 
 from app.domain.calendar_tools import (
@@ -108,7 +107,7 @@ from app.domain.department_source import (
     get_maintenance_source,
     get_sibling_batch_source,
 )
-from app.domain.department_source_erpnext import ERPNextApiError
+from app.domain.department_source_erpnext import ERPNextApiError, ErpNextSupplySource
 from app.domain.qms_report_models import QmsReportWriteResult
 
 __all__ = [
@@ -344,25 +343,23 @@ def coa_fetch(*, tenant_id: str, batch_id: str) -> CoaSnapshot:
 
 
 def maintenance_query(*, tenant_id: str, batch_id: str) -> MaintenanceSnapshot:
-    """Read live maintenance evidence for the deployment-bound batch asset.
+    """Read maintenance evidence for the ERPNext Work-Order-bound asset.
 
-    The asset selector is server configuration, never an MCP/model argument.
-    This is intentionally fail-closed until the ERPNext work-order binding
-    endpoint replaces the temporary deployment binding during the Item 7
-    cutover.
+    The MCP caller supplies only its case's tenant and batch. The asset and
+    batch window come from a submitted ERPNext Work Order, never from a model
+    argument, intake form, or deployment map.
     """
-    raw = os.environ.get("COUNTERSIGN_MAINTENANCE_ASSET_MAP_JSON", "")
-    try:
-        mapping = json.loads(raw)
-        asset_code = mapping[tenant_id][batch_id]
-    except (KeyError, TypeError, json.JSONDecodeError) as exc:
-        raise DepartmentRecordMissing(
-            f"No maintenance asset binding is configured for {tenant_id}/{batch_id}."
-        ) from exc
-    if not isinstance(asset_code, str) or not asset_code.strip() or len(asset_code) > 128:
-        raise DepartmentRecordMissing("Maintenance asset binding is invalid.")
-    return get_maintenance_source().maintenance(
-        tenant_id=tenant_id, asset_code=asset_code.strip()
+    binding = ErpNextSupplySource().maintenance_asset_binding(
+        tenant_id=tenant_id, batch_id=batch_id
+    )
+    snapshot = get_maintenance_source().maintenance(
+        tenant_id=tenant_id, asset_code=binding.asset_code
+    )
+    return snapshot.model_copy(
+        update={
+            "batch_window_started_at": binding.batch_window_started_at,
+            "batch_window_ended_at": binding.batch_window_ended_at,
+        }
     )
 
 

@@ -66,6 +66,7 @@ from google.adk.workflow import START, JoinNode, Workflow, node
 
 from app.domain.branches import (
     collect_environmental_monitoring,
+    collect_maintenance,
     collect_manufacturing,
     collect_qc,
     collect_supply,
@@ -107,6 +108,7 @@ _BRANCH_KEYS = (
     "collect_qc",
     "collect_environmental_monitoring",
     "collect_supply",
+    "collect_maintenance",
 )
 
 
@@ -148,6 +150,7 @@ def _parse_branch(key: str, raw: Any) -> BranchOutcome:
             "collect_qc": Department.QC,
             "collect_environmental_monitoring": Department.ENVIRONMENTAL_MONITORING,
             "collect_supply": Department.SUPPLY,
+            "collect_maintenance": Department.MAINTENANCE,
         }[key]
         return BranchOutcome(
             department=department,
@@ -227,6 +230,7 @@ def build_deviation_case_workflow() -> Workflow:
                     collect_qc,
                     collect_environmental_monitoring,
                     collect_supply,
+                    collect_maintenance,
                 ),
                 join_departments,
                 reconcile_departments,

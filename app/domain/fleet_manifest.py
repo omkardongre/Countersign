@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field
 
 from app.domain.branches import (
     EM_AGENT_NAME,
+    MAINTENANCE_AGENT_NAME,
     MANUFACTURING_AGENT_NAME,
     QC_AGENT_NAME,
     SUPPLY_AGENT_NAME,
@@ -55,6 +56,7 @@ from app.domain.department_source import (
     coa_backend_name,
     em_backend_name,
     lims_backend_name,
+    maintenance_backend_name,
 )
 from app.domain.investigation import INVESTIGATION_AGENT_NAME
 from app.domain.qms_report_agent import QA_QMS_WRITE_AGENT_NAME, QA_QMS_WRITE_MODEL
@@ -181,6 +183,22 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
                 "check_em runs only on the tool's captured typed snapshot, "
                 "never on the agent's own text. Holds no QC lab credential, "
                 "and the QC lab agent holds none of its."
+            ),
+        ),
+        FleetAgentEntry(
+            name=MAINTENANCE_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
+            department="maintenance",
+            model="gemini-3.5-flash-lite",
+            allowed_tools=["maintenance_query"],
+            backing_system=maintenance_backend_name(),
+            reasoning_authority=False,
+            description=(
+                "Real single-turn Agent bound to one tenant- and batch-locked "
+                "maintenance query. ERPNext resolves the submitted Work Order "
+                "to its workstation; openMAINT supplies maintenance evidence. "
+                "Deterministic checks, never model prose, identify open "
+                "breakdowns and overdue calibration."
             ),
         ),
         FleetAgentEntry(

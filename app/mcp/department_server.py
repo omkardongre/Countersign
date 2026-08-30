@@ -72,6 +72,7 @@ from app.domain.department_models import (
     DriveEvidencePayload,
     EmSnapshot,
     LimsSnapshot,
+    MaintenanceSnapshot,
 )
 from app.domain.department_source_erpnext import ERPNextApiError
 from app.domain.department_tools import (
@@ -94,6 +95,7 @@ from app.domain.department_tools import (
     ERPNEXT_NONCONFORMANCE_WRITE,
     ERPNEXT_QUALITY_ACTION_WRITE,
     LIMS_QUERY,
+    MAINTENANCE_QUERY,
     PRIOR_ART_QUERY,
     PRIOR_ART_REDACT,
     PRIOR_ART_WRITE,
@@ -175,6 +177,9 @@ from app.domain.department_tools import (
 )
 from app.domain.department_tools import (
     lims_query as load_lims,
+)
+from app.domain.department_tools import (
+    maintenance_query as load_maintenance,
 )
 from app.domain.department_tools import (
     prior_art_query as run_prior_art_query,
@@ -303,7 +308,7 @@ def build_department_mcp(
     json_response: bool = False,
     stateless_http: bool = True,
 ) -> FastMCP:
-    """Registers exactly ``lims_query``, ``em_query``, and ``coa_fetch``."""
+    """Registers governed read and post-QP write department tools."""
     mcp = FastMCP(
         "countersign-department",
         host=host,
@@ -375,6 +380,31 @@ def build_department_mcp(
         except DepartmentRecordMissing as exc:
             raise ToolError(str(exc)) from exc
         except ERPNextApiError as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=MAINTENANCE_QUERY,
+        title="Maintenance history query",
+        description=(
+            "Read openMAINT maintenance and calibration evidence for the "
+            "ERPNext Work-Order-bound equipment of one tenant and batch. "
+            "Read-only."
+        ),
+        annotations=_READ_ONLY,
+    )
+    def maintenance_query(
+        tenant_id: str,
+        batch_id: str,
+        lifecycle_state: str = "classified",
+        case_tenant_id: str = "",
+    ) -> MaintenanceSnapshot:
+        if not case_tenant_id or case_tenant_id != tenant_id:
+            raise ToolError("Maintenance query tenant scope does not match the case.")
+        if lifecycle_state not in {"classified", "under_investigation"}:
+            raise ToolError("Maintenance query is not available in this case lifecycle state.")
+        try:
+            return load_maintenance(tenant_id=tenant_id, batch_id=batch_id)
+        except (DepartmentRecordMissing, ERPNextApiError) as exc:
             raise ToolError(str(exc)) from exc
 
     @mcp.tool(

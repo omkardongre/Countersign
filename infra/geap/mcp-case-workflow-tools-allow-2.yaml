@@ -42,3 +42,6 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "erpnext_quality_action_write"
+              - name: "tools/call"
+                params:
+                  - exact: "maintenance_query"
