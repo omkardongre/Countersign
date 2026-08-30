@@ -68,13 +68,19 @@ def test_case_workflow_policy_allows_all_named_tools() -> None:
     Sterility tools are here because an Agent Identity principal cannot be a
     Cloud SQL IAM database user (confirmed against the live instance), so
     the clock is reached through MCP like LIMS/EM/CoA, not opened directly.
+
+    The tools are split across two sibling policy files because a single
+    AuthzPolicy caps at 10 MCP methods (Gateway API hard limit). Both files
+    must be applied for the case_workflow identity.
     """
     text = _read("mcp-case-workflow-tools-allow.yaml")
     assert "MATCH_BASE_PROTOCOL_METHODS" in text
     assert 'name: "tools/list"' in text
     assert "bind_to: case_workflow" in text
     assert "do_not_bind_to: qc_probe" in text
-    assert _exact_tools(text) == {
+    text2 = _read("mcp-case-workflow-tools-allow-2.yaml")
+    assert "bind_to: case_workflow" in text2
+    assert _exact_tools(text) | _exact_tools(text2) == {
         "lims_query",
         "em_query",
         "coa_fetch",
