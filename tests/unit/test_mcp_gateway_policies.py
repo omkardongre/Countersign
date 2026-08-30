@@ -93,6 +93,8 @@ def test_case_workflow_policy_allows_all_named_tools() -> None:
         "controlled_guidance_query",
         "case_status_upsert",
         "qms_report_write",
+        "erpnext_nonconformance_write",
+        "erpnext_quality_action_write",
     }
 
 

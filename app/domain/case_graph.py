@@ -51,7 +51,10 @@ marks the store complete and ADK resume continues. QP sign-off is a
 After the QP has acted, ``qa_qms_write_agent`` (``qms_report_agent.py``) —
 the case-workflow QMS writer and the only agent permitted to mutate an external
 record — files the investigation report and Annex 16 package as a real Google
-Doc. Nothing in this graph certifies or releases a batch.
+Doc. Then ``capa_write_agent`` (``capa_write_agent.py``) creates a Non
+Conformance and linked Quality Actions (CAPA) in ERPNext — the cross-department
+write-back that makes the fleet act, not just report. Nothing in this graph
+certifies or releases a batch.
 """
 
 from __future__ import annotations
@@ -67,6 +70,7 @@ from app.domain.branches import (
     collect_qc,
     collect_supply,
 )
+from app.domain.capa_write_agent import file_capa
 from app.domain.case_memory_node import record_case_memory, retrieve_prior_art
 from app.domain.case_models import CaseComplianceResult, DeviationCaseRequest
 from app.domain.cfi_escalation import escalate_to_cfi
@@ -236,6 +240,7 @@ def build_deviation_case_workflow() -> Workflow:
                 confirm_qp,
                 record_case_memory,
                 file_qms_report,
+                file_capa,
             ),
             # Parallel terminal branch, not a step in the sequential path
             # above: escalate_to_cfi runs off the same gate_investigation

@@ -1,10 +1,10 @@
 {
-  "case_agent_runtime_id": "projects/777448403573/locations/us-central1/reasoningEngines/4023022336323092480",
+  "case_agent_runtime_id": "projects/777448403573/locations/us-central1/reasoningEngines/3536844682799611904",
   "deployment_target": "agent_runtime",
   "deploy_mode": "sdk_adkapp_source",
   "agent_directory": "app",
-  "deployment_timestamp": "2026-08-29T08:58:00.538178+00:00",
-  "effective_identity": "agents.global.org-334195573957.system.id.goog/resources/aiplatform/projects/777448403573/locations/us-central1/reasoningEngines/4023022336323092480",
+  "deployment_timestamp": "2026-08-30T16:47:32.265447+00:00",
+  "effective_identity": "agents.global.org-334195573957.system.id.goog/resources/aiplatform/projects/777448403573/locations/us-central1/reasoningEngines/3536844682799611904",
   "agent_gateway": "projects/countersign-505107/locations/us-central1/agentGateways/countersign-egress",
   "sessions": "vertex_managed",
   "mcp_url": "https://countersign-department-mcp-777448403573.us-central1.run.app/mcp",

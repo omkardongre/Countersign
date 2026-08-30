@@ -15,6 +15,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.domain.capa_models import (
+    NonConformanceWriteRequest,
+    NonConformanceWriteResult,
+    QualityActionWriteRequest,
+    QualityActionWriteResult,
+)
 from app.domain.department_models import CoaSnapshot
 from app.domain.department_source import BACKEND_ERPNEXT, DepartmentRecordMissing
 
@@ -25,6 +31,7 @@ ERPNEXT_SCHEMA_VERSION = "countersign.erpnext.supply.v1"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _MAX_RESPONSE_BYTES = 512 * 1024
 _METHODS = frozenset({"get_coa_snapshot", "get_batches_sharing_material_lot"})
+_WRITE_METHODS = frozenset({"create_non_conformance", "create_quality_action"})
 _API_PREFIX = "/api/method/countersign_erpnext.api.v1."
 _TENANT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _MAX_HOSTNAME_LENGTH = 253
@@ -338,6 +345,115 @@ def _request_json(
     return payload
 
 
+def _request_json_post(
+    *, tenant_id: str, method: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """POST a JSON body to a whitelisted ERPNext custom API endpoint.
+
+    Same security posture as ``_request_json``: HTTPS-only, no redirects,
+    token auth, bounded response, JSON content-type check. The method must
+    be in ``_WRITE_METHODS``.
+    """
+    if method not in _WRITE_METHODS:
+        raise ERPNextApiError("ERPNext write API method is not allow-listed.")
+    credentials = erpnext_credentials_for_tenant(tenant_id)
+    url = f"{credentials.base_url}{_API_PREFIX}{method}"
+    encoded = json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=encoded,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": (
+                f"token {credentials.api_key}:{credentials.api_secret}"
+            ),
+        },
+        method="POST",
+    )
+    opener = urllib.request.build_opener(_RejectRedirects())
+    try:
+        with opener.open(request, timeout=_timeout_seconds()) as response:
+            content_type = response.headers.get_content_type()
+            if content_type != "application/json":
+                raise ERPNextApiError("ERPNext API returned a non-JSON response.")
+            response_body = response.read(_MAX_RESPONSE_BYTES + 1)
+    except ERPNextApiError:
+        raise
+    except urllib.error.HTTPError as exc:
+        raise ERPNextApiError(
+            f"ERPNext API {method} failed with HTTP {exc.code}."
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise ERPNextApiError(f"ERPNext API {method} transport failed.") from exc
+    if len(response_body) > _MAX_RESPONSE_BYTES:
+        raise ERPNextApiError("ERPNext API response exceeded the size limit.")
+    try:
+        payload = json.loads(response_body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ERPNextApiError("ERPNext API returned invalid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ERPNextApiError("ERPNext API response schema is invalid.")
+    return payload
+
+
+class _NonConformanceApiResponse(_StrictModel):
+    schema_version: Literal[ERPNEXT_SCHEMA_VERSION]
+    tenant_id: str = Field(min_length=1, max_length=128)
+    case_id: str = Field(min_length=1, max_length=256)
+    non_conformance_id: str = Field(min_length=1, max_length=256)
+    non_conformance_url: str = Field(min_length=1, max_length=4096)
+    was_existing: bool
+
+
+class _QualityActionApiResponse(_StrictModel):
+    schema_version: Literal[ERPNEXT_SCHEMA_VERSION]
+    tenant_id: str = Field(min_length=1, max_length=128)
+    case_id: str = Field(min_length=1, max_length=256)
+    quality_action_id: str = Field(min_length=1, max_length=256)
+    quality_action_url: str = Field(min_length=1, max_length=4096)
+    was_existing: bool
+
+
+class _NonConformanceEnvelope(_StrictModel):
+    message: _NonConformanceApiResponse
+
+
+class _QualityActionEnvelope(_StrictModel):
+    message: _QualityActionApiResponse
+
+
+_NC_URI_PREFIX = "/app/non-conformance/"
+_QA_URI_PREFIX = "/app/quality-action/"
+
+
+def _validate_write_uri(
+    source_uri: str, base_url: str, *, prefix: str, record_id: str
+) -> None:
+    """Same URI validation as ``_validate_source_uri`` but for write-back
+    record URLs (Non Conformance / Quality Action)."""
+    source = urllib.parse.urlsplit(source_uri)
+    base = urllib.parse.urlsplit(base_url)
+    if source.scheme != "https":
+        raise ERPNextApiError("ERPNext write-back URI must use HTTPS.")
+    try:
+        source_port = _port_or_default(source)
+        base_port = _port_or_default(base)
+    except ERPNextApiError:
+        raise
+    if (source.hostname or "").lower() != (base.hostname or "").lower():
+        raise ERPNextApiError("ERPNext write-back URI host does not match its tenant site.")
+    if source_port != base_port:
+        raise ERPNextApiError("ERPNext write-back URI port does not match its tenant site.")
+    if source.username or source.password or source.query or source.fragment:
+        raise ERPNextApiError("ERPNext write-back URI schema is invalid.")
+    if not source.path.startswith(prefix):
+        raise ERPNextApiError("ERPNext write-back URI path is not allowed.")
+    expected_path = prefix + urllib.parse.quote(record_id, safe="")
+    if source.path != expected_path:
+        raise ERPNextApiError("ERPNext write-back URI record does not match the response.")
+
+
 _COA_URI_PREFIX = "/app/countersign-coa-verification/"
 _STOCK_ENTRY_URI_PREFIX = "/app/stock-entry/"
 _SOURCE_URI_PREFIXES = (_COA_URI_PREFIX, _STOCK_ENTRY_URI_PREFIX)
@@ -487,3 +603,82 @@ class ErpNextSupplySource:
                 (sibling.batch_id, sibling.material_lot, sibling.source_uri)
             )
         return response.material_lot, siblings
+
+    def create_non_conformance(
+        self, *, request: NonConformanceWriteRequest
+    ) -> NonConformanceWriteResult:
+        """Create (or re-use) a Non Conformance in ERPNext.
+
+        Idempotent by ``(tenant_id, case_id)``: the ERPNext endpoint checks
+        for an existing NC with those custom fields before creating. A
+        resume-triggered rerun re-uses the same record rather than
+        duplicating it.
+        """
+        try:
+            envelope = _NonConformanceEnvelope.model_validate(
+                _request_json_post(
+                    tenant_id=request.tenant_id,
+                    method="create_non_conformance",
+                    body=request.model_dump(mode="json"),
+                )
+            )
+        except ValidationError as exc:
+            raise ERPNextApiError(
+                "ERPNext Non Conformance response schema is invalid."
+            ) from exc
+        record = envelope.message
+        if record.tenant_id != request.tenant_id or record.case_id != request.case_id:
+            raise ERPNextApiError(
+                "ERPNext Non Conformance response scope does not match the request."
+            )
+        credentials = erpnext_credentials_for_tenant(request.tenant_id)
+        _validate_write_uri(
+            record.non_conformance_url,
+            credentials.base_url,
+            prefix=_NC_URI_PREFIX,
+            record_id=record.non_conformance_id,
+        )
+        return NonConformanceWriteResult(
+            non_conformance_id=record.non_conformance_id,
+            non_conformance_url=record.non_conformance_url,
+            was_existing=record.was_existing,
+        )
+
+    def create_quality_action(
+        self, *, request: QualityActionWriteRequest
+    ) -> QualityActionWriteResult:
+        """Create (or re-use) a Quality Action in ERPNext linked to an NC.
+
+        Idempotent by ``(tenant_id, case_id, action_type)``: the ERPNext
+        endpoint checks for an existing QA with those custom fields before
+        creating.
+        """
+        try:
+            envelope = _QualityActionEnvelope.model_validate(
+                _request_json_post(
+                    tenant_id=request.tenant_id,
+                    method="create_quality_action",
+                    body=request.model_dump(mode="json"),
+                )
+            )
+        except ValidationError as exc:
+            raise ERPNextApiError(
+                "ERPNext Quality Action response schema is invalid."
+            ) from exc
+        record = envelope.message
+        if record.tenant_id != request.tenant_id or record.case_id != request.case_id:
+            raise ERPNextApiError(
+                "ERPNext Quality Action response scope does not match the request."
+            )
+        credentials = erpnext_credentials_for_tenant(request.tenant_id)
+        _validate_write_uri(
+            record.quality_action_url,
+            credentials.base_url,
+            prefix=_QA_URI_PREFIX,
+            record_id=record.quality_action_id,
+        )
+        return QualityActionWriteResult(
+            quality_action_id=record.quality_action_id,
+            quality_action_url=record.quality_action_url,
+            was_existing=record.was_existing,
+        )

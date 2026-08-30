@@ -21,6 +21,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from app.domain.department_models import CoaSnapshot, EmSnapshot, LimsSnapshot
 from app.domain.department_tools import (
     ALLOWED_DEPARTMENT_TOOLS,
+    CAPA_WRITE_TOOLS,
     CASE_MEMORY_TOOLS,
     CASE_STATUS_TOOLS,
     CFI_ARTIFACT_TOOLS,
@@ -66,6 +67,7 @@ async def test_department_mcp_exposes_exactly_the_named_tools() -> None:
         | CASE_STATUS_TOOLS
         | SPONSOR_TOOLS
         | QMS_WRITE_TOOLS
+        | CAPA_WRITE_TOOLS
         | GUIDANCE_TOOLS
         | CFI_TOOLS
         | CFI_ARTIFACT_TOOLS

@@ -43,6 +43,7 @@ from app.domain.branches import (
     QC_AGENT_NAME,
     SUPPLY_AGENT_NAME,
 )
+from app.domain.capa_write_agent import CAPA_WRITE_AGENT_NAME, CAPA_WRITE_MODEL
 from app.domain.case_memory_store import get_case_memory_store
 from app.domain.cfi_interview_agent import INTERVIEW_AGENT_MODEL, INTERVIEW_AGENT_NAME
 from app.domain.cfi_lead import CFI_LEAD_AGENT_NAME, CFI_LEAD_MODEL
@@ -271,14 +272,38 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
             backing_system="google_drive_docs",
             reasoning_authority=False,
             description=(
-                "The only agent in this fleet permitted to mutate an "
+                "The first agent in this fleet permitted to mutate an "
                 "external record, and only after the QP has acted "
-                "(runs as file_qms_report, the graph's last node). Its "
-                "one tool is a tenant/case-locked closure with no "
-                "model-controlled arguments: it files the already-built "
-                "investigation report and Annex 16 package as a Google "
-                "Doc, it never drafts report content and never alters "
-                "the QP's decision."
+                "(runs as file_qms_report). Its one tool is a "
+                "tenant/case-locked closure with no model-controlled "
+                "arguments: it files the already-built investigation "
+                "report and Annex 16 package as a Google Doc, it never "
+                "drafts report content and never alters the QP's decision."
+            ),
+        ),
+        FleetAgentEntry(
+            name=CAPA_WRITE_AGENT_NAME,
+            kind=AgentKind.LLM_AGENT_SINGLE_TURN,
+            department="qa_qms",
+            model=CAPA_WRITE_MODEL,
+            allowed_tools=[
+                "erpnext_nonconformance_write",
+                "erpnext_quality_action_write",
+            ],
+            backing_system="erpnext_quality_management",
+            reasoning_authority=False,
+            description=(
+                "The second agent permitted to mutate an external "
+                "record, and only after the QP has acted and the "
+                "investigation report has been filed (runs as "
+                "file_capa, the graph's last node). Its two tools are "
+                "tenant/case-locked closures with no model-controlled "
+                "arguments: it creates a Non Conformance and linked "
+                "Quality Actions (Corrective + Preventive) in ERPNext, "
+                "it never drafts CAPA content and never alters the "
+                "QP's decision. A write failure is a visible typed "
+                "error on the case, never a silent omission, and never "
+                "blocks the workflow from completing."
             ),
         ),
         FleetAgentEntry(

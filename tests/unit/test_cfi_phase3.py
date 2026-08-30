@@ -84,7 +84,7 @@ def test_closure_is_idempotent_so_retried_artifacts_stay_stable() -> None:
     assert second.outcome is first.outcome
 
 
-def test_fleet_manifest_has_fourteen_agents_and_no_reasoning_authority() -> None:
+def test_fleet_manifest_has_fifteen_agents_and_no_reasoning_authority() -> None:
     fleet = build_fleet_manifest()
-    assert len(fleet) == 14
+    assert len(fleet) == 15
     assert all(entry.reasoning_authority is False for entry in fleet)
