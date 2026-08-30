@@ -69,6 +69,7 @@ from app.domain.department_models import (
     EmSnapshot,
     LimsSnapshot,
 )
+from app.domain.department_source_erpnext import ERPNextApiError
 from app.domain.department_tools import (
     CASE_STATUS_UPSERT,
     CFI_CALENDAR_SITE_REVIEW,
@@ -358,6 +359,8 @@ def build_department_mcp(
         try:
             return load_coa(tenant_id=tenant_id, batch_id=batch_id)
         except DepartmentRecordMissing as exc:
+            raise ToolError(str(exc)) from exc
+        except ERPNextApiError as exc:
             raise ToolError(str(exc)) from exc
 
     @mcp.tool(

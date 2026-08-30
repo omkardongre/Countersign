@@ -93,6 +93,11 @@ class CoaSnapshot(BaseModel):
     signed: bool
     retest_date: datetime.date
     gmp_certificate_current: bool
+    quality_inspection_accepted: bool = True
+    record_id: str | None = None
+    record_modified: datetime.datetime | None = None
+    quality_inspection_id: str | None = None
+    attachment_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     # Public attributes are populated only by a real CoA/source adapter. They
     # are intentionally separate from internal supplier/lot identifiers so
     # regulator tools cannot accidentally transmit case-confidential data.

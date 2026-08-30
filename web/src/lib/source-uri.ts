@@ -28,6 +28,8 @@ const SCHEME_LABELS: Record<string, SchemeLabeler> = {
  * instead of showing the raw API query string. */
 function labelHttp(path: string): string {
   if (path.includes("@@API/senaite/")) return "SENAITE LIMS record";
+  if (path.includes("/app/countersign-coa-verification/")) return "ERPNext supply record";
+  if (path.includes("/app/stock-entry/")) return "ERPNext manufacture stock entry";
   return `${path.split("/")[0] ?? path} record`;
 }
 

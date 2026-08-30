@@ -29,8 +29,10 @@ from app.domain.evidence_models import SourceAnchor
 from app.domain.master_data import RootCauseCategory
 
 
-def _anchor(source_uri: str, identity: str) -> SourceAnchor:
-    digest = hashlib.sha256(identity.encode()).hexdigest()
+def _anchor(
+    source_uri: str, identity: str, *, artifact_sha256: str | None = None
+) -> SourceAnchor:
+    digest = artifact_sha256 or hashlib.sha256(identity.encode()).hexdigest()
     return SourceAnchor(
         artifact_filename=identity,
         artifact_version=1,
@@ -97,11 +99,21 @@ def check_em(snapshot: EmSnapshot) -> list[ComplianceFinding]:
     return findings
 
 
-def check_coa(snapshot: CoaSnapshot) -> list[ComplianceFinding]:
-    """Supplier gating: signature, lot match, retest date, GMP certificate."""
+def check_coa(
+    snapshot: CoaSnapshot,
+    *,
+    today: datetime.date | None = None,
+) -> list[ComplianceFinding]:
+    """Supplier gating: signature, lot match, retest date, recorded GMP expiry."""
     findings: list[ComplianceFinding] = []
+    if today is None:
+        today = datetime.datetime.now(datetime.UTC).date()
     identity = f"coa:{snapshot.supplier_id}:{snapshot.material_lot}"
-    anchor = _anchor(snapshot.source_uri, identity)
+    anchor = _anchor(
+        snapshot.source_uri,
+        identity,
+        artifact_sha256=snapshot.attachment_sha256,
+    )
 
     if not snapshot.signed:
         findings.append(
@@ -112,6 +124,18 @@ def check_coa(snapshot: CoaSnapshot) -> list[ComplianceFinding]:
                 root_cause_category=RootCauseCategory.MATERIAL,
                 description="Supplier CoA is not signed.",
                 anchor=anchor,
+            )
+        )
+    if not snapshot.quality_inspection_accepted:
+        findings.append(
+            ComplianceFinding(
+                finding_type=ComplianceFindingType.OUT_OF_SPECIFICATION,
+                field_name="quality_inspection",
+                label="Incoming material quality inspection",
+                root_cause_category=RootCauseCategory.MATERIAL,
+                description="ERPNext incoming material quality inspection is not accepted.",
+                anchor=anchor,
+                oos_phase=OosPhase.PHASE_I_LABORATORY,
             )
         )
     if snapshot.material_lot != snapshot.dispensed_lot:
@@ -136,13 +160,12 @@ def check_coa(snapshot: CoaSnapshot) -> list[ComplianceFinding]:
             ComplianceFinding(
                 finding_type=ComplianceFindingType.COMPLETENESS,
                 field_name="gmp_certificate",
-                label="Supplier GMP certificate",
+                label="Supplier GMP certificate (recorded expiry)",
                 root_cause_category=RootCauseCategory.MATERIAL,
-                description="Supplier GMP certificate is not current.",
+                description="Recorded GMP certificate expiry is not current or the certificate is missing.",
                 anchor=anchor,
             )
         )
-    today = datetime.datetime.now(datetime.UTC).date()
     if snapshot.retest_date < today:
         findings.append(
             ComplianceFinding(

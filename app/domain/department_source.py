@@ -55,6 +55,7 @@ from app.domain.department_models import CoaSnapshot, EmSnapshot, LimsSnapshot
 
 LIMS_BACKEND_ENV = "COUNTERSIGN_LIMS_BACKEND"
 EM_BACKEND_ENV = "COUNTERSIGN_EM_BACKEND"
+COA_BACKEND_ENV = "COUNTERSIGN_COA_BACKEND"
 SIBLING_BATCH_BACKEND_ENV = "COUNTERSIGN_SIBLING_BATCH_BACKEND"
 
 LIMS_DB_ENV = "COUNTERSIGN_LIMS_DB"
@@ -72,6 +73,7 @@ DEFAULT_SIBLING_BATCH_TABLE = "batch_material_lots"
 BACKEND_CLOUD_SQL = "cloud_sql"
 BACKEND_BIGQUERY = "bigquery"
 BACKEND_SENAITE = "senaite"
+BACKEND_ERPNEXT = "erpnext"
 BACKEND_CATALOG = "synthetic_catalog"
 
 # SQL identifiers cannot be bound as query parameters, so any table/dataset
@@ -140,6 +142,10 @@ class LimsSource(Protocol):
 
 class EmSource(Protocol):
     def em(self, *, tenant_id: str, batch_id: str) -> EmSnapshot: ...
+
+
+class CoaSource(Protocol):
+    def coa(self, *, tenant_id: str, batch_id: str) -> CoaSnapshot: ...
 
 
 class SiblingBatchSource(Protocol):
@@ -255,10 +261,22 @@ def get_em_source() -> EmSource:
 
 
 @functools.cache
-def get_coa_source() -> CatalogDepartmentSource:
-    """Supplier CoA. Still catalog-backed; the untrusted supplier channel is
-    its own P1 item, not part of the QC/EM move.
-    """
+def get_coa_source() -> CoaSource:
+    requested = os.environ.get(COA_BACKEND_ENV, "").strip().lower()
+    if requested == BACKEND_ERPNEXT:
+        from app.domain.department_source_erpnext import (
+            ERPNEXT_CREDENTIALS_ENV,
+            ErpNextSupplySource,
+        )
+
+        if not os.environ.get(ERPNEXT_CREDENTIALS_ENV, ""):
+            raise RuntimeError(
+                f"{COA_BACKEND_ENV}={BACKEND_ERPNEXT} requires "
+                f"{ERPNEXT_CREDENTIALS_ENV} to be set."
+            )
+        return ErpNextSupplySource()
+    if requested:
+        raise RuntimeError(f"Unsupported {COA_BACKEND_ENV} value {requested!r}.")
     return CatalogDepartmentSource()
 
 
@@ -282,6 +300,22 @@ def get_sibling_batch_source() -> SiblingBatchSource:
         from app.domain.department_source_postgres import PostgresSiblingBatchSource
 
         return PostgresSiblingBatchSource()
+    if requested == BACKEND_ERPNEXT:
+        from app.domain.department_source_erpnext import (
+            ERPNEXT_CREDENTIALS_ENV,
+            ErpNextSupplySource,
+        )
+
+        if not os.environ.get(ERPNEXT_CREDENTIALS_ENV, ""):
+            raise RuntimeError(
+                f"{SIBLING_BATCH_BACKEND_ENV}={BACKEND_ERPNEXT} requires "
+                f"{ERPNEXT_CREDENTIALS_ENV} to be set."
+            )
+        return ErpNextSupplySource()
+    if requested:
+        raise RuntimeError(
+            f"Unsupported {SIBLING_BATCH_BACKEND_ENV} value {requested!r}."
+        )
     return CatalogDepartmentSource()
 
 
@@ -294,7 +328,7 @@ def em_backend_name() -> str:
 
 
 def coa_backend_name() -> str:
-    return BACKEND_CATALOG
+    return getattr(get_coa_source(), "backend_name", BACKEND_CATALOG)
 
 
 def sibling_batch_backend_name() -> str:
@@ -308,3 +342,6 @@ def reset_department_source_cache() -> None:
     get_em_source.cache_clear()
     get_coa_source.cache_clear()
     get_sibling_batch_source.cache_clear()
+    from app.domain.department_source_erpnext import reset_erpnext_credentials_cache
+
+    reset_erpnext_credentials_cache()

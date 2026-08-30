@@ -99,6 +99,7 @@ from app.domain.department_source import (
     get_lims_source,
     get_sibling_batch_source,
 )
+from app.domain.department_source_erpnext import ERPNextApiError
 from app.domain.qms_report_models import QmsReportWriteResult
 
 __all__ = [
@@ -846,7 +847,7 @@ def sibling_batch_query(
         _source_lot, matches = get_sibling_batch_source().batches_sharing_material_lot(
             tenant_id=tenant_id, batch_id=batch_id
         )
-    except DepartmentRecordMissing as exc:
+    except (DepartmentRecordMissing, ERPNextApiError) as exc:
         raise ValueError(str(exc)) from exc
 
     candidates = [
