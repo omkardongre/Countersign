@@ -40,6 +40,7 @@ from mcp.shared.memory import create_connected_server_and_client_session
 
 from app.domain.department_tools import (
     ALLOWED_DEPARTMENT_TOOLS,
+    CAPA_WRITE_TOOLS,
     CASE_MEMORY_TOOLS,
     CASE_STATUS_TOOLS,
     CFI_ARTIFACT_TOOLS,
@@ -367,6 +368,23 @@ async def call_qms_write_tool(name: str, arguments: dict[str, Any]) -> dict[str,
     if name not in QMS_WRITE_TOOLS:
         raise DepartmentToolCallError(
             f"Callers may not call {name!r}; allowed={sorted(QMS_WRITE_TOOLS)}"
+        )
+    payload = await call_mcp_tool(name, arguments)
+    if not payload:
+        raise DepartmentToolCallError(f"{name} returned no structured content.")
+    return payload
+
+
+async def call_capa_write_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Call an ERPNext CAPA write tool over MCP. Fail closed on errors.
+
+    Its own allow-list (``CAPA_WRITE_TOOLS``), disjoint from
+    ``QMS_WRITE_TOOLS`` and every read-only set — a Gateway allow-list bug
+    on one write surface can never grant access to the other.
+    """
+    if name not in CAPA_WRITE_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(CAPA_WRITE_TOOLS)}"
         )
     payload = await call_mcp_tool(name, arguments)
     if not payload:

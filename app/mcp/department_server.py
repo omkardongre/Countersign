@@ -38,6 +38,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from app.domain.capa_models import (
+    NonConformanceWriteResult,
+    QualityActionWriteResult,
+)
 from app.domain.case_memory_models import (
     CaseMemoryFact,
     CaseMemoryQueryResult,
@@ -87,6 +91,8 @@ from app.domain.department_tools import (
     CONTROLLED_GUIDANCE_QUERY,
     DRIVE_FETCH_EVIDENCE,
     EM_QUERY,
+    ERPNEXT_NONCONFORMANCE_WRITE,
+    ERPNEXT_QUALITY_ACTION_WRITE,
     LIMS_QUERY,
     PRIOR_ART_QUERY,
     PRIOR_ART_REDACT,
@@ -97,6 +103,7 @@ from app.domain.department_tools import (
     STERILITY_BIND_RESUME_HANDLE,
     STERILITY_GET,
     STERILITY_START,
+    CapaTenantMismatch,
     CaseMemoryTenantMismatch,
     CaseStatusTenantMismatch,
     CfiCalendarError,
@@ -107,6 +114,7 @@ from app.domain.department_tools import (
     ControlledGuidanceTenantMismatch,
     DepartmentRecordMissing,
     DriveFetchError,
+    ErpNextCapaWriteError,
     QmsReportWriteError,
     SiblingBatchTenantMismatch,
     SterilityTenantMismatch,
@@ -158,6 +166,12 @@ from app.domain.department_tools import (
 )
 from app.domain.department_tools import (
     em_query as load_em,
+)
+from app.domain.department_tools import (
+    erpnext_nonconformance_write as run_erpnext_nonconformance_write,
+)
+from app.domain.department_tools import (
+    erpnext_quality_action_write as run_erpnext_quality_action_write,
 )
 from app.domain.department_tools import (
     lims_query as load_lims,
@@ -401,6 +415,77 @@ def build_department_mcp(
                 tenant_id=tenant_id, case_id=case_id, title=title, body=body
             )
         except QmsReportWriteError as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=ERPNEXT_NONCONFORMANCE_WRITE,
+        title="Create ERPNext Non Conformance",
+        description=(
+            "Create (or re-use) a Non Conformance record in ERPNext for "
+            "this deviation case. Idempotent by tenant_id/case_id: a rerun "
+            "re-uses the existing NC rather than duplicating it. The "
+            "subject and details are pre-built deterministic text; this "
+            "tool never drafts NC content. Only callable when "
+            "COUNTERSIGN_COA_BACKEND=erpnext. Its own allow-list, disjoint "
+            "from every read-only set and from QMS_WRITE_TOOLS."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def erpnext_nonconformance_write(
+        tenant_id: str,
+        case_id: str,
+        batch_id: str,
+        subject: str,
+        details: str,
+        case_tenant_id: str,
+    ) -> NonConformanceWriteResult:
+        try:
+            return run_erpnext_nonconformance_write(
+                tenant_id=tenant_id,
+                case_id=case_id,
+                batch_id=batch_id,
+                subject=subject,
+                details=details,
+                case_tenant_id=case_tenant_id,
+            )
+        except (ErpNextCapaWriteError, CapaTenantMismatch) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=ERPNEXT_QUALITY_ACTION_WRITE,
+        title="Create ERPNext Quality Action (CAPA)",
+        description=(
+            "Create (or re-use) a Quality Action (CAPA) in ERPNext linked "
+            "to a Non Conformance. Idempotent by "
+            "tenant_id/case_id/action_type. The problem and resolution "
+            "text are pre-built deterministic text; this tool never drafts "
+            "CAPA content. Only callable when "
+            "COUNTERSIGN_COA_BACKEND=erpnext."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def erpnext_quality_action_write(
+        tenant_id: str,
+        case_id: str,
+        batch_id: str,
+        non_conformance_id: str,
+        action_type: str,
+        problem: str,
+        resolution: str,
+        case_tenant_id: str,
+    ) -> QualityActionWriteResult:
+        try:
+            return run_erpnext_quality_action_write(
+                tenant_id=tenant_id,
+                case_id=case_id,
+                batch_id=batch_id,
+                non_conformance_id=non_conformance_id,
+                action_type=action_type,
+                problem=problem,
+                resolution=resolution,
+                case_tenant_id=case_tenant_id,
+            )
+        except (ErpNextCapaWriteError, CapaTenantMismatch) as exc:
             raise ToolError(str(exc)) from exc
 
     @mcp.tool(

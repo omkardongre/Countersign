@@ -24,6 +24,8 @@ bindings:
       - prior_art_write
       - controlled_guidance_query
       - qms_report_write
+      - erpnext_nonconformance_write
+      - erpnext_quality_action_write
   - policy: mcp-case-workflow-regulatory-screening-allow.yaml
     identity: case_workflow
     tools:

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import os
 
 from app.domain.calendar_tools import (
@@ -35,6 +36,12 @@ from app.domain.calendar_tools import (
 )
 from app.domain.calendar_tools import (
     schedule_site_review as persist_site_review,
+)
+from app.domain.capa_models import (
+    NonConformanceWriteRequest,
+    NonConformanceWriteResult,
+    QualityActionWriteRequest,
+    QualityActionWriteResult,
 )
 from app.domain.cfi_artifact_models import (
     CfiReportWriteRequest,
@@ -91,12 +98,14 @@ from app.domain.department_models import (
     DriveEvidencePayload,
     EmSnapshot,
     LimsSnapshot,
+    MaintenanceSnapshot,
 )
 from app.domain.department_source import (
     DepartmentRecordMissing,
     get_coa_source,
     get_em_source,
     get_lims_source,
+    get_maintenance_source,
     get_sibling_batch_source,
 )
 from app.domain.department_source_erpnext import ERPNextApiError
@@ -104,6 +113,7 @@ from app.domain.qms_report_models import QmsReportWriteResult
 
 __all__ = [
     "ALLOWED_DEPARTMENT_TOOLS",
+    "CAPA_WRITE_TOOLS",
     "CASE_MEMORY_TOOLS",
     "CASE_STATUS_TOOLS",
     "CASE_STATUS_UPSERT",
@@ -127,8 +137,11 @@ __all__ = [
     "DRIVE_FETCH_EVIDENCE",
     "DRIVE_TOOLS",
     "EM_QUERY",
+    "ERPNEXT_NONCONFORMANCE_WRITE",
+    "ERPNEXT_QUALITY_ACTION_WRITE",
     "GUIDANCE_TOOLS",
     "LIMS_QUERY",
+    "MAINTENANCE_QUERY",
     "PRIOR_ART_QUERY",
     "PRIOR_ART_REDACT",
     "PRIOR_ART_WRITE",
@@ -147,6 +160,7 @@ __all__ = [
     "ControlledGuidanceTenantMismatch",
     "DepartmentRecordMissing",
     "DriveFetchError",
+    "ErpNextCapaWriteError",
     "QmsReportWriteError",
     "SiblingBatchTenantMismatch",
     "case_status_upsert",
@@ -163,6 +177,8 @@ __all__ = [
     "controlled_guidance_query",
     "drive_fetch_evidence",
     "em_query",
+    "erpnext_nonconformance_write",
+    "erpnext_quality_action_write",
     "lims_query",
     "qms_report_write",
     "sibling_batch_query",
@@ -172,6 +188,7 @@ __all__ = [
 LIMS_QUERY = "lims_query"
 EM_QUERY = "em_query"
 COA_FETCH = "coa_fetch"
+MAINTENANCE_QUERY = "maintenance_query"
 DRIVE_FETCH_EVIDENCE = "drive_fetch_evidence"
 STERILITY_START = "sterility_start"
 STERILITY_GET = "sterility_get"
@@ -219,7 +236,9 @@ CASE_MEMORY_TOOLS = frozenset(
 CONTROLLED_GUIDANCE_QUERY = "controlled_guidance_query"
 GUIDANCE_TOOLS = frozenset({CONTROLLED_GUIDANCE_QUERY})
 
-ALLOWED_DEPARTMENT_TOOLS = frozenset({LIMS_QUERY, EM_QUERY, COA_FETCH})
+ALLOWED_DEPARTMENT_TOOLS = frozenset(
+    {LIMS_QUERY, EM_QUERY, COA_FETCH, MAINTENANCE_QUERY}
+)
 
 # drive_fetch_evidence takes a file_id, unlike the fixed
 # tenant_id/batch_id/lifecycle_state/case_tenant_id shape
@@ -234,6 +253,17 @@ DRIVE_TOOLS = frozenset({DRIVE_FETCH_EVIDENCE})
 # write access to Drive.
 QMS_REPORT_WRITE = "qms_report_write"
 QMS_WRITE_TOOLS = frozenset({QMS_REPORT_WRITE})
+
+# ERPNext CAPA write-back: Non Conformance + Quality Action. Their own
+# allow-list, disjoint from QMS_WRITE_TOOLS and every read-only set, so a
+# Gateway allow-list bug on one write surface can never grant access to the
+# other. These are the only tools that mutate ERPNext records — the existing
+# CoA/sibling reads stay in ALLOWED_DEPARTMENT_TOOLS/SIBLING_BATCH_QUERY.
+ERPNEXT_NONCONFORMANCE_WRITE = "erpnext_nonconformance_write"
+ERPNEXT_QUALITY_ACTION_WRITE = "erpnext_quality_action_write"
+CAPA_WRITE_TOOLS = frozenset(
+    {ERPNEXT_NONCONFORMANCE_WRITE, ERPNEXT_QUALITY_ACTION_WRITE}
+)
 
 # CFI (Cross-Functional Investigation): its own tool names and its own
 # Gateway allow-list, disjoint from the case workflow's — a CFI Runtime may
@@ -311,6 +341,29 @@ def coa_fetch(*, tenant_id: str, batch_id: str) -> CoaSnapshot:
     Still catalog-backed: the untrusted supplier channel is its own P1 item.
     """
     return get_coa_source().coa(tenant_id=tenant_id, batch_id=batch_id)
+
+
+def maintenance_query(*, tenant_id: str, batch_id: str) -> MaintenanceSnapshot:
+    """Read live maintenance evidence for the deployment-bound batch asset.
+
+    The asset selector is server configuration, never an MCP/model argument.
+    This is intentionally fail-closed until the ERPNext work-order binding
+    endpoint replaces the temporary deployment binding during the Item 7
+    cutover.
+    """
+    raw = os.environ.get("COUNTERSIGN_MAINTENANCE_ASSET_MAP_JSON", "")
+    try:
+        mapping = json.loads(raw)
+        asset_code = mapping[tenant_id][batch_id]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise DepartmentRecordMissing(
+            f"No maintenance asset binding is configured for {tenant_id}/{batch_id}."
+        ) from exc
+    if not isinstance(asset_code, str) or not asset_code.strip() or len(asset_code) > 128:
+        raise DepartmentRecordMissing("Maintenance asset binding is invalid.")
+    return get_maintenance_source().maintenance(
+        tenant_id=tenant_id, asset_code=asset_code.strip()
+    )
 
 
 # MIME types the Drive API may return that ingest.py's allow-list also
@@ -417,7 +470,7 @@ def qms_report_write(
     from googleapiclient.discovery import build
     from googleapiclient.errors import HttpError
 
-    from app.app_utils.services import get_google_credentials
+    from app.app_utils.services import get_delegated_google_credentials
 
     folder_id = os.environ.get(_QMS_REPORTS_FOLDER_ENV, "").strip()
     if not folder_id:
@@ -427,7 +480,7 @@ def qms_report_write(
         )
 
     try:
-        credentials = get_google_credentials(
+        credentials = get_delegated_google_credentials(
             scopes=[
                 "https://www.googleapis.com/auth/documents",
                 "https://www.googleapis.com/auth/drive",
@@ -520,6 +573,120 @@ def qms_report_write(
         raise QmsReportWriteError(
             f"Docs/Drive API call for {tenant_id}/{case_id} failed: {exc}"
         ) from exc
+
+
+class ErpNextCapaWriteError(Exception):
+    """The ERPNext CAPA write-back API call failed."""
+
+
+class CapaTenantMismatch(Exception):
+    """The calling case is not the tenant that owns this CAPA write."""
+
+
+def _check_capa_tenant(tenant_id: str, case_tenant_id: str) -> None:
+    """Same cross-tenant check every other tool in this module enforces."""
+    if tenant_id != case_tenant_id:
+        raise CapaTenantMismatch(
+            f"case_tenant_id {case_tenant_id!r} does not match "
+            f"tenant_id {tenant_id!r}."
+        )
+
+
+def erpnext_nonconformance_write(
+    *,
+    tenant_id: str,
+    case_id: str,
+    batch_id: str,
+    subject: str,
+    details: str,
+    case_tenant_id: str,
+) -> NonConformanceWriteResult:
+    """Create (or re-use) a Non Conformance in ERPNext for this case.
+
+    Runs inside the MCP process, which holds the ERPNext API credential.
+    Idempotent by ``(tenant_id, case_id)``: the ERPNext endpoint checks for
+    an existing NC with those custom fields before creating, so a
+    resume-triggered rerun re-uses the same record rather than duplicating
+    it. ``subject``/``details`` are pre-built deterministic text
+    (``app.domain.capa_report``); this function does not draft content.
+    """
+    _check_capa_tenant(tenant_id, case_tenant_id)
+    from app.domain.department_source import BACKEND_ERPNEXT, get_coa_source
+
+    # Only attempt the write-back when ERPNext is the configured CoA
+    # backend. If the catalog is still in use, fail closed — writing a CAPA
+    # to a system that is not the live supply source would be a lie.
+    if get_coa_source().backend_name != BACKEND_ERPNEXT:
+        raise ErpNextCapaWriteError(
+            "ERPNext CAPA write-back requires COUNTERSIGN_COA_BACKEND=erpnext."
+        )
+
+    from app.domain.department_source_erpnext import ErpNextSupplySource
+
+    source = ErpNextSupplySource()
+    request = NonConformanceWriteRequest(
+        tenant_id=tenant_id,
+        case_id=case_id,
+        batch_id=batch_id,
+        subject=subject,
+        details=details,
+    )
+    try:
+        return source.create_non_conformance(request=request)
+    except ERPNextApiError as exc:
+        raise ErpNextCapaWriteError(str(exc)) from exc
+
+
+def erpnext_quality_action_write(
+    *,
+    tenant_id: str,
+    case_id: str,
+    batch_id: str,
+    non_conformance_id: str,
+    action_type: str,
+    problem: str,
+    resolution: str,
+    case_tenant_id: str,
+) -> QualityActionWriteResult:
+    """Create (or re-use) a Quality Action in ERPNext linked to an NC.
+
+    Same idempotency and credential discipline as
+    ``erpnext_nonconformance_write``. ``action_type`` is the deterministic
+    ``CapaActionType`` value (Corrective or Preventive); ``problem`` and
+    ``resolution`` are pre-built deterministic text
+    (``app.domain.capa_report``).
+    """
+    _check_capa_tenant(tenant_id, case_tenant_id)
+    from app.domain.capa_models import CapaActionType
+    from app.domain.department_source import BACKEND_ERPNEXT, get_coa_source
+
+    if get_coa_source().backend_name != BACKEND_ERPNEXT:
+        raise ErpNextCapaWriteError(
+            "ERPNext CAPA write-back requires COUNTERSIGN_COA_BACKEND=erpnext."
+        )
+
+    from app.domain.department_source_erpnext import ErpNextSupplySource
+
+    source = ErpNextSupplySource()
+    try:
+        resolved_action_type = CapaActionType(action_type)
+    except ValueError as exc:
+        raise ErpNextCapaWriteError(
+            f"Unsupported action_type {action_type!r}."
+        ) from exc
+    request = QualityActionWriteRequest(
+        tenant_id=tenant_id,
+        case_id=case_id,
+        batch_id=batch_id,
+        non_conformance_id=non_conformance_id,
+        action_type=resolved_action_type,
+        problem=problem,
+        resolution=resolution,
+    )
+    try:
+        return source.create_quality_action(request=request)
+    except ERPNextApiError as exc:
+        raise ErpNextCapaWriteError(str(exc)) from exc
 
 
 class CaseStatusTenantMismatch(Exception):

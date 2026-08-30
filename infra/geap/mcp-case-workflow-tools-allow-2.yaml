@@ -3,6 +3,13 @@
 # found live 2026-08-29). Same identity (case_workflow), same host scope —
 # this just carries the tool-name rules that didn't fit in the first file.
 #
+# erpnext_nonconformance_write and erpnext_quality_action_write are the
+# CAPA write-back tools (file_capa node, runs after file_qms_report).
+# They write Non Conformance and Quality Action records to ERPNext's
+# Quality Management module. Idempotent, tenant-locked, fail-closed when
+# COUNTERSIGN_COA_BACKEND is not 'erpnext'. Their own allow-list
+# (CAPA_WRITE_TOOLS), disjoint from QMS_WRITE_TOOLS and every read-only set.
+#
 # bind_to: case_workflow
 # do_not_bind_to: qc_probe, hello_runtime
 name: countersign-mcp-case-workflow-tools-2
@@ -29,3 +36,9 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "qms_report_write"
+              - name: "tools/call"
+                params:
+                  - exact: "erpnext_nonconformance_write"
+              - name: "tools/call"
+                params:
+                  - exact: "erpnext_quality_action_write"
