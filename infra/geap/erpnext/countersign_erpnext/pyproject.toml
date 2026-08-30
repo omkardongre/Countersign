@@ -1,0 +1,22 @@
+[build-system]
+requires = ["flit_core>=3.4,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "countersign_erpnext"
+authors = [{name = "Countersign"}]
+description = "Controlled GMP evidence integration for ERPNext"
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = []
+
+[tool.bench.frappe-dependencies]
+frappe = ">=16.31.1,<17.0.0"
+erpnext = ">=16.31.1,<17.0.0"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "S", "UP"]

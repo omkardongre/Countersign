@@ -1,0 +1,26 @@
+substitutions:
+  _LOCATION: us-central1
+  _REPOSITORY: countersign
+  _IMAGE: countersign-erpnext
+  _TAG: v16.31.1-countersign-1
+
+steps:
+  - name: gcr.io/cloud-builders/docker:24.0.9
+    args:
+      - build
+      - --pull
+      - --tag
+      - ${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}:${_TAG}
+      - --file
+      - Dockerfile
+      - .
+  - name: gcr.io/cloud-builders/docker:24.0.9
+    args:
+      - push
+      - ${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}:${_TAG}
+
+images:
+  - ${_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}:${_TAG}
+
+options:
+  logging: CLOUD_LOGGING_ONLY

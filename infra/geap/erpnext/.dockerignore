@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!countersign_erpnext/
+!countersign_erpnext/**
+
+countersign_erpnext/.git
+countersign_erpnext/**/__pycache__
+countersign_erpnext/**/*.py[cod]

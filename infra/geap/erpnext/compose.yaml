@@ -1,0 +1,248 @@
+name: countersign-erpnext
+
+x-erpnext-image: &erpnext-image
+  image: ${ERPNEXT_IMAGE:?Set ERPNEXT_IMAGE to the provisioned immutable version tag}
+  pull_policy: always
+  restart: unless-stopped
+
+x-erpnext-service: &erpnext-service
+  <<: *erpnext-image
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+    - logs:/home/frappe/frappe-bench/logs
+  depends_on:
+    configurator:
+      condition: service_completed_successfully
+
+services:
+  db:
+    image: mariadb:11.8.3
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+    environment:
+      MARIADB_AUTO_UPGRADE: "1"
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [internal]
+
+  redis-cache:
+    image: redis:8.0.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-cache-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks: [internal]
+
+  redis-queue:
+    image: redis:8.0.2-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-queue-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks: [internal]
+
+  configurator:
+    <<: *erpnext-image
+    restart: "no"
+    entrypoint: ["bash", "-c"]
+    command:
+      - >-
+        ls -1 apps > sites/apps.txt;
+        bench set-config -g db_host db;
+        bench set-config -gp db_port 3306;
+        bench set-config -g redis_cache redis://redis-cache:6379;
+        bench set-config -g redis_queue redis://redis-queue:6379;
+        bench set-config -g redis_socketio redis://redis-queue:6379;
+        bench set-config -gp socketio_port 9000;
+        bench set-config -g chromium_path /usr/bin/chromium-headless-shell
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+    networks: [internal]
+
+  backend:
+    <<: *erpnext-service
+    environment:
+      GUNICORN_THREADS: "4"
+      GUNICORN_WORKERS: "2"
+      GUNICORN_TIMEOUT: "120"
+    healthcheck:
+      test: ["CMD-SHELL", "wait-for-it 127.0.0.1:8000 -t 3"]
+      start_period: 20s
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks: [internal]
+
+  frontend:
+    <<: *erpnext-image
+    command: ["nginx-entrypoint.sh"]
+    environment:
+      BACKEND: backend:8000
+      SOCKETIO: websocket:9000
+      FRAPPE_SITE_NAME_HEADER: ${ERPNext_SITE:?Set ERPNext_SITE}
+      UPSTREAM_REAL_IP_ADDRESS: 172.16.0.0/12
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "on"
+      PROXY_READ_TIMEOUT: "120"
+      CLIENT_MAX_BODY_SIZE: 50m
+    volumes:
+      - sites:/home/frappe/frappe-bench/sites
+      - logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      backend:
+        condition: service_healthy
+      websocket:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8080/ >/dev/null"]
+      start_period: 20s
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=countersign-erpnext_edge
+      - traefik.http.routers.erpnext-http.rule=Host(`${ERPNext_SITE:?Set ERPNext_SITE}`)
+      - traefik.http.routers.erpnext-http.entrypoints=http
+      - traefik.http.routers.erpnext-http.middlewares=https-redirect
+      - traefik.http.routers.erpnext.rule=Host(`${ERPNext_SITE:?Set ERPNext_SITE}`)
+      - traefik.http.routers.erpnext.entrypoints=https
+      - traefik.http.routers.erpnext.tls=true
+      - traefik.http.routers.erpnext.tls.certresolver=letsencrypt
+      - traefik.http.services.erpnext.loadbalancer.server.port=8080
+    networks: [internal, edge]
+
+  websocket:
+    <<: *erpnext-service
+    command: ["node", "/home/frappe/frappe-bench/apps/frappe/socketio.js"]
+    healthcheck:
+      test: ["CMD-SHELL", "wait-for-it 127.0.0.1:9000 -t 3"]
+      start_period: 20s
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    networks: [internal]
+
+  queue-short:
+    <<: *erpnext-service
+    command: ["bench", "worker", "--queue", "short,default"]
+    networks: [internal]
+
+  queue-long:
+    <<: *erpnext-service
+    command: ["bench", "worker", "--queue", "long,default,short"]
+    networks: [internal]
+
+  scheduler:
+    <<: *erpnext-service
+    command: ["bench", "schedule"]
+    networks: [internal]
+
+  backup:
+    <<: *erpnext-service
+    restart: unless-stopped
+    entrypoint: ["bash", "-c"]
+    command:
+      - >-
+        while true; do
+          if [ -f "sites/$$ERPNext_SITE/site_config.json" ]; then
+            bench --site "$$ERPNext_SITE" backup --with-files --compress &&
+            (restic snapshots >/dev/null 2>&1 || restic init) &&
+            restic backup "sites/$$ERPNext_SITE/private/backups" --tag erpnext &&
+            restic forget --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune;
+          fi;
+          sleep 86400;
+        done
+    environment:
+      ERPNext_SITE: ${ERPNext_SITE:?Set ERPNext_SITE}
+      RESTIC_REPOSITORY: rclone:gcs:${BACKUP_BUCKET:?Set BACKUP_BUCKET}/restic
+      RESTIC_PASSWORD_FILE: /run/secrets/backup_password
+      RCLONE_CONFIG_GCS_TYPE: google cloud storage
+      RCLONE_CONFIG_GCS_ENV_AUTH: "true"
+    secrets:
+      - backup_password
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [internal]
+
+  traefik:
+    image: traefik:v3.7.12
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+      - --entrypoints.http.http.underscoreHeadersStrategy=delete
+      - --entrypoints.https.http.underscoreHeadersStrategy=delete
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?Set ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/certificates/acme.json
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --accesslog=true
+      - --log.level=INFO
+      - --api.dashboard=false
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - certificates:/certificates
+    labels:
+      - traefik.enable=true
+      - traefik.http.middlewares.https-redirect.redirectscheme.scheme=https
+      - traefik.http.middlewares.https-redirect.redirectscheme.permanent=true
+    depends_on:
+      frontend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks: [edge]
+
+secrets:
+  db_password:
+    file: ${SECRETS_DIR:?Set SECRETS_DIR}/db_password
+  backup_password:
+    file: ${SECRETS_DIR:?Set SECRETS_DIR}/backup_password
+
+volumes:
+  sites:
+  logs:
+  db-data:
+  redis-cache-data:
+  redis-queue-data:
+  certificates:
+
+networks:
+  internal:
+  edge:

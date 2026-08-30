@@ -1,0 +1,310 @@
+{
+  "actions": [],
+  "allow_rename": 0,
+  "autoname": "naming_series:",
+  "creation": "2026-01-01 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "naming_series",
+    "company",
+    "tenant_id",
+    "evidence_section",
+    "supplier",
+    "purchase_receipt",
+    "raw_material_item",
+    "material_lot",
+    "quality_inspection",
+    "coa_attachment",
+    "coa_content_hash",
+    "coa_sha256",
+    "verification_section",
+    "verification_status",
+    "supplier_coa_verified",
+    "reviewed_by",
+    "reviewed_on",
+    "verified_by",
+    "verified_on",
+    "retest_date",
+    "gmp_certificate_expiry",
+    "gmp_certificate_attachment",
+    "gmp_certificate_sha256",
+    "public_section",
+    "public_manufacturer_name",
+    "public_manufacturer_country",
+    "public_manufacturer_city",
+    "public_oms_location_id",
+    "public_product_name",
+    "active_ingredient",
+    "public_defect_signature",
+    "genealogy_section",
+    "finished_batches",
+    "amended_from"
+  ],
+  "fields": [
+    {
+      "default": "CS-COA-.YYYY.-",
+      "fieldname": "naming_series",
+      "fieldtype": "Select",
+      "hidden": 1,
+      "label": "Naming Series",
+      "options": "CS-COA-.YYYY.-",
+      "reqd": 1
+    },
+    {
+      "fieldname": "company",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "CDMO Company",
+      "options": "Company",
+      "reqd": 1
+    },
+    {
+      "fieldname": "tenant_id",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Countersign Tenant ID",
+      "length": 128,
+      "reqd": 1
+    },
+    {
+      "fieldname": "evidence_section",
+      "fieldtype": "Section Break",
+      "label": "Controlled Evidence"
+    },
+    {
+      "fieldname": "supplier",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Supplier",
+      "options": "Supplier",
+      "reqd": 1
+    },
+    {
+      "fieldname": "purchase_receipt",
+      "fieldtype": "Link",
+      "label": "Purchase Receipt",
+      "options": "Purchase Receipt",
+      "reqd": 1
+    },
+    {
+      "fieldname": "raw_material_item",
+      "fieldtype": "Link",
+      "label": "Raw Material Item",
+      "options": "Item",
+      "reqd": 1
+    },
+    {
+      "fieldname": "material_lot",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Raw Material Lot",
+      "options": "Batch",
+      "reqd": 1
+    },
+    {
+      "fieldname": "quality_inspection",
+      "fieldtype": "Link",
+      "label": "Quality Inspection",
+      "options": "Quality Inspection",
+      "reqd": 1
+    },
+    {
+      "fieldname": "coa_attachment",
+      "fieldtype": "Attach",
+      "label": "Private Supplier CoA",
+      "reqd": 1
+    },
+    {
+      "fieldname": "coa_content_hash",
+      "fieldtype": "Data",
+      "label": "Pinned Frappe File MD5",
+      "length": 32,
+      "read_only": 1
+    },
+    {
+      "fieldname": "coa_sha256",
+      "fieldtype": "Data",
+      "label": "Pinned CoA SHA-256",
+      "length": 64,
+      "read_only": 1
+    },
+    {
+      "fieldname": "verification_section",
+      "fieldtype": "Section Break",
+      "label": "GMP Verification"
+    },
+    {
+      "fieldname": "verification_status",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "label": "Verification Status",
+      "options": "Pending\nVerified\nRejected",
+      "reqd": 1
+    },
+    {
+      "default": "0",
+      "fieldname": "supplier_coa_verified",
+      "fieldtype": "Check",
+      "label": "Supplier CoA Verified"
+    },
+    {
+      "fieldname": "reviewed_by",
+      "fieldtype": "Link",
+      "label": "Reviewed By",
+      "options": "User",
+      "read_only": 1
+    },
+    {
+      "fieldname": "reviewed_on",
+      "fieldtype": "Datetime",
+      "label": "Reviewed On",
+      "read_only": 1
+    },
+    {
+      "fieldname": "verified_by",
+      "fieldtype": "Link",
+      "label": "Verified By",
+      "options": "User",
+      "read_only": 1
+    },
+    {
+      "fieldname": "verified_on",
+      "fieldtype": "Datetime",
+      "label": "Verified On",
+      "read_only": 1
+    },
+    {
+      "fieldname": "retest_date",
+      "fieldtype": "Date",
+      "label": "Raw Material Retest Date",
+      "reqd": 1
+    },
+    {
+      "fieldname": "gmp_certificate_expiry",
+      "fieldtype": "Date",
+      "label": "Supplier GMP Certificate Expiry",
+      "reqd": 1
+    },
+    {
+      "fieldname": "gmp_certificate_attachment",
+      "fieldtype": "Attach",
+      "label": "Private Supplier GMP Certificate",
+      "reqd": 1
+    },
+    {
+      "fieldname": "gmp_certificate_sha256",
+      "fieldtype": "Data",
+      "label": "Pinned GMP Certificate SHA-256",
+      "length": 64,
+      "read_only": 1
+    },
+    {
+      "fieldname": "public_section",
+      "fieldtype": "Section Break",
+      "label": "Public Manufacturer and Product Attributes"
+    },
+    {
+      "fieldname": "public_manufacturer_name",
+      "fieldtype": "Data",
+      "label": "Public Manufacturer Name"
+    },
+    {
+      "fieldname": "public_manufacturer_country",
+      "fieldtype": "Link",
+      "label": "Public Manufacturer Country",
+      "options": "Country"
+    },
+    {
+      "fieldname": "public_manufacturer_city",
+      "fieldtype": "Data",
+      "label": "Public Manufacturer City"
+    },
+    {
+      "fieldname": "public_oms_location_id",
+      "fieldtype": "Data",
+      "label": "Public OMS Location ID"
+    },
+    {
+      "fieldname": "public_product_name",
+      "fieldtype": "Data",
+      "label": "Public Product Name"
+    },
+    {
+      "fieldname": "active_ingredient",
+      "fieldtype": "Data",
+      "label": "Public Active Ingredient"
+    },
+    {
+      "fieldname": "public_defect_signature",
+      "fieldtype": "Data",
+      "label": "Public Defect Signature"
+    },
+    {
+      "fieldname": "genealogy_section",
+      "fieldtype": "Section Break",
+      "label": "Finished Batch Genealogy"
+    },
+    {
+      "fieldname": "finished_batches",
+      "fieldtype": "Table",
+      "label": "Finished Batches",
+      "options": "Countersign Finished Batch Genealogy",
+      "reqd": 1
+    },
+    {
+      "fieldname": "amended_from",
+      "fieldtype": "Link",
+      "label": "Amended From",
+      "no_copy": 1,
+      "options": "Countersign CoA Verification",
+      "print_hide": 1,
+      "read_only": 1
+    }
+  ],
+  "index_web_pages_for_search": 0,
+  "is_submittable": 1,
+  "links": [],
+  "modified": "2026-01-01 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Countersign ERPNext",
+  "name": "Countersign CoA Verification",
+  "naming_rule": "By \"Naming Series\" field",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "cancel": 1,
+      "create": 1,
+      "delete": 1,
+      "email": 0,
+      "export": 0,
+      "print": 0,
+      "read": 1,
+      "report": 0,
+      "role": "Quality Manager",
+      "share": 0,
+      "submit": 1,
+      "write": 1
+    },
+    {
+      "cancel": 0,
+      "create": 0,
+      "delete": 0,
+      "email": 0,
+      "export": 0,
+      "print": 0,
+      "read": 1,
+      "report": 0,
+      "role": "System Manager",
+      "share": 0,
+      "submit": 0,
+      "write": 0
+    }
+  ],
+  "search_fields": "material_lot,supplier,purchase_receipt",
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "track_changes": 1,
+  "track_seen": 1
+}
