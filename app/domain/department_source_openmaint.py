@@ -99,7 +99,7 @@ def _request_json(
 ) -> dict[str, Any]:
     url = f"{credentials.base_url}/services/rest/v3/{path.lstrip('/')}"
     basic = base64.b64encode(
-        f"{credentials.username}:{credentials.password}".encode("utf-8")
+        f"{credentials.username}:{credentials.password}".encode()
     ).decode("ascii")
     headers = {
         "Accept": "application/json",
@@ -187,7 +187,13 @@ class OpenMaintMaintenanceSource:
         ).get("data", [])
         work_orders: list[MaintenanceWorkOrder] = []
         for row in processes:
-            if not isinstance(row, dict) or str(row.get("CISubset") or "") != asset_id:
+            # Corrective maintenance processes expose their affected asset as
+            # ``CI`` in openMAINT 2.4; older configurations expose it as
+            # ``CISubset``.  Both are server-owned relation fields, never a
+            # description-text match.
+            if not isinstance(row, dict) or str(
+                row.get("CI") or row.get("CISubset") or ""
+            ) != asset_id:
                 continue
             record_id = str(row.get("_id") or "")
             if not record_id:

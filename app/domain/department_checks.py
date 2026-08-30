@@ -24,7 +24,12 @@ from app.domain.compliance_models import (
     ComplianceFindingType,
     OosPhase,
 )
-from app.domain.department_models import CoaSnapshot, EmSnapshot, LimsSnapshot
+from app.domain.department_models import (
+    CoaSnapshot,
+    EmSnapshot,
+    LimsSnapshot,
+    MaintenanceSnapshot,
+)
 from app.domain.evidence_models import SourceAnchor
 from app.domain.master_data import RootCauseCategory
 
@@ -183,4 +188,95 @@ def check_coa(
                 oos_phase=OosPhase.PHASE_I_LABORATORY,
             )
         )
+    return findings
+
+
+def check_maintenance(snapshot: MaintenanceSnapshot) -> list[ComplianceFinding]:
+    """Deterministically flag equipment conditions relevant to the batch.
+
+    The maintenance department supplies cited facts; it never decides cause
+    or release disposition. An unresolved breakdown is a current completeness
+    failure. A corrective intervention overlapping the actual batch window is
+    a separate, cited machine finding requiring investigation.
+    """
+    findings: list[ComplianceFinding] = []
+    anchor = _anchor(snapshot.source_uri, f"maintenance:{snapshot.asset_code}")
+    def as_utc(value: datetime.datetime) -> datetime.datetime:
+        """Interpret source-system timestamps without an offset as UTC.
+
+        ERPNext's Work Order REST fields are naive timestamps, while
+        openMAINT returns ISO UTC values. Both systems are configured for the
+        same UTC operational clock, and comparison must be explicit rather
+        than raising (or silently using the MCP host's local timezone).
+        """
+        if value.tzinfo is None:
+            return value.replace(tzinfo=datetime.UTC)
+        return value.astimezone(datetime.UTC)
+
+    now = datetime.datetime.now(datetime.UTC)
+    preventive_due_at = (
+        as_utc(snapshot.preventive_due_at)
+        if snapshot.preventive_due_at is not None
+        else None
+    )
+    if preventive_due_at is not None and preventive_due_at < now:
+        findings.append(
+            ComplianceFinding(
+                finding_type=ComplianceFindingType.COMPLETENESS,
+                field_name="calibration_due_date",
+                label="Equipment calibration",
+                root_cause_category=RootCauseCategory.MACHINE,
+                description=(
+                    f"Equipment {snapshot.asset_code} calibration was due on "
+                    f"{preventive_due_at.isoformat()}."
+                ),
+                anchor=anchor,
+            )
+        )
+    if snapshot.open_corrective_count:
+        findings.append(
+            ComplianceFinding(
+                finding_type=ComplianceFindingType.COMPLETENESS,
+                field_name="open_corrective_maintenance",
+                label="Open equipment breakdown",
+                root_cause_category=RootCauseCategory.MACHINE,
+                description=(
+                    f"Equipment {snapshot.asset_code} has "
+                    f"{snapshot.open_corrective_count} open corrective maintenance record(s)."
+                ),
+                anchor=anchor,
+            )
+        )
+    if (
+        snapshot.batch_window_started_at is not None
+        and snapshot.batch_window_ended_at is not None
+    ):
+        batch_window_started_at = as_utc(snapshot.batch_window_started_at)
+        batch_window_ended_at = as_utc(snapshot.batch_window_ended_at)
+        for work_order in snapshot.corrective_work_orders:
+            if work_order.opened_at is None:
+                continue
+            opened_at = as_utc(work_order.opened_at)
+            ended_at = as_utc(work_order.closed_at) if work_order.closed_at else now
+            if (
+                opened_at <= batch_window_ended_at
+                and ended_at >= batch_window_started_at
+            ):
+                findings.append(
+                    ComplianceFinding(
+                        finding_type=ComplianceFindingType.COMPLETENESS,
+                        field_name="maintenance_intervention_during_batch",
+                        label="Equipment maintenance during batch execution",
+                        root_cause_category=RootCauseCategory.MACHINE,
+                        description=(
+                            f"Equipment {snapshot.asset_code} corrective maintenance "
+                            f"{work_order.process_number} overlapped the recorded "
+                            "batch execution window."
+                        ),
+                        anchor=_anchor(
+                            work_order.source_uri,
+                            f"maintenance:{snapshot.asset_code}:{work_order.record_id}",
+                        ),
+                    )
+                )
     return findings

@@ -38,6 +38,7 @@ class Department(StrEnum):
     QC = "qc"
     ENVIRONMENTAL_MONITORING = "environmental_monitoring"
     SUPPLY = "supply"
+    MAINTENANCE = "maintenance"
 
 
 class BranchStatus(StrEnum):
@@ -137,6 +138,25 @@ class MaintenanceSnapshot(BaseModel):
     preventive_due_at: datetime.datetime | None = None
     open_corrective_count: int = Field(ge=0)
     corrective_work_orders: list[MaintenanceWorkOrder] = Field(default_factory=list)
+    # ERPNext owns the batch execution window; retain it on the captured
+    # evidence snapshot so deterministic checks can correlate it with the
+    # independent openMAINT history.
+    batch_window_started_at: datetime.datetime | None = None
+    batch_window_ended_at: datetime.datetime | None = None
+
+
+class MaintenanceAssetBinding(BaseModel):
+    """Equipment and batch window resolved from an ERPNext Work Order.
+
+    This is deliberately separate from the openMAINT snapshot: ERPNext owns
+    the batch-to-workstation genealogy; openMAINT owns asset history.
+    """
+
+    asset_code: str = Field(min_length=1, max_length=128)
+    work_order_id: str = Field(min_length=1, max_length=256)
+    source_uri: str = Field(min_length=1, max_length=4096)
+    batch_window_started_at: datetime.datetime
+    batch_window_ended_at: datetime.datetime
 
 
 class DriveEvidencePayload(BaseModel):
