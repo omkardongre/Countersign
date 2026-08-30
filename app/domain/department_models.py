@@ -110,6 +110,35 @@ class CoaSnapshot(BaseModel):
     public_defect_signature: str | None = None
 
 
+class MaintenanceWorkOrder(BaseModel):
+    """A maintenance process record returned by openMAINT.
+
+    The external process number remains evidence, rather than a Countersign
+    generated identifier.  ``closed`` is deliberately explicit because an
+    unresolved corrective intervention is itself a GMP-relevant condition.
+    """
+
+    record_id: str
+    process_number: str
+    status: str
+    opened_at: datetime.datetime | None = None
+    closed_at: datetime.datetime | None = None
+    closed: bool
+    source_uri: str
+
+
+class MaintenanceSnapshot(BaseModel):
+    """Read-only maintenance evidence for the ERPNext-bound equipment."""
+
+    system: str = "openmaint"
+    source_uri: str
+    asset_code: str
+    asset_name: str
+    preventive_due_at: datetime.datetime | None = None
+    open_corrective_count: int = Field(ge=0)
+    corrective_work_orders: list[MaintenanceWorkOrder] = Field(default_factory=list)
+
+
 class DriveEvidencePayload(BaseModel):
     """One scanned BMR page fetched live from Google Drive.
 

@@ -51,11 +51,17 @@ from app.domain.department_catalog import (
     list_department_snapshots_for_tenant,
     lookup_department_snapshot,
 )
-from app.domain.department_models import CoaSnapshot, EmSnapshot, LimsSnapshot
+from app.domain.department_models import (
+    CoaSnapshot,
+    EmSnapshot,
+    LimsSnapshot,
+    MaintenanceSnapshot,
+)
 
 LIMS_BACKEND_ENV = "COUNTERSIGN_LIMS_BACKEND"
 EM_BACKEND_ENV = "COUNTERSIGN_EM_BACKEND"
 COA_BACKEND_ENV = "COUNTERSIGN_COA_BACKEND"
+MAINTENANCE_BACKEND_ENV = "COUNTERSIGN_MAINTENANCE_BACKEND"
 SIBLING_BATCH_BACKEND_ENV = "COUNTERSIGN_SIBLING_BATCH_BACKEND"
 
 LIMS_DB_ENV = "COUNTERSIGN_LIMS_DB"
@@ -74,6 +80,7 @@ BACKEND_CLOUD_SQL = "cloud_sql"
 BACKEND_BIGQUERY = "bigquery"
 BACKEND_SENAITE = "senaite"
 BACKEND_ERPNEXT = "erpnext"
+BACKEND_OPENMAINT = "openmaint"
 BACKEND_CATALOG = "synthetic_catalog"
 
 # SQL identifiers cannot be bound as query parameters, so any table/dataset
@@ -146,6 +153,10 @@ class EmSource(Protocol):
 
 class CoaSource(Protocol):
     def coa(self, *, tenant_id: str, batch_id: str) -> CoaSnapshot: ...
+
+
+class MaintenanceSource(Protocol):
+    def maintenance(self, *, tenant_id: str, asset_code: str) -> MaintenanceSnapshot: ...
 
 
 class SiblingBatchSource(Protocol):
@@ -281,6 +292,31 @@ def get_coa_source() -> CoaSource:
 
 
 @functools.cache
+def get_maintenance_source() -> MaintenanceSource:
+    """Maintenance reads are real openMAINT only; unset fails closed.
+
+    A catalog fallback would make an integration outage look like current
+    equipment evidence, so this department deliberately has none.
+    """
+    requested = os.environ.get(MAINTENANCE_BACKEND_ENV, "").strip().lower()
+    if requested != BACKEND_OPENMAINT:
+        raise RuntimeError(
+            f"{MAINTENANCE_BACKEND_ENV}=openmaint is required for maintenance reads."
+        )
+    from app.domain.department_source_openmaint import (
+        OPENMAINT_CREDENTIALS_ENV,
+        OpenMaintMaintenanceSource,
+    )
+
+    if not os.environ.get(OPENMAINT_CREDENTIALS_ENV, ""):
+        raise RuntimeError(
+            f"{MAINTENANCE_BACKEND_ENV}={BACKEND_OPENMAINT} requires "
+            f"{OPENMAINT_CREDENTIALS_ENV} to be set."
+        )
+    return OpenMaintMaintenanceSource()
+
+
+@functools.cache
 def get_sibling_batch_source() -> SiblingBatchSource:
     """Cross-batch material-lot reads for CFI scope expansion. Cloud SQL
     only when explicitly switched on, same opt-in discipline as
@@ -331,6 +367,10 @@ def coa_backend_name() -> str:
     return getattr(get_coa_source(), "backend_name", BACKEND_CATALOG)
 
 
+def maintenance_backend_name() -> str:
+    return getattr(get_maintenance_source(), "backend_name", "unconfigured")
+
+
 def sibling_batch_backend_name() -> str:
     return getattr(
         get_sibling_batch_source(), "backend_name_sibling_batch", BACKEND_CATALOG
@@ -341,6 +381,7 @@ def reset_department_source_cache() -> None:
     get_lims_source.cache_clear()
     get_em_source.cache_clear()
     get_coa_source.cache_clear()
+    get_maintenance_source.cache_clear()
     get_sibling_batch_source.cache_clear()
     from app.domain.department_source_erpnext import reset_erpnext_credentials_cache
 
