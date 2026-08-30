@@ -22,6 +22,17 @@ from frappe.utils import get_url
 from countersign_erpnext import SCHEMA_VERSION
 
 API_ROLE = "Countersign ERPNext API Reader"
+CAPA_WRITE_ROLE = "Countersign ERPNext CAPA Writer"
+_TENANT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_MAX_DETAILS_LENGTH = 8000
+_MAX_SUBJECT_LENGTH = 256
+_MAX_BATCH_LENGTH = 256
+_MAX_CASE_LENGTH = 256
+_NC_URI_PREFIX = "/app/non-conformance/"
+_QA_URI_PREFIX = "/app/quality-action/"
+# The Quality Procedure that all Countersign-created NCs are filed against.
+# Created by post_setup.sh during ERPNext initialization.
+COUNTERSIGN_QUALITY_PROCEDURE = "Countersign Deviation Management"
 _SOURCE_SELECT = """
     SELECT
         access.name AS access_id,
@@ -438,4 +449,310 @@ def get_batches_sharing_material_lot(batch_id=None):
             }
             for row in rows
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# CAPA write-back endpoints (Non Conformance + Quality Action)
+#
+# These are the only POST endpoints on this custom API surface. They are
+# authenticated by the same token auth as the read endpoints, but require a
+# separate role (``CAPA_WRITE_ROLE``) so a read-only API user cannot create
+# records. Idempotency is enforced by checking for an existing record with
+# the same ``(tenant_id, case_id)`` (NC) or ``(tenant_id, case_id,
+# corrective_preventive)`` (QA) custom fields before creating.
+#
+# Real ERPNext doctype field names are used throughout:
+#   Non Conformance: subject (reqd), procedure (Link, reqd), status, details
+#   Quality Action: corrective_preventive (reqd), resolutions (child table),
+#                   status, date, procedure
+# Custom fields (countersign_tenant_id, countersign_case_id,
+# countersign_batch_id, countersign_non_conformance) are installed via
+# fixtures in hooks.py and capa_custom_fields.json.
+# ---------------------------------------------------------------------------
+
+
+def _deny_write():
+    frappe.throw(
+        _("The CAPA write-back request is not permitted."),
+        frappe.PermissionError,
+    )
+
+
+def _require_capa_writer():
+    """Same token-auth check as ``_require_api_caller``, but for POST and
+    the CAPA Writer role. Rejects GET requests and read-only API users.
+    """
+    request = getattr(frappe.local, "request", None)
+    if request is None or request.method != "POST":
+        _deny_write()
+    authorization = frappe.get_request_header("Authorization", "")
+    if not authorization.startswith("token "):
+        _deny_write()
+    user = frappe.session.user
+    if not user or user == "Guest":
+        _deny_write()
+    if CAPA_WRITE_ROLE not in frappe.get_roles(user):
+        _deny_write()
+    user_record = frappe.db.get_value(
+        "User", user, ["enabled", "user_type"], as_dict=True
+    )
+    if not user_record or not user_record.enabled or user_record.user_type != "System User":
+        _deny_write()
+    return user
+
+
+def _parse_write_body():
+    """Parse and validate the JSON request body for CAPA write endpoints."""
+    import json as _json
+
+    raw = frappe.request.get_data(as_text=True)
+    if not raw:
+        _deny_write()
+    try:
+        body = _json.loads(raw)
+    except (ValueError, TypeError):
+        _deny_write()
+    if not isinstance(body, dict):
+        _deny_write()
+    return body
+
+
+def _validate_capa_field(value, field_name, max_length, pattern=None):
+    value = str(value or "").strip()
+    if not value or len(value) > max_length:
+        _deny_write()
+    if pattern and not re.fullmatch(pattern, value):
+        _deny_write()
+    return value
+
+
+def _resolve_tenant_company(user, tenant_id):
+    """Resolve the ERPNext company for a tenant_id via the access table."""
+    access = frappe.db.get_value(
+        "Countersign Sponsor Tenant Access",
+        {"user": user, "tenant_id": tenant_id, "enabled": 1},
+        "company",
+    )
+    if not access:
+        _deny_write()
+    return access
+
+
+def _ensure_quality_procedure():
+    """Verify the Countersign Quality Procedure exists (created by
+    post_setup.sh). The Non Conformance doctype requires a ``procedure``
+    Link field — without this, NC creation fails."""
+    if not frappe.db.exists("Quality Procedure", COUNTERSIGN_QUALITY_PROCEDURE):
+        _deny_write()
+    return COUNTERSIGN_QUALITY_PROCEDURE
+
+
+def _nc_uri(record_id):
+    path = f"{_NC_URI_PREFIX}{urllib.parse.quote(record_id, safe='')}"
+    source_uri = get_url(path)
+    parsed = urllib.parse.urlsplit(source_uri)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        _deny_write()
+    return source_uri
+
+
+def _qa_uri(record_id):
+    path = f"{_QA_URI_PREFIX}{urllib.parse.quote(record_id, safe='')}"
+    source_uri = get_url(path)
+    parsed = urllib.parse.urlsplit(source_uri)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        _deny_write()
+    return source_uri
+
+
+def _find_existing_nc(tenant_id, case_id):
+    """Find an existing Non Conformance with the same tenant/case custom
+    fields. Returns the NC name or None."""
+    return frappe.db.get_value(
+        "Non Conformance",
+        {
+            "countersign_tenant_id": tenant_id,
+            "countersign_case_id": case_id,
+            "docstatus": ["!=", 2],
+        },
+        "name",
+    )
+
+
+def _find_existing_qa(tenant_id, case_id, corrective_preventive):
+    """Find an existing Quality Action with the same tenant/case/type.
+
+    Uses the real ``corrective_preventive`` field on the Quality Action
+    doctype (not a custom field), plus the custom ``countersign_*`` fields
+    for tenant/case idempotency.
+    """
+    return frappe.db.get_value(
+        "Quality Action",
+        {
+            "countersign_tenant_id": tenant_id,
+            "countersign_case_id": case_id,
+            "corrective_preventive": corrective_preventive,
+            "docstatus": ["!=", 2],
+        },
+        "name",
+    )
+
+
+@frappe.whitelist(allow_guest=False, methods=["POST"])
+def create_non_conformance():
+    """Create (or re-use) a Non Conformance in ERPNext for a deviation case.
+
+    Maps the Countersign case to the real Non Conformance doctype fields:
+      - ``subject``: short case summary (reqd by doctype)
+      - ``procedure``: Link to the Countersign Quality Procedure (reqd by doctype)
+      - ``details``: full NC description (Text Editor)
+      - ``status``: "Open"
+      - custom: ``countersign_tenant_id``, ``countersign_case_id``,
+        ``countersign_batch_id``
+
+    Idempotent by ``(tenant_id, case_id)``: if an NC with those custom
+    fields already exists and is not cancelled, it is returned rather than
+    duplicated.
+    """
+    user = _require_capa_writer()
+    body = _parse_write_body()
+
+    tenant_id = _validate_capa_field(
+        body.get("tenant_id"), "tenant_id", 128, _TENANT_ID_RE.pattern
+    )
+    case_id = _validate_capa_field(
+        body.get("case_id"), "case_id", _MAX_CASE_LENGTH
+    )
+    batch_id = _validate_capa_field(
+        body.get("batch_id"), "batch_id", _MAX_BATCH_LENGTH
+    )
+    subject = _validate_capa_field(
+        body.get("subject"), "subject", _MAX_SUBJECT_LENGTH
+    )
+    details = _validate_capa_field(
+        body.get("details"), "details", _MAX_DETAILS_LENGTH
+    )
+    _resolve_tenant_company(user, tenant_id)
+    procedure = _ensure_quality_procedure()
+
+    # Idempotency: check for an existing NC with the same tenant/case.
+    existing = _find_existing_nc(tenant_id, case_id)
+    if existing:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "tenant_id": tenant_id,
+            "case_id": case_id,
+            "non_conformance_id": existing,
+            "non_conformance_url": _nc_uri(existing),
+            "was_existing": True,
+        }
+
+    nc = frappe.get_doc({
+        "doctype": "Non Conformance",
+        "subject": subject,
+        "procedure": procedure,
+        "status": "Open",
+        "details": details,
+        "countersign_tenant_id": tenant_id,
+        "countersign_case_id": case_id,
+        "countersign_batch_id": batch_id,
+    })
+    nc.insert(ignore_permissions=True)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "tenant_id": tenant_id,
+        "case_id": case_id,
+        "non_conformance_id": nc.name,
+        "non_conformance_url": _nc_uri(nc.name),
+        "was_existing": False,
+    }
+
+
+@frappe.whitelist(allow_guest=False, methods=["POST"])
+def create_quality_action():
+    """Create (or re-use) a Quality Action in ERPNext linked to a Non
+    Conformance.
+
+    Maps the Countersign CAPA to the real Quality Action doctype fields:
+      - ``corrective_preventive``: "Corrective" or "Preventive" (reqd by doctype)
+      - ``resolutions``: child table with one row (problem + resolution text)
+      - ``status``: "Open"
+      - ``procedure``: Link to the Countersign Quality Procedure
+      - custom: ``countersign_tenant_id``, ``countersign_case_id``,
+        ``countersign_batch_id``, ``countersign_non_conformance``
+
+    Idempotent by ``(tenant_id, case_id, corrective_preventive)``.
+    """
+    user = _require_capa_writer()
+    body = _parse_write_body()
+
+    tenant_id = _validate_capa_field(
+        body.get("tenant_id"), "tenant_id", 128, _TENANT_ID_RE.pattern
+    )
+    case_id = _validate_capa_field(
+        body.get("case_id"), "case_id", _MAX_CASE_LENGTH
+    )
+    batch_id = _validate_capa_field(
+        body.get("batch_id"), "batch_id", _MAX_BATCH_LENGTH
+    )
+    non_conformance_id = _validate_capa_field(
+        body.get("non_conformance_id"), "non_conformance_id", _MAX_CASE_LENGTH
+    )
+    corrective_preventive = str(body.get("action_type") or "").strip()
+    if corrective_preventive not in ("Corrective", "Preventive"):
+        _deny_write()
+    problem = _validate_capa_field(
+        body.get("problem"), "problem", _MAX_DETAILS_LENGTH
+    )
+    resolution_text = _validate_capa_field(
+        body.get("resolution"), "resolution", _MAX_DETAILS_LENGTH
+    )
+    _resolve_tenant_company(user, tenant_id)
+    procedure = _ensure_quality_procedure()
+
+    # Verify the NC exists and belongs to this tenant.
+    nc_tenant = frappe.db.get_value(
+        "Non Conformance", non_conformance_id, "countersign_tenant_id"
+    )
+    if not nc_tenant or nc_tenant != tenant_id:
+        _deny_write()
+
+    # Idempotency: check for an existing QA with the same tenant/case/type.
+    existing = _find_existing_qa(tenant_id, case_id, corrective_preventive)
+    if existing:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "tenant_id": tenant_id,
+            "case_id": case_id,
+            "quality_action_id": existing,
+            "quality_action_url": _qa_uri(existing),
+            "was_existing": True,
+        }
+
+    qa = frappe.get_doc({
+        "doctype": "Quality Action",
+        "corrective_preventive": corrective_preventive,
+        "status": "Open",
+        "procedure": procedure,
+        "countersign_tenant_id": tenant_id,
+        "countersign_case_id": case_id,
+        "countersign_batch_id": batch_id,
+        "countersign_non_conformance": non_conformance_id,
+        "resolutions": [
+            {
+                "problem": problem,
+                "resolution": resolution_text,
+                "status": "Open",
+            }
+        ],
+    })
+    qa.insert(ignore_permissions=True)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "tenant_id": tenant_id,
+        "case_id": case_id,
+        "quality_action_id": qa.name,
+        "quality_action_url": _qa_uri(qa.name),
+        "was_existing": False,
     }

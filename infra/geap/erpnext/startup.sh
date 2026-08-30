@@ -71,7 +71,7 @@ main() {
     echo "Invalid erpnext-domain instance metadata." >&2
     exit 1
   fi
-  if [[ ! "${image}" =~ ^[a-z0-9-]+-docker\.pkg\.dev/[^[:space:]]+/countersign-erpnext:v16\.31\.1-countersign-1$ ]]; then
+  if [[ ! "${image}" =~ ^[a-z0-9-]+-docker\.pkg\.dev/[^[:space:]]+/countersign-erpnext:v16\.31\.1-countersign-3$ ]]; then
     echo "Refusing an unpinned or unexpected ERPNext image." >&2
     exit 1
   fi

@@ -22,6 +22,13 @@ required_apps = ["erpnext"]
 fixtures = [
     {
         "dt": "Role",
-        "filters": [["name", "in", ["Countersign ERPNext API Reader"]]],
-    }
+        "filters": [["name", "in", [
+            "Countersign ERPNext API Reader",
+            "Countersign ERPNext CAPA Writer",
+        ]]],
+    },
+    {
+        "dt": "Custom Field",
+        "filters": [["fieldname", "like", "countersign_%"]],
+    },
 ]

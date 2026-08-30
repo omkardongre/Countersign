@@ -25,6 +25,8 @@ ADMIN_SECRET="${ERPNEXT_ADMIN_SECRET:-countersign-erpnext-admin-password}"
 API_USER_EMAIL="${API_USER_EMAIL:-countersign-api@${DOMAIN}}"
 API_USER_FULL_NAME="${API_USER_FULL_NAME:-Countersign API Reader}"
 API_ROLE="Countersign ERPNext API Reader"
+CAPA_WRITE_ROLE="Countersign ERPNext CAPA Writer"
+QUALITY_PROCEDURE="Countersign Deviation Management"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -50,7 +52,7 @@ erpnext_api() {
     --request "${method}"
     --header "Content-Type: application/json"
     --header "Accept: application/json"
-    --user "administrator:${admin_password}"
+    --user "Administrator:${admin_password}"
   )
   if [[ -n "${data}" ]]; then
     args+=("--data" "${data}")
@@ -84,7 +86,8 @@ create_api_user() {
   "enabled": 1,
   "user_type": "System User",
   "roles": [
-    {"role": "${API_ROLE}"}
+    {"role": "${API_ROLE}"},
+    {"role": "${CAPA_WRITE_ROLE}"}
   ]
 }
 EOF
@@ -92,9 +95,37 @@ EOF
   erpnext_api "/api/resource/User/${API_USER_EMAIL}" "POST" "${user_data}" \
     >/dev/null 2>&1 || true
 
+  # Ensure both roles exist (fixtures should have created them, but be
+  # idempotent in case the app was installed before the fixtures update).
+  for role in "${API_ROLE}" "${CAPA_WRITE_ROLE}"; do
+    erpnext_api "/api/resource/Role" "POST" \
+      "{\"role_name\": \"${role}\", \"is_custom\": 1}" >/dev/null 2>&1 || true
+  done
+
+  # Add CAPA Writer role to the user if it wasn't in the initial POST.
+  erpnext_api "/api/resource/User/${API_USER_EMAIL}" "PUT" \
+    "{\"roles\": [{\"role\": \"${API_ROLE}\"}, {\"role\": \"${CAPA_WRITE_ROLE}\"}]}" \
+    >/dev/null 2>&1 || true
+
   echo "Generating API keys for ${API_USER_EMAIL}..."
   erpnext_api "/api/resource/User/${API_USER_EMAIL}" "PUT" \
     '{"api_generate_new_keys": 1}' >/dev/null
+}
+
+create_quality_procedure() {
+  echo "Creating Quality Procedure '${QUALITY_PROCEDURE}'..."
+  # The Non Conformance doctype requires a Link to a Quality Procedure.
+  # Create one top-level procedure for all Countersign-filed NCs.
+  local proc_data
+  proc_data=$(cat <<EOF
+{
+  "quality_procedure_name": "${QUALITY_PROCEDURE}",
+  "is_group": 0
+}
+EOF
+)
+  erpnext_api "/api/resource/Quality%20Procedure" "POST" "${proc_data}" \
+    >/dev/null 2>&1 || true
 }
 
 read_api_keys() {
@@ -170,6 +201,7 @@ main() {
 
   wait_for_erpnext
   create_api_user
+  create_quality_procedure
   read_api_keys
   create_tenant_access
   store_credentials
