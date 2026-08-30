@@ -133,6 +133,36 @@ def test_coa_snapshot_is_strictly_mapped_with_real_attachment_hash(
     assert check_coa(snapshot) == []
 
 
+def test_maintenance_binding_is_tenant_locked_and_uses_work_order_uri(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _credentials(monkeypatch)
+
+    def request_json(*, tenant_id: str, method: str, params: dict[str, str]) -> Any:
+        assert tenant_id == "ACME01"
+        assert method == "get_maintenance_asset_binding"
+        assert params == {"batch_id": "BATCH-2026-001"}
+        return {
+            "message": {
+                "schema_version": "countersign.erpnext.supply.v1",
+                "tenant_id": "ACME01",
+                "batch_id": "BATCH-2026-001",
+                "asset_code": "M-12",
+                "work_order_id": "MFG-WO-2026-00001",
+                "source_uri": "https://erp.example.test/app/work-order/MFG-WO-2026-00001",
+                "batch_window_started_at": "2026-08-30T09:00:00Z",
+                "batch_window_ended_at": "2026-08-30T16:00:00Z",
+            }
+        }
+
+    binding = ErpNextSupplySource(request_json=request_json).maintenance_asset_binding(
+        tenant_id="ACME01", batch_id="BATCH-2026-001"
+    )
+
+    assert binding.asset_code == "M-12"
+    assert binding.work_order_id == "MFG-WO-2026-00001"
+
+
 def test_unsigned_and_expired_erpnext_coa_reuses_existing_findings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

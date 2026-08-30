@@ -34,7 +34,8 @@ export type Department =
   | "manufacturing"
   | "qc"
   | "environmental_monitoring"
-  | "supply";
+  | "supply"
+  | "maintenance";
 export type BranchStatus = "ok" | "failed";
 export type ChecklistItemStatus = "pass" | "fail" | "not_evaluated";
 export type ReleaseGateStatus = "ready_for_qp_review" | "not_ready";

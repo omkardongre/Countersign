@@ -30,6 +30,8 @@ function labelHttp(path: string): string {
   if (path.includes("@@API/senaite/")) return "SENAITE LIMS record";
   if (path.includes("/app/countersign-coa-verification/")) return "ERPNext supply record";
   if (path.includes("/app/stock-entry/")) return "ERPNext manufacture stock entry";
+  if (path.includes("/app/work-order/")) return "ERPNext production work order";
+  if (path.includes("/openmaint/ui/")) return "openMAINT maintenance record";
   return `${path.split("/")[0] ?? path} record`;
 }
 

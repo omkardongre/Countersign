@@ -18,13 +18,20 @@ import datetime
 
 from app.domain.compliance_models import ComplianceFindingType
 from app.domain.department_catalog import lookup_department_snapshot
-from app.domain.department_checks import check_coa, check_em, check_lims
+from app.domain.department_checks import (
+    check_coa,
+    check_em,
+    check_lims,
+    check_maintenance,
+)
 from app.domain.department_models import (
     CoaSnapshot,
     EmReadingRow,
     EmSnapshot,
     LimsResultRow,
     LimsSnapshot,
+    MaintenanceSnapshot,
+    MaintenanceWorkOrder,
 )
 
 
@@ -108,3 +115,71 @@ def test_expired_coa_retest_is_cited() -> None:
     )
     findings = check_coa(snapshot)
     assert any(f.field_name == "retest_date" for f in findings)
+
+
+def test_open_maintenance_is_a_cited_machine_finding() -> None:
+    snapshot = MaintenanceSnapshot(
+        source_uri="https://openmaint.example.test/openmaint/ui/#classes/Equipment/cards/1",
+        asset_code="M-12",
+        asset_name="Formulation mixer M-12",
+        preventive_due_at=None,
+        open_corrective_count=1,
+    )
+    findings = check_maintenance(snapshot)
+    assert len(findings) == 1
+    assert findings[0].field_name == "open_corrective_maintenance"
+    assert findings[0].anchor is not None
+    assert findings[0].anchor.source_uri == snapshot.source_uri
+
+
+def test_maintenance_intervention_during_batch_is_cited_machine_finding() -> None:
+    snapshot = MaintenanceSnapshot(
+        source_uri="https://openmaint.example.test/openmaint/ui/#classes/Equipment/cards/1",
+        asset_code="M-12",
+        asset_name="Formulation mixer M-12",
+        open_corrective_count=0,
+        batch_window_started_at=datetime.datetime(2026, 8, 30, 9, tzinfo=datetime.UTC),
+        batch_window_ended_at=datetime.datetime(2026, 8, 30, 16, tzinfo=datetime.UTC),
+        corrective_work_orders=[
+            MaintenanceWorkOrder(
+                record_id="42",
+                process_number="CM.000.000.042",
+                status="closed.completed",
+                opened_at=datetime.datetime(2026, 8, 30, 10, tzinfo=datetime.UTC),
+                closed_at=datetime.datetime(2026, 8, 30, 11, tzinfo=datetime.UTC),
+                closed=True,
+                source_uri="https://openmaint.example.test/openmaint/ui/#processes/CorrectiveMaint/42",
+            )
+        ],
+    )
+    findings = check_maintenance(snapshot)
+    assert [finding.field_name for finding in findings] == [
+        "maintenance_intervention_during_batch"
+    ]
+    assert findings[0].anchor is not None
+    assert findings[0].anchor.source_uri.endswith("CorrectiveMaint/42")
+
+
+def test_maintenance_check_normalizes_naive_erpnext_batch_window() -> None:
+    snapshot = MaintenanceSnapshot(
+        source_uri="https://openmaint.example.test/openmaint/ui/#classes/Equipment/cards/1",
+        asset_code="M-12",
+        asset_name="Formulation mixer M-12",
+        open_corrective_count=0,
+        batch_window_started_at=datetime.datetime(2026, 8, 30, 9),
+        batch_window_ended_at=datetime.datetime(2026, 8, 30, 16),
+        corrective_work_orders=[
+            MaintenanceWorkOrder(
+                record_id="43",
+                process_number="CM.000.000.043",
+                status="closed.completed",
+                opened_at=datetime.datetime(2026, 8, 30, 10, tzinfo=datetime.UTC),
+                closed_at=datetime.datetime(2026, 8, 30, 11, tzinfo=datetime.UTC),
+                closed=True,
+                source_uri="https://openmaint.example.test/openmaint/ui/#processes/CorrectiveMaint/43",
+            )
+        ],
+    )
+    assert [finding.field_name for finding in check_maintenance(snapshot)] == [
+        "maintenance_intervention_during_batch"
+    ]
