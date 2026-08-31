@@ -108,6 +108,10 @@ from app.domain.department_source import (
     get_sibling_batch_source,
 )
 from app.domain.department_source_erpnext import ERPNextApiError, ErpNextSupplySource
+from app.domain.post_qp_models import (
+    CorrectiveMaintenanceRequest,
+    CorrectiveMaintenanceResult,
+)
 from app.domain.qms_report_models import QmsReportWriteResult
 
 __all__ = [
@@ -141,6 +145,9 @@ __all__ = [
     "GUIDANCE_TOOLS",
     "LIMS_QUERY",
     "MAINTENANCE_QUERY",
+    "OPENMAINT_CORRECTIVE_REQUEST",
+    "POST_QP_MAINTENANCE_TOOLS",
+    "POST_QP_SPONSOR_TOOLS",
     "PRIOR_ART_QUERY",
     "PRIOR_ART_REDACT",
     "PRIOR_ART_WRITE",
@@ -148,6 +155,7 @@ __all__ = [
     "QMS_WRITE_TOOLS",
     "SIBLING_BATCH_QUERY",
     "SPONSOR_BATCH_STATUS",
+    "SPONSOR_NOTIFICATION_REQUEST",
     "SPONSOR_TOOLS",
     "STERILITY_BIND_RESUME_HANDLE",
     "STERILITY_GET",
@@ -179,6 +187,7 @@ __all__ = [
     "erpnext_nonconformance_write",
     "erpnext_quality_action_write",
     "lims_query",
+    "openmaint_corrective_request",
     "qms_report_write",
     "sibling_batch_query",
     "sponsor_batch_status",
@@ -263,6 +272,10 @@ ERPNEXT_QUALITY_ACTION_WRITE = "erpnext_quality_action_write"
 CAPA_WRITE_TOOLS = frozenset(
     {ERPNEXT_NONCONFORMANCE_WRITE, ERPNEXT_QUALITY_ACTION_WRITE}
 )
+OPENMAINT_CORRECTIVE_REQUEST = "openmaint_corrective_request"
+SPONSOR_NOTIFICATION_REQUEST = "sponsor_notification_request"
+POST_QP_MAINTENANCE_TOOLS = frozenset({OPENMAINT_CORRECTIVE_REQUEST})
+POST_QP_SPONSOR_TOOLS = frozenset({SPONSOR_NOTIFICATION_REQUEST})
 
 # CFI (Cross-Functional Investigation): its own tool names and its own
 # Gateway allow-list, disjoint from the case workflow's — a CFI Runtime may
@@ -340,6 +353,22 @@ def coa_fetch(*, tenant_id: str, batch_id: str) -> CoaSnapshot:
     Still catalog-backed: the untrusted supplier channel is its own P1 item.
     """
     return get_coa_source().coa(tenant_id=tenant_id, batch_id=batch_id)
+
+
+def openmaint_corrective_request(
+    *, request: CorrectiveMaintenanceRequest, case_tenant_id: str
+) -> CorrectiveMaintenanceResult:
+    if request.tenant_id != case_tenant_id:
+        raise CapaTenantMismatch("Corrective-maintenance tenant scope does not match the case.")
+    if request.lifecycle_state != "qp_reviewed":
+        raise ErpNextCapaWriteError(
+            "Corrective-maintenance requests are allowed only after QP review."
+        )
+    source = get_maintenance_source()
+    method = getattr(source, "request_corrective_maintenance", None)
+    if method is None:
+        raise ErpNextCapaWriteError("The maintenance backend is not writable openMAINT.")
+    return method(request=request)
 
 
 def maintenance_query(*, tenant_id: str, batch_id: str) -> MaintenanceSnapshot:

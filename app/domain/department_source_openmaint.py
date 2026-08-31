@@ -26,6 +26,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app.domain.department_models import MaintenanceSnapshot, MaintenanceWorkOrder
 from app.domain.department_source import DepartmentRecordMissing
+from app.domain.post_qp_models import (
+    CorrectiveMaintenanceRequest,
+    CorrectiveMaintenanceResult,
+)
 
 OPENMAINT_CREDENTIALS_ENV = "COUNTERSIGN_OPENMAINT_CREDENTIALS_JSON"
 OPENMAINT_TIMEOUT_ENV = "COUNTERSIGN_OPENMAINT_TIMEOUT_SECONDS"
@@ -44,6 +48,7 @@ class _CredentialPayload(BaseModel):
     base_url: str = Field(min_length=1, max_length=2048)
     username: str = Field(min_length=1, max_length=256)
     password: str = Field(min_length=16, max_length=1024)
+    requester_role: str | None = Field(default=None, min_length=1, max_length=256)
 
     @field_validator("base_url")
     @classmethod
@@ -61,6 +66,7 @@ class OpenMaintCredentials:
     base_url: str
     username: str
     password: str
+    requester_role: str | None
 
 
 def _timeout_seconds() -> float:
@@ -144,17 +150,114 @@ def _parse_datetime(value: Any) -> datetime.datetime | None:
 class OpenMaintMaintenanceSource:
     backend_name = BACKEND_OPENMAINT
 
-    def maintenance(self, *, tenant_id: str, asset_code: str) -> MaintenanceSnapshot:
-        credentials = credentials_for_tenant(tenant_id)
+    def _session(
+        self, credentials: OpenMaintCredentials, *, role: str | None = None
+    ) -> str:
+        body = {"username": credentials.username, "password": credentials.password}
+        if role:
+            body["role"] = role
         session = _request_json(
             credentials,
             "sessions?scope=service&returnId=true",
             method="POST",
-            body={"username": credentials.username, "password": credentials.password},
+            body=body,
         )
         session_id = str((session.get("data") or {}).get("_id") or "")
         if not session_id:
             raise OpenMaintApiError("openMAINT did not return a service session.")
+        return session_id
+
+    def request_corrective_maintenance(
+        self, *, request: CorrectiveMaintenanceRequest
+    ) -> CorrectiveMaintenanceResult:
+        credentials = credentials_for_tenant(request.tenant_id)
+        if not credentials.requester_role:
+            raise OpenMaintApiError(
+                "No openMAINT requester role is configured for this tenant."
+            )
+        session_id = self._session(credentials, role=credentials.requester_role)
+        from app.domain.department_source_erpnext import ErpNextSupplySource
+
+        binding = ErpNextSupplySource().maintenance_asset_binding(
+            tenant_id=request.tenant_id, batch_id=request.batch_id
+        )
+        equipment = _request_json(
+            credentials,
+            "classes/Equipment/cards?scope=service&limit=100",
+            session_id=session_id,
+        ).get("data", [])
+        asset = next(
+            (
+                row
+                for row in equipment
+                if isinstance(row, dict) and row.get("Code") == binding.asset_code
+            ),
+            None,
+        )
+        if asset is None or not asset.get("_id"):
+            raise DepartmentRecordMissing(
+                f"openMAINT equipment {binding.asset_code!r} was not found."
+            )
+        path = "processes/CorrectiveMaint/instances"
+        code_filter = json.dumps(
+            {
+                "attribute": {
+                    "simple": {
+                        "attribute": "ShortDescr",
+                        "operator": "equal",
+                        "value": [request.idempotency_key],
+                    }
+                }
+            },
+            separators=(",", ":"),
+        )
+        instances = _request_json(
+            credentials,
+            f"{path}?scope=service&filter={urllib.parse.quote(code_filter)}&limit=2",
+            session_id=session_id,
+        ).get("data", [])
+        matches = [
+            row
+            for row in instances
+            if isinstance(row, dict)
+            and row.get("ShortDescr") == request.idempotency_key
+        ]
+        if len(matches) > 1:
+            raise OpenMaintApiError(
+                "openMAINT returned duplicate corrective processes for the idempotency key."
+            )
+        existing = matches[0] if matches else None
+        if existing is None:
+            created = _request_json(
+                credentials,
+                path,
+                session_id=session_id,
+                method="POST",
+                body={
+                    "ShortDescr": request.idempotency_key,
+                    "ProcessNotes": request.summary,
+                    "CI": asset["_id"],
+                },
+            ).get("data") or {}
+            existing = created
+            was_existing = False
+        else:
+            was_existing = True
+        record_id = str(existing.get("_id") or "")
+        if not record_id:
+            raise OpenMaintApiError("openMAINT did not return a corrective process id.")
+        return CorrectiveMaintenanceResult(
+            work_order_id=record_id,
+            work_order_url=(
+                f"{credentials.base_url}/ui/#processes/CorrectiveMaint/instances/{record_id}"
+            ),
+            was_existing=was_existing,
+            idempotency_key=request.idempotency_key,
+        )
+
+    def maintenance(self, *, tenant_id: str, asset_code: str) -> MaintenanceSnapshot:
+        credentials = credentials_for_tenant(tenant_id)
+        session_id = self._session(credentials)
 
         equipment = _request_json(
             credentials, "classes/Equipment/cards?scope=service&limit=100", session_id=session_id

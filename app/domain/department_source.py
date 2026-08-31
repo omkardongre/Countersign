@@ -368,7 +368,11 @@ def coa_backend_name() -> str:
 
 
 def maintenance_backend_name() -> str:
-    return getattr(get_maintenance_source(), "backend_name", "unconfigured")
+    try:
+        source = get_maintenance_source()
+    except RuntimeError:
+        return "unconfigured"
+    return getattr(source, "backend_name", "unconfigured")
 
 
 def sibling_batch_backend_name() -> str:
