@@ -7,7 +7,12 @@ from typing import Any
 
 import pytest
 
-from app.domain.branches import _make_supply_tool, _screening_query
+from app.domain.branches import (
+    _make_eudragmdp_screening_tool,
+    _make_openfda_screening_tool,
+    _make_supply_tool,
+    _screening_query,
+)
 from app.domain.department_checks import check_coa
 from app.domain.department_source import (
     DepartmentRecordMissing,
@@ -23,7 +28,11 @@ from app.domain.department_source_erpnext import (
     erpnext_credentials_for_tenant,
     reset_erpnext_credentials_cache,
 )
-from app.domain.regulatory_screening_models import RegulatoryScreeningSource
+from app.domain.regulatory_screening import unavailable_screening_result
+from app.domain.regulatory_screening_models import (
+    RegulatoryScreeningSource,
+    ScreeningUnavailableReason,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -372,6 +381,57 @@ async def test_supply_agent_tool_never_receives_coa_body_or_hash(
     serialized = json.dumps(result)
     assert snapshot.attachment_sha256 not in serialized
     assert "Example ingredient" not in serialized
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("factory", "source", "capture_key"),
+    [
+        (
+            _make_eudragmdp_screening_tool,
+            RegulatoryScreeningSource.EUDRAGMDP,
+            "eudragmdp",
+        ),
+        (
+            _make_openfda_screening_tool,
+            RegulatoryScreeningSource.OPENFDA_ENFORCEMENT,
+            "openfda",
+        ),
+    ],
+)
+async def test_duplicate_regulatory_screening_call_is_cached(
+    monkeypatch: pytest.MonkeyPatch,
+    factory: Any,
+    source: RegulatoryScreeningSource,
+    capture_key: str,
+) -> None:
+    """A model retry must not issue two external regulator requests."""
+    _credentials(monkeypatch)
+    coa = ErpNextSupplySource(
+        request_json=lambda **_: _coa_payload()
+    ).coa(tenant_id="ACME01", batch_id="BATCH-2026-001")
+    calls = 0
+
+    async def screen(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        query, _ = _screening_query(coa, source)
+        return unavailable_screening_result(
+            source,
+            query=query,
+            reason=ScreeningUnavailableReason.MCP_UNAVAILABLE,
+        )
+
+    monkeypatch.setattr("app.domain.branches._run_screening", screen)
+    captured: dict[str, Any] = {"coa": coa}
+    tool = factory(captured)
+
+    first = await tool()
+    second = await tool()
+
+    assert calls == 1
+    assert first == second
+    assert capture_key in captured
 
 
 def test_regulatory_queries_never_include_internal_erpnext_identifiers(
