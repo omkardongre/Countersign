@@ -205,7 +205,7 @@ function CfiInterviews({ interviews }: { interviews: CfiInterviewSummary[] }) {
                 </span>
               </div>
               {interview.question && <p className="mt-1 text-sm">Q: {interview.question}</p>}
-              <p className="mt-1 font-mono text-[11px] text-ink-muted">
+              <div className="mt-1 font-mono text-[11px] text-ink-muted">
                 {interview.thread_name ? (
                   <SourceRef
                     uri={interview.thread_name}
@@ -215,7 +215,7 @@ function CfiInterviews({ interviews }: { interviews: CfiInterviewSummary[] }) {
                   "thread not available"
                 )}
                 {interview.deadline_at ? ` · deadline ${formatWhen(interview.deadline_at)}` : ""}
-              </p>
+              </div>
               {interview.replies.length > 0 && (
                 <ul className="mt-2 space-y-2">
                   {interview.replies.map((reply) => (

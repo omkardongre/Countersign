@@ -121,7 +121,7 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
                     </span>
                   </div>
                   <p className="mt-2 text-sm leading-relaxed text-ink-soft">{f.description}</p>
-                  <p className="mt-2 font-mono text-[12px] text-ink-faint">
+                  <div className="mt-2 font-mono text-[12px] text-ink-faint">
                     {f.observed_value ?? "—"} vs {f.expected_value ?? "—"}
                     {f.anchor && (
                       <>
@@ -133,7 +133,7 @@ export function CasePanels({ record }: { record: CaseDeskRecord }) {
                         {` p.${f.anchor.page_number}`}
                       </>
                     )}
-                  </p>
+                  </div>
                 </li>
               ))}
             </ul>

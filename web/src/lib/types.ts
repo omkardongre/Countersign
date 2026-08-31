@@ -80,6 +80,8 @@ export type ClassifiedCase = {
   product_name: string;
   doc_type: DocType;
   sterility_hold_seconds: number;
+  patient_safety_impact: boolean;
+  prior_occurrences_90d: number;
   severity: DeviationSeverity;
   lifecycle_state: LifecycleState;
   decision_authority: typeof DECISION_AUTHORITY;
