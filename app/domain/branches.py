@@ -315,9 +315,12 @@ def _make_supply_tool(bundle: CaseEvidenceBundle, captured: dict[str, Any]) -> A
     async def fetch_supplier_coa() -> dict[str, Any]:
         """Retrieve the supplier Certificate of Analysis for this batch."""
         if "coa" in captured:
-            raise DepartmentToolCallError(
-                "fetch_supplier_coa must be called exactly once."
-            )
+            snapshot = captured["coa"]
+            return {
+                "source_uri": snapshot.source_uri,
+                "supplier_id": snapshot.supplier_id,
+                "material_lot": snapshot.material_lot,
+            }
         snapshot = CoaSnapshot.model_validate(
             await call_department_tool(
                 COA_FETCH,

@@ -384,6 +384,37 @@ async def test_supply_agent_tool_never_receives_coa_body_or_hash(
 
 
 @pytest.mark.asyncio
+async def test_duplicate_supplier_coa_call_is_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _credentials(monkeypatch)
+    snapshot = ErpNextSupplySource(
+        request_json=lambda **_: _coa_payload()
+    ).coa(tenant_id="ACME01", batch_id="BATCH-2026-001")
+    calls = 0
+
+    async def call_tool(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return snapshot.model_dump(mode="json")
+
+    monkeypatch.setattr("app.domain.branches.call_department_tool", call_tool)
+    bundle = SimpleNamespace(
+        tenant_id="ACME01",
+        batch_id="BATCH-2026-001",
+        lifecycle_state="classified",
+    )
+    captured: dict[str, Any] = {}
+    tool = _make_supply_tool(bundle, captured)
+
+    first = await tool()
+    second = await tool()
+
+    assert calls == 1
+    assert first == second
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("factory", "source", "capture_key"),
     [
