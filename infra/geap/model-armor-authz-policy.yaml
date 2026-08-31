@@ -24,8 +24,8 @@ httpRules:
   - to:
       notOperations:
         - hosts:
-            - exact: "countersign-department-mcp-777448403573.us-central1.run.app"
-            - exact: "countersign-regulatory-screening-mcp-777448403573.us-central1.run.app"
+            - exact: "countersign-department-mcp-sm343mxwxq-uc.a.run.app"
+            - exact: "countersign-regulatory-screening-mcp-sm343mxwxq-uc.a.run.app"
     when: >
       request.headers['content-type'] == 'application/json' ||
       request.headers['content-type'].startsWith('text/')

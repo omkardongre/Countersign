@@ -155,6 +155,18 @@ def main() -> int:
             "Defaults to countersign-cfi-invoker@PROJECT.iam.gserviceaccount.com."
         ),
     )
+    parser.add_argument(
+        "--interview-deadline-seconds",
+        type=int,
+        default=259200,
+        help=(
+            "COUNTERSIGN_CFI_INTERVIEW_DEADLINE_SECONDS, read by "
+            "app.domain.cfi_interview.run_interview inside this Runtime's own "
+            "process (not the department MCP) to compute an interview's "
+            "deadline_at. Missing this fails every interview enquiry with "
+            "CfiChatError at run time. Default: 3 days."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.mcp_url.startswith("https://"):
@@ -198,6 +210,14 @@ def main() -> int:
         "COUNTERSIGN_ALLOW_VERTEX_SESSIONS": "1",
         "COUNTERSIGN_MCP_URL": args.mcp_url,
         "COUNTERSIGN_MCP_INVOKER_SERVICE_ACCOUNT": invoker_sa,
+        # app.domain.cfi_interview.run_interview computes deadline_at inside
+        # THIS Runtime's own process, not the department MCP's. Omitting it
+        # here (previously the case) makes every interview enquiry fail with
+        # CfiChatError("COUNTERSIGN_CFI_INTERVIEW_DEADLINE_SECONDS is
+        # required...") even though the MCP is fully configured.
+        "COUNTERSIGN_CFI_INTERVIEW_DEADLINE_SECONDS": str(
+            args.interview_deadline_seconds
+        ),
     }
 
     staging_dir = tempfile.mkdtemp(prefix="countersign_cfi_deploy_")

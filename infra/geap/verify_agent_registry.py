@@ -15,18 +15,41 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
 PROJECT = "countersign-505107"
 LOCATION = "us-central1"
-CASE_RUNTIME_ID = "4826409094459949056"
+ROOT = Path(__file__).resolve().parents[2]
+CASE_DEPLOYMENT_METADATA = ROOT / "case_deployment_metadata.json"
 SPONSOR_SERVICE = "countersign-sponsor-liaison"
 SPONSOR_AGENT_NAME = "sponsor_liaison_agent"
 SPONSOR_SKILL = "sponsor_batch_status"
 MCP_SERVICE = "countersign-department-mcp-tools"
 DEFAULT_MCP_URL = "https://countersign-department-mcp-sm343mxwxq-uc.a.run.app/mcp"
-EXPECTED_FLEET_SIZE = 14
+# Keep this in lockstep with build_fleet_manifest().  The cross-department
+# CAPA writer and maintenance agent raised the current fleet from 14 to 16.
+EXPECTED_FLEET_SIZE = 16
+
+
+def _current_case_runtime_id() -> str:
+    """Read the Runtime currently deployed by ``deploy_case_runtime.py``.
+
+    Reasoning Engine IDs change on each deploy.  A literal historic ID makes a
+    live Registry verifier report a false failure after an otherwise healthy
+    deployment, which hides real integration regressions.
+    """
+    try:
+        metadata = json.loads(CASE_DEPLOYMENT_METADATA.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"cannot read current case deployment metadata: {CASE_DEPLOYMENT_METADATA}"
+        ) from exc
+    resource = metadata.get("case_agent_runtime_id")
+    if not isinstance(resource, str) or "/reasoningEngines/" not in resource:
+        raise RuntimeError("case deployment metadata has no valid case_agent_runtime_id")
+    return resource.rsplit("/", 1)[-1]
 
 
 def _gcloud(*args: str) -> Any:
@@ -99,14 +122,15 @@ def _fleet_names() -> set[str]:
 
 
 def verify(mcp_url: str) -> dict[str, Any]:
+    case_runtime_id = _current_case_runtime_id()
     agents = _gcloud("agents", "list")
     _require(isinstance(agents, list), "Agent Registry agents list was not an array")
 
     case_agents = [
         agent
         for agent in agents
-        if CASE_RUNTIME_ID in str(_one(agent, "agentId"))
-        or CASE_RUNTIME_ID in str(_one(agent, "attributes", "agentregistry.googleapis.com/system/RuntimeReference", "uri"))
+        if case_runtime_id in str(_one(agent, "agentId"))
+        or case_runtime_id in str(_one(agent, "attributes", "agentregistry.googleapis.com/system/RuntimeReference", "uri"))
     ]
     _require(len(case_agents) == 1, f"expected one case Runtime Registry agent, found {len(case_agents)}")
     _require(case_agents[0].get("displayName") == "countersign-case", "case Runtime display name mismatch")
@@ -138,7 +162,7 @@ def verify(mcp_url: str) -> dict[str, Any]:
         "status": "ok",
         "project": PROJECT,
         "location": LOCATION,
-        "case_runtime": {"reasoning_engine": CASE_RUNTIME_ID, "registry_display_name": case_agents[0]["displayName"]},
+        "case_runtime": {"reasoning_engine": case_runtime_id, "registry_display_name": case_agents[0]["displayName"]},
         "sponsor_a2a": {"service": SPONSOR_SERVICE, "agent": SPONSOR_AGENT_NAME, "skill": SPONSOR_SKILL, "url": sponsor_url},
         "department_mcp": {"service": MCP_SERVICE, "url": mcp_url, "tool_count": len(live_tools), "tools": sorted(live_tools)},
         "fleet_manifest": {"agent_count": len(fleet), "agents": sorted(fleet)},

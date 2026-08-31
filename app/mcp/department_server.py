@@ -360,7 +360,13 @@ def _require_cfi_tick_caller(mcp: FastMCP) -> None:
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise ToolError("cfi_interview_tick requires a bearer token.")
-    audience = f"{request.url.scheme}://{request.url.netloc}"
+    # Cloud Run terminates TLS and forwards requests to the container over
+    # plain HTTP, so request.url.scheme is always "http" internally.  The
+    # OIDC token minted by the tick service uses the public "https://" base
+    # URL (from COUNTERSIGN_MCP_URL), so reconstruct the audience from the
+    # X-Forwarded-Proto header that Cloud Run sets on every external request.
+    forwarded_scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    audience = f"{forwarded_scheme}://{request.url.netloc}"
     try:
         import google.auth.transport.requests
         from google.oauth2 import id_token as google_id_token

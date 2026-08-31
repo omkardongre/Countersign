@@ -22,8 +22,9 @@ _GEAP = pathlib.Path(__file__).resolve().parents[2] / "infra" / "geap"
 
 # The department MCP service these tool-name policies are scoped to. Kept as a
 # literal so a change to the deployed MCP host has to be made deliberately in
-# both the policy and this test.
-_MCP_HOST = "countersign-department-mcp-777448403573.us-central1.run.app"
+# both the policy and this test.  This is the current Cloud Run hostname from
+# the registered ``countersign-department-mcp-tools`` MCP server.
+_MCP_HOST = "countersign-department-mcp-sm343mxwxq-uc.a.run.app"
 
 
 def _read(name: str) -> str:
@@ -93,11 +94,11 @@ def test_case_workflow_policy_allows_all_named_tools() -> None:
         "controlled_guidance_query",
         "case_status_upsert",
         "qms_report_write",
-            "erpnext_nonconformance_write",
-            "erpnext_quality_action_write",
-            "maintenance_query",
-            "openmaint_corrective_request",
-            "sponsor_notification_request",
+        "erpnext_nonconformance_write",
+        "erpnext_quality_action_write",
+        "maintenance_query",
+        "openmaint_corrective_request",
+        "sponsor_notification_request",
         }
 
 

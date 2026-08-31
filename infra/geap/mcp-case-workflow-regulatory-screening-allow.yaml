@@ -22,7 +22,7 @@ httpRules:
   - to:
       operations:
         - hosts:
-            - exact: "countersign-regulatory-screening-mcp-777448403573.us-central1.run.app"
+            - exact: "countersign-regulatory-screening-mcp-sm343mxwxq-uc.a.run.app"
           mcp:
             baseProtocolMethodsOption: MATCH_BASE_PROTOCOL_METHODS
             methods:
