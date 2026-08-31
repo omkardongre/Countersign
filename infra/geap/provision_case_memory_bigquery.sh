@@ -38,10 +38,22 @@ bq --project_id="${PROJECT_ID}" mk --dataset \
 # index (CREATE VECTOR INDEX requirement); rows are always written with a
 # real embedding by BigQueryCaseMemoryStore.write_fact, which fails the
 # write rather than inserting a NULL vector.
-bq --project_id="${PROJECT_ID}" mk --table \
-  "${PROJECT_ID}:${DATASET}.${TABLE}" \
-  "fact_id:STRING,tenant_id:STRING,case_id:STRING,batch_id:STRING,fact:STRING,source_uri:STRING,confidence:FLOAT64,observed_at:TIMESTAMP,redacted:BOOLEAN,redacted_reason:STRING,root_cause_category:STRING,embedding:FLOAT64" \
-  2>/dev/null || true
+bq query --project_id="${PROJECT_ID}" --location="${LOCATION}" \
+  --use_legacy_sql=false \
+  "CREATE TABLE IF NOT EXISTS \`${PROJECT_ID}.${DATASET}.${TABLE}\` (
+    fact_id STRING NOT NULL,
+    tenant_id STRING NOT NULL,
+    case_id STRING NOT NULL,
+    batch_id STRING NOT NULL,
+    fact STRING NOT NULL,
+    source_uri STRING NOT NULL,
+    confidence FLOAT64 NOT NULL,
+    observed_at TIMESTAMP NOT NULL,
+    redacted BOOL NOT NULL,
+    redacted_reason STRING,
+    root_cause_category STRING,
+    embedding ARRAY<FLOAT64>
+  )" >/dev/null
 
 grant_role() {
   local member="$1"
