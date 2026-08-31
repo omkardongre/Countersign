@@ -212,7 +212,7 @@ async def run_interview(ctx: Context, node_input: CfiRoundState):
         )
 
     def output_state(result: CfiInterviewResult) -> CfiRoundState:
-        context_state.pop(counter_key, None)
+        context_state[counter_key] = 0
         budget = state.investigation.budget.model_copy(
             update={
                 "tool_calls_in_current_round": baseline_calls + calls_made,

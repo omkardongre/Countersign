@@ -88,6 +88,7 @@ async def _open_cfi(
         trigger_reasons=decision.reasons,
         trigger_spec_version=decision.trigger_spec_version,
         trigger_spec_sha256=decision.trigger_spec_sha256,
+        required_first_enquiry=decision.required_first_enquiry,
         budget=CfiBudgetState(
             budget_spec_version=budget_spec.spec_version,
             budget_spec_sha256=budget_spec.spec_sha256,

@@ -87,7 +87,7 @@ from app.domain.cfi_trend import (
 from app.domain.cfi_trend import (
     make_trend_query_tool as _make_trend_query_tool,
 )
-from app.domain.master_data import load_cfi_budget_spec
+from app.domain.master_data import RootCauseCategory, load_cfi_budget_spec
 
 CFI_WORKFLOW_NAME = "cfi_investigation"
 CFI_WORKFLOW_VERSION = "cfi_investigation.1"
@@ -104,6 +104,50 @@ _ROUTE_SKIP_TO_SETTLEMENT = "skip"
 
 def _utcnow() -> datetime.datetime:
     return datetime.datetime.now(datetime.UTC)
+
+
+def _required_first_enquiry_state(state: CfiRoundState) -> CfiRoundState | None:
+    """Builds the approved, deterministic first CFI enquiry when required.
+
+    This is intentionally evaluated before the CFI lead agent. The policy
+    originates from the case graph's versioned CFI trigger spec and is
+    persisted on the CFI aggregate, so an agent cannot skip, replace, or
+    reinterpret it. A retry before the interview is dispatched recreates the
+    same ledger proposal; once evidence exists, later rounds return to the
+    existing bounded planner.
+    """
+    investigation = state.investigation
+    if (
+        state.round_number != 1
+        or investigation.required_first_enquiry is not CfiEnquiryKind.INTERVIEW
+        or investigation.hypotheses
+        or investigation.evidence
+    ):
+        return None
+
+    updated_investigation, opened = open_hypothesis(
+        investigation,
+        CfiHypothesisProposal(
+            category=RootCauseCategory.PERSONNEL,
+            statement=(
+                "Operator actions and observations require a controlled "
+                "interview under the approved CFI trigger policy."
+            ),
+        ),
+        round_number=state.round_number,
+    )
+    return state.model_copy(
+        update={
+            "investigation": updated_investigation,
+            "active_hypothesis_id": opened.hypothesis_id,
+            "enquiry_kind": CfiEnquiryKind.INTERVIEW,
+            "should_dispatch": True,
+            "rationale": (
+                "Mandatory first operator interview required by the "
+                "change-controlled CFI trigger policy."
+            ),
+        }
+    )
 
 
 @node(name="load_cfi", rerun_on_resume=True)
@@ -152,6 +196,10 @@ async def cfi_plan_round(ctx: Context, node_input: CfiRoundState) -> Event:
         else CfiRoundState.model_validate(node_input)
     )
     investigation = state.investigation
+    forced_state = _required_first_enquiry_state(state)
+    if forced_state is not None:
+        return Event(output=forced_state.model_dump(mode="json"))
+
     content = build_cfi_lead_content(investigation)
     raw = await ctx.run_node(get_cfi_lead_agent(), node_input=content)
     if raw is None:

@@ -41,6 +41,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.models import DocType
+
 _logger = logging.getLogger(__name__)
 
 _MASTER_DATA_DIR = pathlib.Path(__file__).parent / "master_data"
@@ -320,6 +322,8 @@ class CfiTriggerSpec(BaseModel):
     description: str
     low_confidence_threshold: float = Field(ge=0.0, le=1.0)
     recurrence_prior_occurrences_threshold: int = Field(ge=0)
+    mandatory_operator_interview_document_type: DocType
+    mandatory_operator_interview_requires_patient_safety_impact: bool
 
 
 class CfiBudgetSpec(BaseModel):

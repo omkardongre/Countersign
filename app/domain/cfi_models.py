@@ -59,6 +59,7 @@ class CfiTriggerReason(StrEnum):
     CHALLENGER_INSUFFICIENT_EVIDENCE = "challenger_insufficient_evidence"
     CHALLENGER_ALTERNATIVE_CAUSE = "challenger_alternative_cause"
     RECURRENCE = "recurrence"
+    MANDATORY_OPERATOR_INTERVIEW = "mandatory_operator_interview"
 
 
 class CfiHypothesisState(StrEnum):
@@ -333,6 +334,7 @@ class CfiInvestigation(BaseModel):
     trigger_reasons: list[CfiTriggerReason] = Field(min_length=1)
     trigger_spec_version: str
     trigger_spec_sha256: str
+    required_first_enquiry: CfiEnquiryKind | None = None
     opened_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.UTC)
     )

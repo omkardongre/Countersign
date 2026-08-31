@@ -414,13 +414,7 @@ class PostgresCfiStore:
             cursor.execute(
                 """
                 UPDATE cfi_investigation
-                SET revision = revision + 1,
-                    payload = jsonb_set(
-                        %s::jsonb,
-                        '{revision}',
-                        to_jsonb(revision + 1),
-                        true
-                    ),
+                SET payload = %s::jsonb,
                     updated_at = now()
                 WHERE cfi_id = %s
                 RETURNING payload

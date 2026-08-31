@@ -29,9 +29,9 @@ rule call, not an investigator's — this function is that rule.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.domain.cfi_models import CfiTriggerReason
+from app.domain.cfi_models import CfiEnquiryKind, CfiTriggerReason
 from app.domain.investigation_models import (
     ChallengerAttackType,
     InvestigationCaseResult,
@@ -49,6 +49,7 @@ class CfiTriggerDecision(BaseModel):
 
     required: bool
     reasons: list[CfiTriggerReason] = Field(default_factory=list)
+    required_first_enquiry: CfiEnquiryKind | None = None
     trigger_spec_version: str
     trigger_spec_sha256: str
     decision_authority: str = "none"
@@ -58,6 +59,12 @@ class CfiTriggerDecision(BaseModel):
         if value != "none":
             raise ValueError("CFI trigger decisions cannot claim authority.")
         return value
+
+    @model_validator(mode="after")
+    def _require_cfi_for_required_first_enquiry(self) -> CfiTriggerDecision:
+        if self.required_first_enquiry is not None and not self.required:
+            raise ValueError("A required first enquiry requires a CFI.")
+        return self
 
 
 def decide_cfi_required(
@@ -108,6 +115,20 @@ def decide_cfi_required(
     ):
         reasons.append(CfiTriggerReason.RECURRENCE)
 
+    classified = result.case.classified
+    mandatory_operator_interview = (
+        classified.doc_type
+        is active_spec.mandatory_operator_interview_document_type
+        and (
+            not active_spec.mandatory_operator_interview_requires_patient_safety_impact
+            or classified.patient_safety_impact
+        )
+        and classified.prior_occurrences_90d
+        >= active_spec.recurrence_prior_occurrences_threshold
+    )
+    if mandatory_operator_interview:
+        reasons.append(CfiTriggerReason.MANDATORY_OPERATOR_INTERVIEW)
+
     # Deduplicate while preserving order.
     unique: list[CfiTriggerReason] = []
     seen: set[CfiTriggerReason] = set()
@@ -119,6 +140,9 @@ def decide_cfi_required(
     return CfiTriggerDecision(
         required=bool(unique),
         reasons=unique,
+        required_first_enquiry=(
+            CfiEnquiryKind.INTERVIEW if mandatory_operator_interview else None
+        ),
         trigger_spec_version=active_spec.spec_version,
         trigger_spec_sha256=active_spec.spec_sha256,
         decision_authority="none",

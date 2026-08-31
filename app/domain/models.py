@@ -159,6 +159,21 @@ class ClassifiedCase(BaseModel):
         gt=0,
         description="Carried from intake. QA sets the hold; there is no platform default.",
     )
+    patient_safety_impact: bool = Field(
+        default=False,
+        description=(
+            "Carried from structured intake for deterministic downstream routing; "
+            "never inferred from the deviation description."
+        ),
+    )
+    prior_occurrences_90d: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Carried from structured intake for deterministic downstream routing; "
+            "not a model-generated recurrence count."
+        ),
+    )
     rationale: str = Field(
         description="Which classification rule fired, for audit traceability."
     )

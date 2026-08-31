@@ -601,9 +601,13 @@ def _screening_protocol_unavailable(
 def _make_eudragmdp_screening_tool(captured: dict[str, Any]) -> Any:
     async def eudragmdp_screen() -> dict[str, Any]:
         if "eudragmdp" in captured:
-            raise DepartmentToolCallError(
-                "eudragmdp_screen must be called exactly once."
-            )
+            # An LLM can repeat a function call while finishing a single
+            # turn.  Repeating a read-only, tenant-scoped screen must not
+            # turn a successfully captured CoA into a failed Supply branch.
+            # Return the first typed result without issuing another external
+            # request; this is idempotent, auditable, and does not weaken the
+            # public-only screening boundary.
+            return _screening_metadata(captured["eudragmdp"])
         coa = captured.get("coa")
         if not isinstance(coa, CoaSnapshot):
             raise DepartmentToolCallError(
@@ -623,9 +627,10 @@ def _make_eudragmdp_screening_tool(captured: dict[str, Any]) -> Any:
 def _make_openfda_screening_tool(captured: dict[str, Any]) -> Any:
     async def openfda_enforcement_screen() -> dict[str, Any]:
         if "openfda" in captured:
-            raise DepartmentToolCallError(
-                "openfda_enforcement_screen must be called exactly once."
-            )
+            # See eudragmdp_screen above.  A duplicate call is satisfied
+            # from the captured typed result and never makes another public
+            # regulator request.
+            return _screening_metadata(captured["openfda"])
         coa = captured.get("coa")
         if not isinstance(coa, CoaSnapshot):
             raise DepartmentToolCallError(
