@@ -172,6 +172,7 @@ So Countersign is built on one non-negotiable rule:
 | **CFI Phase 1: Cross-Functional Investigation core** | **Done live (2026-08-24)** — deterministic trigger/ledger/gates/budget, a separate CFI Agent Identity Runtime (`reasoningEngines/7328770015929303040`, from `app.cfi_app`), `cfi_lead_agent` + `scope_expansion_agent`, tenant-locked `sibling_batch_query`, and a live Cloud SQL/MCP-backed durable CFI store (`adk_sessions.cfi_investigation`, MCP identity SELECT/INSERT/UPDATE only, no DELETE/DDL) with atomic idempotent open and optimistic-concurrency save. `escalate_to_cfi` remains a parallel terminal branch off `gate_investigation` — the proven release/QP path is unchanged. `sibling_batch_query` is live on Cloud SQL (`COUNTERSIGN_SIBLING_BATCH_BACKEND=cloud_sql`, `batch_material_lots`, SELECT-only) on the redeployed department MCP, alongside unchanged real LIMS/EM. A dedicated Gateway policy (`countersign-mcp-cfi-workflow-tools`) exposes exactly `sibling_batch_query`/`cfi_open`/`cfi_get`/`cfi_save`; the Runtime has its own Agent Registry entry and its own `countersign-cfi-invoker` credential boundary, separate from the case Runtime's. **Live bounded probe passed:** a real CFI (tenant `aurex`, batch `AX-2291`) was opened, invoked on the deployed CFI Runtime (29 streamed events, no errors), returned real same-tenant Cloud SQL siblings (`AX-2292`/`AX-2293`), rejected a cross-tenant sibling query, and closed durably at `revision=2` with `outcome=root_cause_identified`, one hypothesis, and evidence recorded from `sibling_batch_query` — independently re-read through MCP, not just observed mid-run. The probe row is retained by design (no delete operation on this MCP surface). See `checklist.md` |
 | **CFI Phase 2: Chat interview loop** | **Done live (2026-08-25)** — real Google Chat adapter (`chat_send_question`/`chat_read_replies`, idempotent send, deterministic untrusted-reply classification with prompt-injection markers forced to `out_of_scope`), a `RequestInput` interview node on the CFI graph, a scheduler control-plane tool `cfi_interview_tick` (claims bounded leases, sends bounded nudges, never exposes raw reply text), `POST /scheduler/cfi-tick`, a Cloud-Run caller-identity gate scoping the tick tool (it never crosses Agent Gateway), and Cloud SQL/Gateway/deploy-script wiring. 15 focused tests pass; `uv run pytest tests/unit -q` is 245 passed / 3 pre-existing unrelated failures. **Live proof:** `countersign.site` upgraded to Google Workspace, a real Chat app installed with admin-approved data access, `cfi_interview` provisioned on Cloud SQL, department MCP and tick service redeployed with real Chat/tick-invoker config, the Gateway policy updated, and a second Cloud Scheduler job created — then a real question was sent to a live Chat space and a real human reply was captured, correctly sender/thread-verified and classified, with `decision_authority` staying `"none"`. See `checklist.md`. |
 | **CFI Phase 3: trend correlation, Calendar review, filed report** | **Done live (2026-08-25)** — three real tenant-locked trend sources (EM BigQuery, cross-batch LIMS Cloud SQL, and prior-CFI recurrence), deterministic three-outcome closure, server-owned Calendar site-review scheduling, retry-safe typed Calendar/Docs references and errors, a write-only `cfi_reporter_agent`, fleet manifest then at 14 entries (now 16 with `capa_write_agent` and `maintenance_engineering_agent`), and a CFI desk panel with hypothesis ledger, captured evidence, interview status, budget counters, activity, and artifact references. **Live proof:** a real CFI (`aurex`/`AX-2291`) was opened and invoked on the redeployed CFI Runtime (`reasoningEngines/3969506906375979008`, 39 streamed events, no errors), returned real same-tenant Cloud SQL siblings, rejected a cross-tenant sibling query, and closed durably (`outcome=root_cause_identified`, revision 4). Both post-closure artifacts filed for real: a Calendar site-review event with a real invited attendee via keyless Workspace Domain-Wide Delegation on `c_9cf7bc86c8c01aaae8cd9e657ebe842e13799a49489c7e05ccbc31012d2373c0@group.calendar.google.com`, and a filed CFI report Google Doc (`1g68iGKDIZZ5f2aWwt3EVT30dYrTt4-8aR8QnpXqhFqE`) in the tenant's Drive folder, also via DWD — service accounts have no Drive storage quota of their own, so both artifacts share one keyless-signed-JWT delegated identity (`COUNTERSIGN_DWD_SUBJECT`/`COUNTERSIGN_DWD_SIGNER` in `app/app_utils/services.py`, `calendar_tools.py`, `cfi_report_writer.py`). The Calendar retry path compares whole-second instants (`calendar_tools.py::site_review_window`), matching Calendar's own persisted precision, so an idempotent resume never gets rejected as a moved event. `evaluate_cfi_closure` is idempotent (`cfi_gate.py`) so a rerun after closure cannot re-stamp `closed_at` under a stable Calendar event id. See `checklist.md`. **CFI implementation is paused here by decision (2026-08-25) — Phases 1–3 are the complete, shipped scope.** Gmail vendor interviews and everything else previously scoped as Phase 4 are optional future work, not committed. |
+| **Item 16: deterministic GUI-to-CFI operator interview** | **Done live (2026-08-31).** A qualifying GUI intake (**Operator report**, patient-safety impact selected, recurrence at or above the change-controlled threshold) deterministically opened CFI `520f6f29-f8de-43e6-82a0-256af2b81a07` for case `f2ddcc8e-61e9-41a1-8d43-b5f6a9a5e192` with `required_first_enquiry=interview`. Cloud Scheduler started the separate CFI Runtime, Google Chat captured an allowed human answer, and the CFI closed as `root_cause_identified`. It then created Calendar event `cfi9ddf25e1910ac183a99ca63de7a03b8aeb580f9a` and Docs report `1Z4wLHmRBWKbx50s2i6OBoVGtMz3gnQAB3ErUhCY0J8k`, with no artifact errors and `decision_authority: none`. The QP separately recorded `cannot_confirm`; Item 13 post-QP actions completed visibly. |
 
 ### Real agent fleet
 
@@ -728,9 +729,11 @@ START → intake_and_bind_evidence
   `"none"`. The case desk resumes the same invocation with a `FunctionResponse`.
 - Post-QP, `record_case_memory` and `file_qms_report` run before `file_capa`. The CAPA node uses
   deterministic text from the reviewed aggregate and case-locked MCP closures to create one
-  ERPNext Non Conformance plus Corrective and Preventive Quality Actions. ERPNext endpoints are
-  tenant-checked and idempotent by case/action; errors are stored as typed CAPA state and never
-  turn an agent into a batch-disposition authority.
+  ERPNext Non Conformance plus Corrective and Preventive Quality Actions. The final
+  `request_post_qp_actions` node opens or reuses an openMAINT `CorrectiveMaint` request and sends
+  an idempotent Sponsor QA notification through the department MCP and sponsor liaison to the
+  separate receiver. Each boundary is tenant-checked; errors remain typed state and never change
+  the recorded QP outcome or grant an agent batch-disposition authority.
 
 Standalone `evidence_graph.py` (ingest → extract → validate → comply) remains for the
 single-artifact path. The platform entrypoint is the joined case graph.
@@ -1209,15 +1212,18 @@ COUNTERSIGN_MCP_INVOKER_SERVICE_ACCOUNT=countersign-case-invoker@countersign-505
 
 The read-only verifier fails closed unless all of these match the live systems:
 
-- The case Workflow Runtime reasoning engine `4826409094459949056` is present as the
-  auto-registered `countersign-case` Agent Registry agent.
+- The currently deployed case Workflow Runtime, read from
+  `case_deployment_metadata.json`, is present as the auto-registered
+  `countersign-case` Agent Registry agent. This avoids treating a normal
+  Runtime redeployment as a false Registry failure.
 - `countersign-sponsor-liaison` is registered from its real A2A agent card, with
   `sponsor_liaison_agent`, skill `sponsor_batch_status`, and the public Cloud Run A2A URL.
   The verifier fetches the public card again rather than trusting only Registry output.
 - `countersign-department-mcp-tools` is registered as an MCP `TOOL_SPEC` using the live
   department MCP URL and its tool names exactly match a fresh authenticated `tools/list`
-  response. The current catalog contains 12 tools.
-- `app/domain/fleet_manifest.py` builds exactly 8 real fleet entries, including the separate
+  response. The deployment syncs its compact Registry specification from the same FastMCP
+  server code, so the 10 KB Registry limit cannot leave a stale partial catalog.
+- `app/domain/fleet_manifest.py` builds exactly 16 real fleet entries, including the separate
   `sponsor_liaison_agent` A2A peer.
 
 The existing endpoint-only `countersign-department-mcp` Registry service was preserved because
