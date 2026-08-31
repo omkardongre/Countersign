@@ -72,7 +72,7 @@ function getFederatedAuth(): BaseExternalAccountClient | null {
   return cachedFederatedAuth;
 }
 
-async function getAccessToken(): Promise<string> {
+export async function getGoogleCloudAccessToken(): Promise<string> {
   const federatedAuth = getFederatedAuth();
   const client = federatedAuth ?? (await getAuth().getClient());
   const headers = await client.getRequestHeaders();
@@ -104,7 +104,7 @@ async function callQuery(
   classMethod: string,
   input: Record<string, unknown>,
 ): Promise<unknown> {
-  const token = await getAccessToken();
+  const token = await getGoogleCloudAccessToken();
   const res = await fetch(`${baseUrl(resourceName)}:query`, {
     method: "POST",
     headers: {
@@ -173,7 +173,7 @@ async function callStreamQuery(
   classMethod: string,
   input: Record<string, unknown>,
 ): Promise<EngineEvent[]> {
-  const token = await getAccessToken();
+  const token = await getGoogleCloudAccessToken();
   const res = await fetch(`${baseUrl(resourceName)}:streamQuery?alt=sse`, {
     method: "POST",
     headers: {

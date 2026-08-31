@@ -1,18 +1,13 @@
 /**
- * Live-case bookkeeping: the desk's in-process record for a case (same
- * `globalStore()` module as `lib/store.ts`) plus the engine session pointer
- * needed to poll or resume it. Deliberately separate from `lib/store.ts` so
- * the fixture/intake path stays unaware the live path exists, matching the
+ * Live-case bookkeeping: the desk's cached record plus the engine session
+ * pointer needed to poll or resume it. Deliberately separate from `lib/store.ts`
+ * so the fixture/intake path stays unaware the live path exists, matching the
  * existing `origin: "fixture" | "intake"` split.
  *
- * Session state lives in this Node process and resets on restart, same
- * caveat as `lib/store.ts`'s `openFromIntake` — the source of truth for a
- * live case is the deployed Agent Runtime's own session store
- * (Vertex-managed; `case_deployment_metadata.json` `sessions:
- * "vertex_managed"`), not this map. Losing this map loses the desk's
- * *pointer* to the session, not the session itself, so `pollCase` can be
- * extended to recover a lost pointer from `getSession` given a known
- * `case_id -> session_id` mapping if that becomes necessary.
+ * The source of truth for graph events is the deployed Agent Runtime's
+ * Vertex-managed session store. Firestore persists the case-to-session pointer
+ * and projected desk record so Vercel serverless instances can recover them;
+ * the process-local map is only a cache.
  */
 
 import { getCase as getFixtureOrIntakeCase, toQueueItem } from "@/lib/store";
@@ -24,6 +19,7 @@ import type {
 } from "@/lib/types";
 import {
   AgentRuntimeClient,
+  getGoogleCloudAccessToken,
   liveEngineResourceName,
   type EngineEvent,
 } from "./engine-client";
@@ -53,15 +49,59 @@ function globalLiveStore(): LiveGlobalStore {
   return g.__countersignLive;
 }
 
+const FIRESTORE_PROJECT = "countersign-505107";
+const FIRESTORE_COLLECTION = "countersign_web_live_cases";
+
+function firestoreDocumentUrl(caseId: string): string {
+  return `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/${FIRESTORE_COLLECTION}/${encodeURIComponent(caseId)}`;
+}
+
+async function saveLiveSession(caseId: string, live: LiveCaseSession): Promise<void> {
+  const token = await getGoogleCloudAccessToken();
+  const response = await fetch(firestoreDocumentUrl(caseId), {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ fields: { payload: { stringValue: JSON.stringify(live) } } }),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to persist live case pointer: ${response.status} ${await response.text()}`);
+  }
+}
+
+async function loadLiveSession(caseId: string): Promise<LiveCaseSession | null> {
+  const cached = globalLiveStore().sessions.get(caseId);
+  if (cached) return cached;
+  const token = await getGoogleCloudAccessToken();
+  const response = await fetch(firestoreDocumentUrl(caseId), {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Failed to load live case pointer: ${response.status} ${await response.text()}`);
+  }
+  const document = (await response.json()) as {
+    fields?: { payload?: { stringValue?: string } };
+  };
+  const payload = document.fields?.payload?.stringValue;
+  if (!payload) throw new Error(`Live case pointer ${caseId} has no payload.`);
+  const live = JSON.parse(payload) as LiveCaseSession;
+  globalLiveStore().sessions.set(caseId, live);
+  return live;
+}
+
 export function liveEngineConfigured(): boolean {
   return liveEngineResourceName() !== null;
 }
 
 /** Reads a case that may live in either the fixture/intake store or here. */
-export function getAnyCase(caseId: string): CaseDeskRecord | null {
-  const live = globalLiveStore().sessions.get(caseId);
-  if (live) return live.record;
-  return getFixtureOrIntakeCase(caseId);
+export async function getAnyCase(caseId: string): Promise<CaseDeskRecord | null> {
+  const local = getFixtureOrIntakeCase(caseId);
+  if (local) return local;
+  return (await loadLiveSession(caseId))?.record ?? null;
 }
 
 export function getLiveSessionPointer(caseId: string) {
@@ -135,14 +175,16 @@ export async function openLiveCase(args: {
   });
   record.origin = "live";
 
-  globalLiveStore().sessions.set(args.classified.case_id, {
+  const live: LiveCaseSession = {
     engineResource,
     userId,
     sessionId: session.id,
     pendingInterrupt,
     cfiEvents: [],
     record,
-  });
+  };
+  globalLiveStore().sessions.set(args.classified.case_id, live);
+  await saveLiveSession(args.classified.case_id, live);
   return record;
 }
 
@@ -153,7 +195,7 @@ export async function openLiveCase(args: {
  * `sterility_hold` or otherwise between confirmed pauses.
  */
 export async function pollLiveCase(caseId: string): Promise<CaseDeskRecord | null> {
-  const live = globalLiveStore().sessions.get(caseId);
+  const live = await loadLiveSession(caseId);
   if (!live) return null;
   const client = new AgentRuntimeClient(live.engineResource);
   const session = await client.getSession(live.userId, live.sessionId);
@@ -170,6 +212,7 @@ export async function pollLiveCase(caseId: string): Promise<CaseDeskRecord | nul
   record.origin = "live";
   live.pendingInterrupt = pendingInterrupt;
   live.record = record;
+  await saveLiveSession(caseId, live);
   return record;
 }
 
@@ -183,7 +226,7 @@ export async function resumeLiveCase(
   caseId: string,
   response: Record<string, unknown>,
 ): Promise<CaseDeskRecord> {
-  const live = globalLiveStore().sessions.get(caseId);
+  const live = await loadLiveSession(caseId);
   if (!live) {
     throw new Error(`No live session for case ${caseId}.`);
   }
@@ -209,6 +252,7 @@ export async function resumeLiveCase(
   record.origin = "live";
   live.pendingInterrupt = pendingInterrupt;
   live.record = record;
+  await saveLiveSession(caseId, live);
   return record;
 }
 
@@ -222,7 +266,7 @@ export async function updateLiveCfiEvents(
   caseId: string,
   cfiEvents: EngineEvent[],
 ): Promise<CaseDeskRecord | null> {
-  const live = globalLiveStore().sessions.get(caseId);
+  const live = await loadLiveSession(caseId);
   if (!live) return null;
   const client = new AgentRuntimeClient(live.engineResource);
   const session = await client.getSession(live.userId, live.sessionId);
@@ -239,6 +283,7 @@ export async function updateLiveCfiEvents(
   record.origin = "live";
   live.pendingInterrupt = pendingInterrupt;
   live.record = record;
+  await saveLiveSession(caseId, live);
   return record;
 }
 

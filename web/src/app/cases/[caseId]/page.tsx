@@ -17,7 +17,7 @@ export default async function CasePage({
   params: Promise<{ caseId: string }>;
 }) {
   const { caseId } = await params;
-  const record = getAnyCase(caseId);
+  const record = await getAnyCase(caseId);
   if (!record) notFound();
   const { classified } = record;
   const shouldPoll =
