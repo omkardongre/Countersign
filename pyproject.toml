@@ -39,6 +39,7 @@ countersign-mcp = "app.mcp.department_server:main"
 countersign-sterility-tick = "app.domain.sterility_tick:main"
 countersign-case-memory-redact = "app.domain.case_memory_redact:main"
 countersign-sponsor-liaison = "app.sponsor_liaison.server:main"
+countersign-sponsor-qa = "app.sponsor_qa.server:main"
 
 [project.optional-dependencies]
 eval = [
