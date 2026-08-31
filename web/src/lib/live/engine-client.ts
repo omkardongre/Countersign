@@ -24,7 +24,12 @@
  * is observed by polling `getSession`, not by streaming (`10` P0, `11` §1).
  */
 
-import { GoogleAuth } from "google-auth-library";
+import { getVercelOidcToken } from "@vercel/oidc";
+import {
+  BaseExternalAccountClient,
+  ExternalAccountClient,
+  GoogleAuth,
+} from "google-auth-library";
 
 const API_VERSION = "v1beta1";
 
@@ -37,6 +42,7 @@ export type EngineFunctionCall = {
 };
 
 let cachedAuth: GoogleAuth | null = null;
+let cachedFederatedAuth: BaseExternalAccountClient | null = null;
 
 function getAuth(): GoogleAuth {
   if (!cachedAuth) {
@@ -47,16 +53,34 @@ function getAuth(): GoogleAuth {
   return cachedAuth;
 }
 
-async function getAccessToken(): Promise<string> {
-  const client = await getAuth().getClient();
-  const token = await client.getAccessToken();
-  if (!token.token) {
-    throw new Error(
-      "No access token from Application Default Credentials. Run " +
-        "`gcloud auth application-default login` in this environment.",
-    );
+function getFederatedAuth(): BaseExternalAccountClient | null {
+  const projectNumber = process.env.GCP_PROJECT_NUMBER;
+  const poolId = process.env.GCP_WORKLOAD_IDENTITY_POOL_ID;
+  const providerId = process.env.GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID;
+  const serviceAccount = process.env.GCP_SERVICE_ACCOUNT_EMAIL;
+  if (!projectNumber || !poolId || !providerId || !serviceAccount) return null;
+  if (!cachedFederatedAuth) {
+    cachedFederatedAuth = ExternalAccountClient.fromJSON({
+      type: "external_account",
+      audience: `//iam.googleapis.com/projects/${projectNumber}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`,
+      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+      token_url: "https://sts.googleapis.com/v1/token",
+      service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${serviceAccount}:generateAccessToken`,
+      subject_token_supplier: { getSubjectToken: getVercelOidcToken },
+    });
   }
-  return token.token;
+  return cachedFederatedAuth;
+}
+
+async function getAccessToken(): Promise<string> {
+  const federatedAuth = getFederatedAuth();
+  const client = federatedAuth ?? (await getAuth().getClient());
+  const headers = await client.getRequestHeaders();
+  const authorization = headers.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    throw new Error("Google Cloud authentication returned no access token.");
+  }
+  return authorization.slice("Bearer ".length);
 }
 
 /** `projects/P/locations/L/reasoningEngines/E` -> `L`. */
