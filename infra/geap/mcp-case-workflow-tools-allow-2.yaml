@@ -45,3 +45,9 @@ httpRules:
               - name: "tools/call"
                 params:
                   - exact: "maintenance_query"
+              - name: "tools/call"
+                params:
+                  - exact: "openmaint_corrective_request"
+              - name: "tools/call"
+                params:
+                  - exact: "sponsor_notification_request"

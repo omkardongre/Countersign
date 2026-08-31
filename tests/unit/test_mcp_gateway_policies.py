@@ -96,6 +96,8 @@ def test_case_workflow_policy_allows_all_named_tools() -> None:
             "erpnext_nonconformance_write",
             "erpnext_quality_action_write",
             "maintenance_query",
+            "openmaint_corrective_request",
+            "sponsor_notification_request",
         }
 
 

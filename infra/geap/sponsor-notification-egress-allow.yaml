@@ -1,0 +1,11 @@
+name: countersign-sponsor-notification-egress
+target:
+  resources:
+    - "projects/777448403573/locations/us-central1/agentGateways/countersign-egress"
+policyProfile: REQUEST_AUTHZ
+action: ALLOW
+httpRules:
+  - to:
+      operations:
+        - hosts:
+            - exact: "countersign-sponsor-liaison-777448403573.us-central1.run.app"

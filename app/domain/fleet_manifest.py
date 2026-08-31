@@ -314,7 +314,7 @@ def build_fleet_manifest() -> list[FleetAgentEntry]:
                 "The second agent permitted to mutate an external "
                 "record, and only after the QP has acted and the "
                 "investigation report has been filed (runs as "
-                "file_capa, the graph's last node). Its two tools are "
+                "file_capa, before isolated operational requests). Its two tools are "
                 "tenant/case-locked closures with no model-controlled "
                 "arguments: it creates a Non Conformance and linked "
                 "Quality Actions (Corrective + Preventive) in ERPNext, "

@@ -33,6 +33,8 @@ from app.domain.department_tools import (
     EM_QUERY,
     GUIDANCE_TOOLS,
     LIMS_QUERY,
+    POST_QP_MAINTENANCE_TOOLS,
+    POST_QP_SPONSOR_TOOLS,
     QMS_WRITE_TOOLS,
     SIBLING_BATCH_QUERY,
     SPONSOR_TOOLS,
@@ -68,6 +70,8 @@ async def test_department_mcp_exposes_exactly_the_named_tools() -> None:
         | SPONSOR_TOOLS
         | QMS_WRITE_TOOLS
         | CAPA_WRITE_TOOLS
+        | POST_QP_MAINTENANCE_TOOLS
+        | POST_QP_SPONSOR_TOOLS
         | GUIDANCE_TOOLS
         | CFI_TOOLS
         | CFI_ARTIFACT_TOOLS

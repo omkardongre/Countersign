@@ -53,8 +53,9 @@ the case-workflow QMS writer and the only agent permitted to mutate an external
 record — files the investigation report and Annex 16 package as a real Google
 Doc. Then ``capa_write_agent`` (``capa_write_agent.py``) creates a Non
 Conformance and linked Quality Actions (CAPA) in ERPNext — the cross-department
-write-back that makes the fleet act, not just report. Nothing in this graph
-certifies or releases a batch.
+write-back that makes the fleet act, not just report. Finally, isolated
+post-QP requests open corrective maintenance and notify the sponsor through
+the separate liaison service. Nothing in this graph certifies or releases a batch.
 """
 
 from __future__ import annotations
@@ -90,6 +91,7 @@ from app.domain.intake import classify_intake
 from app.domain.investigation import draft_investigation
 from app.domain.investigation_gate import gate_investigation
 from app.domain.models import ClassifiedCase
+from app.domain.post_qp_actions import request_post_qp_actions
 from app.domain.qms_report_agent import file_qms_report
 from app.domain.qp_confirmation import confirm_qp
 from app.domain.qp_models import QpReviewedPackage
@@ -245,6 +247,7 @@ def build_deviation_case_workflow() -> Workflow:
                 record_case_memory,
                 file_qms_report,
                 file_capa,
+                request_post_qp_actions,
             ),
             # Parallel terminal branch, not a step in the sequential path
             # above: escalate_to_cfi runs off the same gate_investigation

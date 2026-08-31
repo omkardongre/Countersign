@@ -49,6 +49,8 @@ from app.domain.department_tools import (
     CFI_TOOLS,
     DRIVE_TOOLS,
     GUIDANCE_TOOLS,
+    POST_QP_MAINTENANCE_TOOLS,
+    POST_QP_SPONSOR_TOOLS,
     QMS_WRITE_TOOLS,
     SIBLING_BATCH_QUERY,
     SPONSOR_TOOLS,
@@ -385,6 +387,33 @@ async def call_capa_write_tool(name: str, arguments: dict[str, Any]) -> dict[str
     if name not in CAPA_WRITE_TOOLS:
         raise DepartmentToolCallError(
             f"Callers may not call {name!r}; allowed={sorted(CAPA_WRITE_TOOLS)}"
+        )
+    payload = await call_mcp_tool(name, arguments)
+    if not payload:
+        raise DepartmentToolCallError(f"{name} returned no structured content.")
+    return payload
+
+
+async def call_post_qp_maintenance_tool(
+    name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    if name not in POST_QP_MAINTENANCE_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(POST_QP_MAINTENANCE_TOOLS)}"
+        )
+    payload = await call_mcp_tool(name, arguments)
+    if not payload:
+        raise DepartmentToolCallError(f"{name} returned no structured content.")
+    return payload
+
+
+async def call_post_qp_sponsor_tool(
+    name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """Call the governed sponsor-notification relay over department MCP."""
+    if name not in POST_QP_SPONSOR_TOOLS:
+        raise DepartmentToolCallError(
+            f"Callers may not call {name!r}; allowed={sorted(POST_QP_SPONSOR_TOOLS)}"
         )
     payload = await call_mcp_tool(name, arguments)
     if not payload:

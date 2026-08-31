@@ -131,6 +131,23 @@ def stub_department_agents(monkeypatch):
     itself is skipped, matching the existing extractor/investigation stubs.
     """
 
+    original_call_department_tool = branches_mod.call_department_tool
+
+    async def _stub_call_department_tool(name, **kwargs):
+        if name == branches_mod.MAINTENANCE_QUERY:
+            return {
+                "source_uri": "https://openmaint.example.test/ui/#classes/Equipment/cards/1",
+                "asset_code": "EQ-1",
+                "asset_name": "Filling line",
+                "open_corrective_count": 0,
+                "corrective_work_orders": [],
+            }
+        return await original_call_department_tool(name, **kwargs)
+
+    monkeypatch.setattr(
+        branches_mod, "call_department_tool", _stub_call_department_tool
+    )
+
     def _stub_get_qc_agent(lims_tool):
         @node(name="stub_qc_agent")
         async def stub_qc_agent(node_input):
@@ -146,6 +163,14 @@ def stub_department_agents(monkeypatch):
             return branches_mod.EmAgentSummary(em_reviewed=True)
 
         return stub_em_agent
+
+    def _stub_get_maintenance_agent(maintenance_tool):
+        @node(name="stub_maintenance_agent")
+        async def stub_maintenance_agent(node_input):
+            await maintenance_tool()
+            return branches_mod.MaintenanceAgentSummary(maintenance_reviewed=True)
+
+        return stub_maintenance_agent
 
     def _stub_get_supply_agent(coa_tool, eudragmdp_tool, openfda_tool):
         @node(name="stub_supply_agent")
@@ -163,6 +188,9 @@ def stub_department_agents(monkeypatch):
 
     monkeypatch.setattr(branches_mod, "get_qc_agent", _stub_get_qc_agent)
     monkeypatch.setattr(branches_mod, "get_em_agent", _stub_get_em_agent)
+    monkeypatch.setattr(
+        branches_mod, "get_maintenance_agent", _stub_get_maintenance_agent
+    )
     monkeypatch.setattr(branches_mod, "get_supply_agent", _stub_get_supply_agent)
 
 
@@ -396,7 +424,13 @@ async def test_classified_case_and_compliance_share_scope(
     assert case.compliance.status is ComplianceStatus.SUFFICIENT_FOR_INVESTIGATION
     assert case.compliance.decision_authority == "none"
     departments = {branch.department.value for branch in case.branches}
-    assert departments == {"manufacturing", "qc", "environmental_monitoring", "supply"}
+    assert departments == {
+        "manufacturing",
+        "qc",
+        "environmental_monitoring",
+        "supply",
+        "maintenance",
+    }
     assert all(branch.status.value == "ok" for branch in case.branches)
     assert case.findings == []
 

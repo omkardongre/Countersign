@@ -32,8 +32,13 @@ from __future__ import annotations
 
 import functools
 import os
+import urllib.error
+import urllib.request
 from typing import Any
+from urllib.parse import urlparse
 
+import google.auth.transport.requests
+from google.oauth2 import id_token
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -75,6 +80,7 @@ from app.domain.department_models import (
     MaintenanceSnapshot,
 )
 from app.domain.department_source_erpnext import ERPNextApiError
+from app.domain.department_source_openmaint import OpenMaintApiError
 from app.domain.department_tools import (
     CASE_STATUS_UPSERT,
     CFI_CALENDAR_SITE_REVIEW,
@@ -96,12 +102,14 @@ from app.domain.department_tools import (
     ERPNEXT_QUALITY_ACTION_WRITE,
     LIMS_QUERY,
     MAINTENANCE_QUERY,
+    OPENMAINT_CORRECTIVE_REQUEST,
     PRIOR_ART_QUERY,
     PRIOR_ART_REDACT,
     PRIOR_ART_WRITE,
     QMS_REPORT_WRITE,
     SIBLING_BATCH_QUERY,
     SPONSOR_BATCH_STATUS,
+    SPONSOR_NOTIFICATION_REQUEST,
     STERILITY_BIND_RESUME_HANDLE,
     STERILITY_GET,
     STERILITY_START,
@@ -182,6 +190,9 @@ from app.domain.department_tools import (
     maintenance_query as load_maintenance,
 )
 from app.domain.department_tools import (
+    openmaint_corrective_request as run_openmaint_corrective_request,
+)
+from app.domain.department_tools import (
     prior_art_query as run_prior_art_query,
 )
 from app.domain.department_tools import (
@@ -209,6 +220,12 @@ from app.domain.department_tools import (
     sterility_start as run_sterility_start,
 )
 from app.domain.guidance_models import GuidanceQueryResult
+from app.domain.post_qp_models import (
+    CorrectiveMaintenanceRequest,
+    CorrectiveMaintenanceResult,
+    SponsorNotificationRequest,
+    SponsorNotificationResult,
+)
 from app.domain.qms_report_models import QmsReportWriteResult
 from app.domain.sponsor_models import SponsorBatchStatusResult, SponsorScopeDenied
 from app.domain.sterility_models import SterilityIncubationRecord
@@ -237,6 +254,63 @@ _CAS_WRITE = ToolAnnotations(
 )
 
 CFI_TICK_CALLER_SERVICE_ACCOUNTS_ENV = "COUNTERSIGN_CFI_TICK_CALLER_SERVICE_ACCOUNTS"
+SPONSOR_LIAISON_URL_ENV = "COUNTERSIGN_SPONSOR_LIAISON_URL"
+SPONSOR_NOTIFICATION_PATH = "/internal/sponsor-notifications"
+_MAX_SPONSOR_RESPONSE_BYTES = 512 * 1024
+
+
+class SponsorNotificationRelayError(Exception):
+    """Department MCP could not deliver a governed liaison request."""
+
+
+def _relay_sponsor_notification(
+    request: SponsorNotificationRequest,
+) -> SponsorNotificationResult:
+    base_url = os.environ.get(SPONSOR_LIAISON_URL_ENV, "").strip().rstrip("/")
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username:
+        raise SponsorNotificationRelayError(
+            f"{SPONSOR_LIAISON_URL_ENV} must be an HTTPS service URL without userinfo."
+        )
+    try:
+        auth_request = google.auth.transport.requests.Request()
+        token = id_token.fetch_id_token(auth_request, base_url)
+        http_request = urllib.request.Request(
+            f"{base_url}{SPONSOR_NOTIFICATION_PATH}",
+            data=request.model_dump_json().encode(),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(http_request, timeout=15) as response:
+            body = response.read(_MAX_SPONSOR_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        raise SponsorNotificationRelayError(
+            f"Sponsor liaison returned HTTP {exc.code}."
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise SponsorNotificationRelayError(
+            "Sponsor liaison transport failed."
+        ) from exc
+    except Exception as exc:
+        raise SponsorNotificationRelayError(
+            "Could not mint the sponsor liaison identity token."
+        ) from exc
+    if len(body) > _MAX_SPONSOR_RESPONSE_BYTES:
+        raise SponsorNotificationRelayError("Sponsor liaison response exceeded the size limit.")
+    try:
+        result = SponsorNotificationResult.model_validate_json(body)
+    except Exception as exc:
+        raise SponsorNotificationRelayError(
+            "Sponsor liaison returned an invalid response."
+        ) from exc
+    if result.idempotency_key != request.idempotency_key:
+        raise SponsorNotificationRelayError(
+            "Sponsor liaison returned a mismatched idempotency key."
+        )
+    return result
 
 
 def _cfi_tick_allowed_callers() -> set[str]:
@@ -516,6 +590,87 @@ def build_department_mcp(
                 case_tenant_id=case_tenant_id,
             )
         except (ErpNextCapaWriteError, CapaTenantMismatch) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=OPENMAINT_CORRECTIVE_REQUEST,
+        title="Request openMAINT corrective maintenance",
+        description=(
+            "Create or re-use a CorrectiveMaint process at its Request activity. "
+            "Allowed only after QP review and idempotent by tenant/case."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def openmaint_corrective_request(
+        tenant_id: str,
+        case_id: str,
+        batch_id: str,
+        summary: str,
+        idempotency_key: str,
+        lifecycle_state: str,
+        case_tenant_id: str,
+    ) -> CorrectiveMaintenanceResult:
+        try:
+            return run_openmaint_corrective_request(
+                request=CorrectiveMaintenanceRequest(
+                    tenant_id=tenant_id,
+                    case_id=case_id,
+                    batch_id=batch_id,
+                    summary=summary,
+                    idempotency_key=idempotency_key,
+                    lifecycle_state=lifecycle_state,
+                ),
+                case_tenant_id=case_tenant_id,
+            )
+        except (
+            ErpNextCapaWriteError,
+            CapaTenantMismatch,
+            DepartmentRecordMissing,
+            ERPNextApiError,
+            OpenMaintApiError,
+            RuntimeError,
+        ) as exc:
+            raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        name=SPONSOR_NOTIFICATION_REQUEST,
+        title="Notify sponsor QA after QP review",
+        description=(
+            "Relay one tenant-locked, idempotent post-QP notification through "
+            "the sponsor liaison service."
+        ),
+        annotations=_IDEMPOTENT_WRITE,
+    )
+    def sponsor_notification_request(
+        tenant_id: str,
+        case_id: str,
+        batch_id: str,
+        qp_outcome: str,
+        qp_recorded_at: str,
+        idempotency_key: str,
+        lifecycle_state: str,
+        case_tenant_id: str,
+        decision_authority: str = "none",
+    ) -> SponsorNotificationResult:
+        if not case_tenant_id or tenant_id != case_tenant_id:
+            raise ToolError("Sponsor notification tenant scope does not match the case.")
+        try:
+            payload = SponsorNotificationRequest(
+                tenant_id=tenant_id,
+                case_id=case_id,
+                batch_id=batch_id,
+                qp_outcome=qp_outcome,
+                qp_recorded_at=qp_recorded_at,
+                idempotency_key=idempotency_key,
+                lifecycle_state=lifecycle_state,
+                decision_authority=decision_authority,
+            )
+            if payload.lifecycle_state != "qp_reviewed":
+                raise SponsorNotificationRelayError(
+                    "Sponsor notification is allowed only after QP review."
+                )
+            return _relay_sponsor_notification(payload)
+        except (ValueError, SponsorNotificationRelayError) as exc:
             raise ToolError(str(exc)) from exc
 
     @mcp.tool(
