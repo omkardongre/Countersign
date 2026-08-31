@@ -52,13 +52,21 @@ from a2a.types import (
     AgentInterface,
     AgentSkill,
 )
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
+from app.domain.post_qp_models import (
+    SponsorNotificationRequest,
+    SponsorNotificationResult,
+)
 from app.sponsor_liaison.agent import SPONSOR_LIAISON_AGENT_NAME
 from app.sponsor_liaison.auth import authenticate_sponsor_caller
 from app.sponsor_liaison.executor import SponsorLiaisonAgentExecutor
+from app.sponsor_liaison.outbound import SponsorOutboundError, send_sponsor_notification
 
 RPC_PATH = "/a2a/sponsor-liaison"
+NOTIFICATION_PATH = "/internal/sponsor-notifications"
+CASE_CALLERS_ENV = "COUNTERSIGN_SPONSOR_NOTIFICATION_CALLERS"
 
 
 def _resolve_app_url() -> str:
@@ -138,6 +146,31 @@ class _SponsorServerCallContextBuilder(DefaultServerCallContextBuilder):
         return context
 
 
+def _authorize_case_caller(request: Request) -> None:
+    allowed = {
+        value.strip().lower()
+        for value in os.environ.get(CASE_CALLERS_ENV, "").split(",")
+        if value.strip()
+    }
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if not allowed or scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=403, detail="Notification caller is not authorized.")
+    try:
+        import google.auth.transport.requests
+        from google.oauth2 import id_token
+
+        audience = _resolve_app_url()
+        claims = id_token.verify_oauth2_token(
+            token, google.auth.transport.requests.Request(), audience
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=403, detail="Notification caller token is invalid.") from exc
+    email = str(claims.get("email", "")).strip().lower()
+    if claims.get("email_verified") is not True or email not in allowed:
+        raise HTTPException(status_code=403, detail="Notification caller is not authorized.")
+
+
 def build_app() -> FastAPI:
     app = FastAPI(
         title="countersign-sponsor-liaison",
@@ -164,6 +197,16 @@ def build_app() -> FastAPI:
             context_builder=_SponsorServerCallContextBuilder(),
         ),
     )
+
+    @app.post(NOTIFICATION_PATH, response_model=SponsorNotificationResult)
+    async def sponsor_notification(
+        payload: SponsorNotificationRequest, request: Request
+    ) -> SponsorNotificationResult:
+        _authorize_case_caller(request)
+        try:
+            return await run_in_threadpool(send_sponsor_notification, payload)
+        except SponsorOutboundError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/health")
     async def health() -> dict[str, str]:
