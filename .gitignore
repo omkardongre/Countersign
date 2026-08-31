@@ -234,3 +234,6 @@ semantic-review/
 countersign_hello_deploy_*/
 /tmp/cs-*.txt
 /tmp/sdk-*.txt
+.vercel
+.env*
+!.env.example

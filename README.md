@@ -853,120 +853,126 @@ Machine-readable evidence is written to `infra/geap/evidence/`.
 
 ## Spin-up
 
-### Prerequisites
+### Quick local run
 
-- A **Google Cloud Organization**. Agent Identity principals are org-scoped
-  (`principal://agents.global.org-ORG_ID...`) and there is no org-less form, so a project
-  attached only to a personal account cannot complete this setup. Cloud Identity Free plus a
-  domain you own is sufficient.
-- `gcloud` authenticated as a user with org-level IAM, and Python 3.12+ with `uv`.
-
-### 1. Project and configuration
-
-Create a project **inside the organization** (pre-existing projects do not migrate), link
-billing, then set your values in `infra/geap/constants.env`:
+Prerequisites: Node.js 22+, Python 3.12+, `uv`, and `gcloud`.
 
 ```bash
-PROJECT_ID=...
-PROJECT_NUMBER=...
-ORG_ID=...
-LOCATION=us-central1
-AGENT_GATEWAY=countersign-egress
-STAGING_BUCKET=gs://.../agent-staging
+git clone https://github.com/omkardongre/Countersign.git
+cd Countersign
+uv sync
+uv run pytest tests/unit -q
+cd web
+npm ci
+cp .env.example .env.local
 ```
 
-### 2. Enable APIs
+For a UI-only local demo, set `COUNTERSIGN_ENABLE_FIXTURES=true` in
+`web/.env.local`, then run:
 
 ```bash
-gcloud services enable \
-  aiplatform.googleapis.com agentregistry.googleapis.com \
-  networkservices.googleapis.com networksecurity.googleapis.com \
-  iap.googleapis.com modelarmor.googleapis.com \
-  compute.googleapis.com dns.googleapis.com \
-  logging.googleapis.com cloudtrace.googleapis.com telemetry.googleapis.com \
-  --project="$PROJECT_ID"
+npm run dev
 ```
 
-### 3. Agent Gateway and authorization policy
+Open `http://localhost:3000`. This mode uses labelled fixtures and does not call
+cloud services.
+
+### Run the web desk against a deployed Agent Runtime
+
+Authenticate locally and copy the current Runtime resource name from
+`case_deployment_metadata.json` into `web/.env.local`:
 
 ```bash
-gcloud network-services agent-gateways import countersign-egress \
-  --source=infra/geap/agent-gateway-egress.yaml --location=us-central1
-
-# Deploy the IAP authorization extension in dry run first.
-gcloud service-extensions authz-extensions import countersign-iap-request-authz \
-  --source=infra/geap/iap-request-authz-extension.yaml --location=us-central1
-
-gcloud beta network-security authz-policies import countersign-iap-request-authz \
-  --source=infra/geap/iap-request-authz-policy.yaml --location=us-central1
+gcloud auth application-default login
 ```
 
-### 3b. Model Armor content extension
-
-Create a template, grant IAM to both the gateway and Reasoning Engine service agents (required
-even when gateway and template share a project), then attach the extension:
-
-```bash
-# Template: see infra/geap/model-armor-authz-extension.yaml for the template ID referenced.
-# Create via REST — the `gcloud model-armor templates create` subcommand has a permission
-# check bug independent of actual IAM; the REST API with the same credentials works.
-
-for SA in "service-${PROJECT_NUMBER}@gcp-sa-dep.iam.gserviceaccount.com" \
-          "service-${PROJECT_NUMBER}@gcp-sa-aiplatform-re.iam.gserviceaccount.com"; do
-  for ROLE in roles/modelarmor.calloutUser roles/serviceusage.serviceUsageConsumer roles/modelarmor.user; do
-    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-      --member="serviceAccount:${SA}" --role="$ROLE" --condition=None --quiet
-  done
-done
-
-gcloud service-extensions authz-extensions import countersign-model-armor \
-  --source=infra/geap/model-armor-authz-extension.yaml --location=us-central1
-
-gcloud beta network-security authz-policies import countersign-model-armor \
-  --source=infra/geap/model-armor-authz-policy.yaml --location=us-central1
+```dotenv
+COUNTERSIGN_CASE_ENGINE_URL=projects/PROJECT_NUMBER/locations/REGION/reasoningEngines/ENGINE_ID
+NEXT_PUBLIC_GOOGLE_API_KEY=YOUR_RESTRICTED_BROWSER_KEY
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=YOUR_OAUTH_WEB_CLIENT_ID
+COUNTERSIGN_ENABLE_FIXTURES=false
 ```
 
-### 4. Deploy the Runtime agent
+Share the selected Drive evidence file read-only with the department MCP service
+account. Start `npm run dev`, open `/open`, keep **Run on the deployed Agent
+Runtime** selected, and submit a case.
 
-Both `identity_type=AGENT_IDENTITY` and `agent_gateway_config` are required. Omitting the
-former fails **silently** — `effectiveIdentity` falls back to the default Vertex service
-account and the agent is quietly ungoverned.
+### Deploy the Google Cloud backend
+
+A full deployment requires a billed project inside a Google Cloud Organization.
+Agent Identity principals are organization-scoped. Authenticate `gcloud`, copy
+`infra/geap/constants.env`, replace its project, organization, region, bucket,
+service-account, and integration values, and keep credentials in Secret Manager.
+Never commit local environment files or secret values.
+
+Run the checked-in provisioning and deployment scripts in this order:
 
 ```bash
 uv sync
-uv run python infra/geap/hello_runtime/deploy_agent.py
+bash infra/geap/provision_sessions_sql.sh
+bash infra/geap/provision_cfi_sql.sh
+bash infra/geap/provision_case_memory_bigquery.sh
+bash infra/geap/provision_department_systems.sh
+bash infra/geap/register_platform_endpoints.sh
+bash infra/geap/deploy_regulatory_screening_mcp.sh
+bash infra/geap/deploy_department_mcp.sh
+bash infra/geap/deploy_sponsor_qa.sh
+bash infra/geap/deploy_sponsor_liaison.sh
+bash infra/geap/deploy_tick_service.sh
 ```
 
-Deploy from **source** rather than a custom container: the gateway's TLS CA is injected
-automatically on the source path, and a BYOC image fails with `CERTIFICATE_VERIFY_FAILED`.
-
-### 5. Register platform endpoints
-
-Under enforcement the gateway denies internal Google APIs too, so they must be registered and
-granted `roles/iap.egressor`.
+Import the Agent Gateway, IAP authorization, Model Armor, TQA, and MCP tool
+policies from `infra/geap/`, first in dry-run where supported. Then deploy the two
+source-based Agent Runtimes:
 
 ```bash
-./infra/geap/register_platform_endpoints.sh
+uv run python infra/geap/deploy_case_runtime.py \
+  --mcp-url="https://DEPARTMENT_MCP/mcp" \
+  --mcp-invoker-service-account="CASE_INVOKER@PROJECT.iam.gserviceaccount.com" \
+  --regulatory-mcp-url="https://REGULATORY_MCP/mcp" \
+  --regulatory-mcp-invoker-service-account="CFI_INVOKER@PROJECT.iam.gserviceaccount.com"
+
+uv run python infra/geap/deploy_cfi_runtime.py \
+  --mcp-url="https://DEPARTMENT_MCP/mcp" \
+  --mcp-invoker-service-account="CFI_INVOKER@PROJECT.iam.gserviceaccount.com"
 ```
 
-Note `gemini-3.5-flash-lite` resolves via the **global** Vertex hostnames. `GOOGLE_CLOUD_LOCATION`
-is `global` on the Runtime instance while the Runtime region stays `us-central1`.
+After any case Runtime redeployment, update `COUNTERSIGN_CASE_ENGINE` on the tick
+service and `COUNTERSIGN_CASE_ENGINE_URL` on the web deployment. Apply the IAM
+commands printed by each deployment script.
 
-### 6. Verify, then enforce
+Verify before enabling enforcement:
 
 ```bash
-./infra/geap/verify_governance.sh   # will fail while still in DRY_RUN — that is intended
+bash infra/geap/verify_governance.sh
+uv run python infra/geap/verify_agent_registry.py
+uv run python infra/geap/verify_case_memory_bigquery.py
+uv run python infra/geap/verify_cfi_live.py
 ```
 
-Once ALLOWED rows appear, enforce by **removing** `iamEnforcementMode: "DRY_RUN"` from the
-extension metadata (there is no `ENFORCE` value to set) and re-importing:
+### Deploy the web desk to Vercel
 
-```bash
-gcloud service-extensions authz-extensions import countersign-iap-request-authz \
-  --source=infra/geap/iap-request-authz-extension-enforced.yaml --location=us-central1
+Import the GitHub repository, set the Vercel root directory to `web`, and add the
+four web variables shown above. Enable Vercel OIDC with Team issuer mode, create a
+Google Workload Identity Federation provider restricted to this Vercel project
+and production environment, then add:
 
-./infra/geap/verify_governance.sh   # expect 9/9
+```dotenv
+GCP_PROJECT_NUMBER=YOUR_PROJECT_NUMBER
+GCP_WORKLOAD_IDENTITY_POOL_ID=vercel
+GCP_WORKLOAD_IDENTITY_POOL_PROVIDER_ID=vercel
+GCP_SERVICE_ACCOUNT_EMAIL=YOUR_WEB_INVOKER@PROJECT.iam.gserviceaccount.com
 ```
+
+Grant that service account only `roles/aiplatform.user` and
+`roles/datastore.user`, plus `roles/iam.workloadIdentityUser` to the exact Vercel
+production subject. Add the Vercel origin to the Drive Picker OAuth client and
+browser-key restrictions. Deploy, open `/open`, submit one live case, and confirm
+that all five departments complete, the hold resumes, and the QP panel appears.
+
+The detailed live resource history and troubleshooting notes are in
+`checklist.md`; the trust boundaries are summarized in
+`final_reseach/ARCHITECTURE.md`.
 
 ---
 
